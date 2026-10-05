@@ -1,0 +1,7 @@
+{# Managed by Ansible. Source of truth: this template plus the private inventory.
+   Derived from the live device on 2026-10-05 (uci export dropbear). #}
+config dropbear 'main'
+	option enable '1'
+	option PasswordAuth 'on'
+	option RootPasswordAuth 'on'
+	option Port '22'

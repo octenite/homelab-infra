@@ -1,8 +1,13 @@
 ---
-# Access points: only the wireless configuration is managed until Phase 4
-# models the rest.
+# Access points: every configuration file they have is managed.
 openwrt_config_managed:
+  - network
   - wireless
+  - dhcp
+  - firewall
+  - system
+  - dropbear
+  - uhttpd
 
 # An access point is healthy when it reaches the router and resolves through it.
 openwrt_config_health_commands:
