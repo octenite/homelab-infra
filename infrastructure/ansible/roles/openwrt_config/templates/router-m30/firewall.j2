@@ -4,6 +4,7 @@
    or the word Router for a service the router itself offers to a zone. #}
 {% set workstation = '192.168.1.196' %}
 {% set pve1 = '10.0.10.10' %}
+{% set access_points = ['10.0.10.2', '10.0.10.3'] %}
 {% set k8s_api = '10.0.50.10' %}
 {% set k8s_nodes = ['10.0.50.11', '10.0.50.21'] %}
 {% set k8s_workers = ['10.0.50.21', '10.0.50.22'] %}
@@ -115,6 +116,18 @@ config rule
 	option target 'ACCEPT'
 
 config rule
+	option name 'E2-workstation-to-access-points'
+	option src 'lan'
+	option src_ip '{{ workstation }}'
+	option dest 'mgmt'
+{% for a in access_points %}
+	list dest_ip '{{ a }}'
+{% endfor %}
+	option proto 'tcp'
+	option dest_port '22'
+	option target 'ACCEPT'
+
+config rule
 	option name 'E2-workstation-to-mgmt-ping'
 	option src 'lan'
 	option src_ip '{{ workstation }}'
@@ -208,9 +221,12 @@ config rule
 	option target 'ACCEPT'
 
 config rule
-	option name 'E11-pve1-to-wan-updates'
+	option name 'E11-mgmt-hosts-to-wan-updates'
 	option src 'mgmt'
-	option src_ip '{{ pve1 }}'
+	list src_ip '{{ pve1 }}'
+{% for a in access_points %}
+	list src_ip '{{ a }}'
+{% endfor %}
 	option dest 'wan'
 	option proto 'tcp'
 	option dest_port '80 443'

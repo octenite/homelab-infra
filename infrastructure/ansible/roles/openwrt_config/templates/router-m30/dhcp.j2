@@ -70,6 +70,13 @@ config host 'workstation'
 	list mac '{{ openwrt_workstation_mac }}'
 	option ip '192.168.1.196'
 
+{# The ESP32 keeps one address in the IoT network, so shortcuts and, later,
+   Home Assistant can address it. #}
+config host 'esp32'
+	option name '{{ openwrt_esp32_name }}'
+	list mac '{{ openwrt_esp32_mac }}'
+	option ip '10.0.60.10'
+
 config odhcpd 'odhcpd'
 	option maindhcp '0'
 	option leasefile '/tmp/odhcpd.leases'

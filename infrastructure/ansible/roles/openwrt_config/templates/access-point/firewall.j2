@@ -1,0 +1,34 @@
+{# Managed by Ansible. Shared by all access points.
+   Client traffic is bridged and never passes this firewall. It protects the
+   access point's own management address: only the operator workstation may
+   log in (exception E2), and only the router and the workstation may ping. #}
+config defaults
+	option syn_flood '1'
+	option input 'REJECT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+
+config zone
+	option name 'mgmt'
+	list network 'mgmt'
+	option input 'REJECT'
+	option output 'ACCEPT'
+	option forward 'REJECT'
+
+config rule
+	option name 'E2-workstation-ssh'
+	option src 'mgmt'
+	option src_ip '192.168.1.196'
+	option proto 'tcp'
+	option dest_port '22'
+	option target 'ACCEPT'
+
+config rule
+	option name 'Ping-from-router-and-workstation'
+	option src 'mgmt'
+	list src_ip '10.0.10.1'
+	list src_ip '192.168.1.196'
+	option proto 'icmp'
+	option icmp_type 'echo-request'
+	option family 'ipv4'
+	option target 'ACCEPT'

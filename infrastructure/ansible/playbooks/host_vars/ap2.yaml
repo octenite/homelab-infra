@@ -1,0 +1,7 @@
+---
+# Access point 2. Its uplink to the router (router port lan3) is its own lan2.
+openwrt_ap_uplink_port: lan2
+# A family PC is wired to lan1; it stays in the trusted network.
+openwrt_ap_access_ports:
+  - lan1
+openwrt_ap_mgmt_ip: 10.0.10.3

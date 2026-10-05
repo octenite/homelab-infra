@@ -1,6 +1,6 @@
 # Phase 4 plan: access points
 
-Status: **planned; preparation step 4.1 is done.** The owner moved this phase ahead of Phase 3 on 2026-10-05, so the three Wi-Fi networks cover the whole house before the hypervisor work. Nothing in this plan has been applied.
+Status: **executed on 2026-10-05; the outcome is in `phase-4.md`.** This file is kept as the plan that was approved. Two things differed in execution: the router ports that lead to the access points are lan2 and lan3, not lan3 and lan4, and the guest switch in step 4.5 waits for the owner.
 
 Goal: both access points carry the trusted, IoT and guest networks on a VLAN trunk; their management moves into the management network; they are hardened like the router; the network name in use before the split becomes the guest network on all three devices at once.
 

@@ -65,7 +65,7 @@ What changed during the adversarial review: Cilium default-deny is enforced from
 |  VLAN-aware br-lan (DSA), fw4 zones default-deny (IPv4 and IPv6), dnsmasq per VLAN,    |
 |  IPv6 RA/DHCPv6/ULA off, NTP server, split-horizon for <zone>, node-exporter-lua,      |
 |  LuCI bound to the VLAN 10 address (reached through an SSH tunnel)                     |
-|  lan1 trunk: PVID 10 + tag 50   lan2 access: 20   lan3/lan4 trunks: PVID 10 + 20,60,70 |
+|  lan1 trunk: PVID 10 + tag 50   lan4 access: 20   lan2/lan3 trunks: PVID 10 + 20,60,70 |
 |  Wi-Fi 6 radios: home->20, iot->60, guest->70                                          |
 +------+--------------------------------+---------------------------+--------------------+
        | 1 GbE                          | 1 GbE                     | 1 GbE each
@@ -312,11 +312,11 @@ Why this plan: keeping 192.168.1.0/24 as VLAN 20 means no household device is re
 |---|---|---|---|
 | M30 WAN | routed, outside the bridge | - | ISP modem |
 | M30 lan1 | trunk | PVID 10 untagged, 50 tagged | Node 1 onboard NIC |
-| M30 lan2 | access | 20 untagged | Node 2 dock NIC; no vSwitch is ever bound to it and no trunk is delivered to the laptop |
-| M30 lan3, lan4 | trunk | PVID 10 untagged (AP management), 20/60/70 tagged | AP1, AP2 |
+| M30 lan4 | access | 20 untagged | Node 2 dock NIC; no vSwitch is ever bound to it and no trunk is delivered to the laptop (measured in Phase 4: the workstation is on lan4, not lan2) |
+| M30 lan2, lan3 | trunk | PVID 10 untagged (AP management), 20/60/70 tagged | AP1, AP2 (measured in Phase 4) |
 | M30 radios | - | `home`->20, `iot`->60, `guest`->70 | Wi-Fi clients |
 | AP uplink port (`lan1` on AP1, `lan2` on AP2 [VERIFIED]; a per-device variable) | trunk uplink | as lan3/lan4; DHCP off, no routing | M30 |
-| AP other LAN port | disabled | not a bridge member | - |
+| AP other LAN port | AP1: unused, not a bridge member. AP2: access, trusted (20) untagged | as stated | AP2: a family PC |
 | Node 1 TX201 / Node 2 UE302C | point-to-point | 10.0.99.0/29 | each other |
 | PBS VM second vNIC | Hyper-V Default Switch (NAT) | egress allow-list only | updates, notifications |
 
@@ -543,7 +543,7 @@ Scenario: Node 1 is destroyed; the router, Node 2, GitHub, Cloudflare, B2 and Bi
 
 Steps:
 
-0. **[M]** Only if Node 2 is also gone: any laptop, set to the static address 192.168.1.196 on router port lan2; tooling from `mise.toml`; both repositories cloned; the recovery age key and recovery SSH key taken from Bitwarden.
+0. **[M]** Only if Node 2 is also gone: any laptop, set to the static address 192.168.1.196 on router port lan4; tooling from `mise.toml`; both repositories cloned; the recovery age key and recovery SSH key taken from Bitwarden.
 1. **[M]** Obtain an x86-64-v2 host with >= 16 GiB RAM and VT-x; BIOS checklist; cable NIC 1 to router lan1 (already PVID 10 + tagged 50, so no router change).
 2. **[S]** If the hardware differs, edit the DR variables (NIC filter, disk filter) listed in the runbook; `just pve-iso`. **[M]** Write to USB and boot. **[A]** Proxmox installs itself with its final address and the SSH keys.
 3. **[S]** `just ansible pve-bootstrap`, then `just ansible pve` -> **[A]** users, bridges, firewall, roles, exporters, chrony, PBS storage, timers. **[S]** Re-minted API token secrets (shown once) are committed SOPS-encrypted to the private repository and the new PVE CA certificate to the public one. (Restoring `/etc/pve/priv/token.cfg` from the PBS host backup is the alternative that avoids re-minting.)

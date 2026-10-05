@@ -1,0 +1,6 @@
+---
+# Access point 1. Its uplink to the router (router port lan2) is its own lan1.
+openwrt_ap_uplink_port: lan1
+# No wired device on the spare port, so it is not part of the bridge.
+openwrt_ap_access_ports: []
+openwrt_ap_mgmt_ip: 10.0.10.2

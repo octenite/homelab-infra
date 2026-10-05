@@ -1,5 +1,6 @@
-{# Managed by Ansible. Source of truth: this template plus the private inventory.
-   Derived from the live device on 2026-10-05 (uci export dhcp). #}
+{# Managed by Ansible. Shared by all access points.
+   An access point hands out no addresses: the router does that for every
+   network. dnsmasq stays only as the device's own resolver. #}
 config dnsmasq
 	option domainneeded '1'
 	option boguspriv '1'
@@ -22,14 +23,9 @@ config dnsmasq
 	option filter_aaaa '0'
 	option filter_a '0'
 
-config dhcp 'lan'
-	option interface 'lan'
-	option start '100'
-	option limit '150'
-	option leasetime '12h'
-	option dhcpv4 'disabled'
+config dhcp 'mgmt'
+	option interface 'mgmt'
 	option ignore '1'
-	option dynamicdhcp '0'
 
 config odhcpd 'odhcpd'
 	option maindhcp '0'

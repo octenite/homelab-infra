@@ -69,6 +69,17 @@ openwrt-apply target:
     export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
     ansible-playbook playbooks/openwrt-apply.yaml -e "target={{target}}"
 
+# Verify a device against Git and disarm a pending revert (after an apply left unverified on purpose).
+openwrt-confirm target:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
+    cd infrastructure/ansible
+    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
+    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
+    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
+    ansible-playbook playbooks/openwrt-confirm.yaml -e "target={{target}}"
+
 # Install the authorised SSH keys from the inventory on network devices.
 openwrt-ssh-keys target="openwrt":
     #!/usr/bin/env bash

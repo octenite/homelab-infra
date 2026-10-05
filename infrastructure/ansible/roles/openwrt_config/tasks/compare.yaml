@@ -15,8 +15,14 @@
   changed_when: false
 
 - name: Render the configuration files locally
+  # A file in templates/<host>/ wins; otherwise the shared file of the
+  # device's template group (templates/<group>/) is used.
   ansible.builtin.template:
-    src: "{{ inventory_hostname }}/{{ item }}.j2"
+    src: >-
+      {{ lookup('ansible.builtin.first_found',
+                files=[inventory_hostname ~ '/' ~ item ~ '.j2',
+                       (openwrt_config_template_group | default('no-group')) ~ '/' ~ item ~ '.j2'],
+                paths=[role_path ~ '/templates']) }}
     dest: "{{ openwrt_config_render_local }}/{{ item }}"
     mode: "0600"
   loop: "{{ openwrt_config_managed }}"
