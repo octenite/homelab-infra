@@ -11,7 +11,7 @@ Nothing here is physically highly available. There is one host, one disk and one
 | 0 | Discovery, design, owner decisions, device inventories | Complete |
 | 1 | Repositories, standards, pinned tooling, secret handling, CI | Complete |
 | 2 | Router segmentation: VLANs, firewall matrix, DNS, DHCP, NTP | Done, see [the record](docs/phases/phase-2.md) |
-| 4 | Access points: trunks, guest and IoT networks, hardening | Next, see [the plan](docs/phases/phase-4-plan.md) (moved ahead of Phase 3 by the owner) |
+| 4 | Access points: trunks, guest and IoT networks, hardening | Done except the guest switch, see [the record](docs/phases/phase-4.md) |
 | 3, 5 to 15 | Hypervisor, cluster, platform, applications, recovery drill | Not started |
 
 Gate records are in [docs/phases/](docs/phases/). No phase starts before the previous gate is recorded.

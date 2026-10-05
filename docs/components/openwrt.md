@@ -10,7 +10,7 @@ The D-Link M30 routes between the home networks and the internet, enforces the f
 - Six firewall zones, default deny between them and towards the router. Every allow rule carries the ID of its exception, E1 to E13.
 - DNS: dnsmasq answers every network and forwards to a local smartdns instance. Client networks cannot use another resolver: such queries are redirected to the router.
 - IPv6 is off on every internal network.
-- The access points bridge Wi-Fi into the trusted network until Phase 4 gives them VLAN trunks.
+- Each access point is connected by a trunk and bridges the trusted, IoT and guest networks between Wi-Fi and the router. It has an address in the management network only, and its own small firewall protects that address.
 
 ## Dependencies
 
@@ -21,11 +21,15 @@ The D-Link M30 routes between the home networks and the internet, enforces the f
 
 Ansible, from the operator workstation, never from CI.
 
-- Role `infrastructure/ansible/roles/openwrt_config`: one template per configuration file and device.
+- Role `infrastructure/ansible/roles/openwrt_config`: one template per configuration file. Files shared by all access points are in `templates/access-point/`; a file in `templates/<host>/` takes precedence. Per-device values are in `playbooks/host_vars/`.
 - Inventory, identifiers and secrets: the private repository, `ansible/inventory/`.
 - `just openwrt-check` compares; `just openwrt-apply <host>` applies.
 
-An apply snapshots the current files on the device, starts a five-minute revert timer there, installs the new files, reloads the affected services, logs in again, compares, runs health checks from the device and from the workstation, and only then cancels the timer. If any of that fails, the device restores itself.
+An apply snapshots the current files on the device, starts a five-minute revert timer there, installs the new files, reloads the affected services, logs in again, compares, runs health checks from the device and from the workstation, and only then cancels the timer. If any of that fails, the device restores itself. Each change arms its own flag, so a timer left from an earlier change can never undo a later one.
+
+A change that needs two devices at once, such as an access point and its router port, is applied in four steps: the access point unverified with a long timer, the router unconfirmed with a shorter one, then `just openwrt-confirm` for the access point on its new address, then for the router. If the access point does not answer, nothing is confirmed and both restore themselves.
+
+Extra package on the router: `ip-bridge`, for reading the bridge's address and VLAN tables (`bridge fdb show`, `bridge vlan show`).
 
 ## Configuration
 
@@ -46,7 +50,7 @@ Firmware updates use the router's `owut` tool, which keeps the installed package
 - LuCI on the router listens on the loopback address and is reached through an SSH tunnel (`just luci`).
 - Only the workstation's address may reach the router's SSH and the hypervisor (exceptions E1 to E3). The address is bound to its network card.
 - The root password still works on the serial console and in LuCI. It is the way in if both keys are lost.
-- The access points are not hardened yet: Phase 4.
+- The access points are hardened the same way: key-only SSH, LuCI on loopback, and a firewall that admits only the workstation.
 
 ## Backup
 
