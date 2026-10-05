@@ -1,6 +1,6 @@
 # Phase 2 plan: router segmentation
 
-Status: **preparation done; the changes wait for the owner's "start".** The maintenance window is granted. Steps 2.0 and 2.1 are complete and changed nothing on any device. The design behind this plan is `docs/ARCHITECTURE.md` section 6: the VLAN plan, the port table, the firewall matrix with exceptions E1 to E13, and the DNS, DHCP and NTP rules.
+Status: **executed on 2026-10-05. The outcome, test results and deviations are in `phase-2.md`.** This file is kept as the plan that was approved. The design behind this plan is `docs/ARCHITECTURE.md` section 6: the VLAN plan, the port table, the firewall matrix with exceptions E1 to E13, and the DNS, DHCP and NTP rules.
 
 Scope: the D-Link M30, plus one small addition on each access point in step 2.7 (the new main Wi-Fi network). The access points get their VLAN trunks in Phase 4.
 

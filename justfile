@@ -58,6 +58,30 @@ openwrt-check target="openwrt_routers":
     fi
     ansible-playbook playbooks/openwrt-check.yaml -e "target={{target}}"
 
+# Apply Git to a network device. Guarded: the device reverts by itself unless the change verifies.
+openwrt-apply target:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
+    cd infrastructure/ansible
+    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
+    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
+    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
+    ansible-playbook playbooks/openwrt-apply.yaml -e "target={{target}}"
+
+# Install the authorised SSH keys from the inventory on network devices.
+openwrt-ssh-keys target="openwrt":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd infrastructure/ansible
+    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
+    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
+    ansible-playbook playbooks/openwrt-ssh-keys.yaml -e "target={{target}}"
+
+# Open the router's LuCI through an SSH tunnel: https://localhost:8443 (Ctrl+C closes it).
+luci host="192.168.1.53":
+    SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}" ssh -N -L 8443:127.0.0.1:443 root@{{host}}
+
 # YAML syntax and style.
 yaml:
     yamllint --strict .

@@ -287,6 +287,8 @@ Levers, in order: trim `talos-cp-1` to 2.5 GiB and give the worker 9.5 (+0.5 GiB
 
 **Today [VERIFIED]:** one flat network 192.168.1.0/24, router at .53, APs at .2 and .3, an ESP32 at .222, no VLANs. Inventory [VERIFIED]: the M30 runs OpenWrt 25.12.2 with one bridge over lan1-lan4 and no VLAN filtering; its WAN is a static address in 172.16.131.128/26 on a cloned MAC address, which is kept as a private inventory variable because the ISP presumably binds the service to it; a second WAN interface is defined but disabled; the LAN zone accepts everything; SSH password login is on and LuCI listens on every interface. Both access points are v1 hardware on 25.12.4 and 25.12.5, with DHCP off.
 
+**As built (Phase 2, 2026-10-05).** The router carries this plan since Phase 2; the record with the test results is `docs/phases/phase-2.md`. Three points differ from the text below and are stated there: the three Wi-Fi networks carry the owner's own names, kept in the private inventory (the placeholders `home`, `iot` and `guest` below stand for main, IoT and guest); the network name in use before the split becomes the guest network on all devices at once in Phase 4, and until then it still leads into the trusted network; the access-point work (Phase 4) runs before the hypervisor reinstall (Phase 3) by the owner's decision.
+
 **VLAN and IP plan [PROPOSAL].**
 
 | VLAN | Zone | Subnet | Router | Members |
@@ -330,15 +332,15 @@ Why this plan: keeping 192.168.1.0/24 as VLAN 20 means no household device is re
 | WAN | - | deny | deny | deny | deny | deny | drop |
 
 Each exception is one commented rule in Git carrying its ID:
-- **E1** workstation 192.168.1.196 -> router input tcp 22. LuCI is reached through that SSH session (`ssh -L`), not through a firewall rule.
+- **E1** workstation 192.168.1.196 -> router input tcp 22. LuCI listens on the router's loopback address only (as built in Phase 2) and is reached through that SSH session (`just luci`), not through a firewall rule.
 - **E2** workstation -> mgmt: pve1 tcp 22, 8006; AP1/AP2 tcp 22; ICMP.
 - **E3** workstation -> 10.0.50.10:6443 (Kubernetes API), 10.0.50.11 and .21:50000 (Talos API), and 10.0.50.201 tcp 443 (admin listener: Argo CD, OpenBao, Grafana, Prometheus, Alertmanager, Authentik admin interface).
 - **E4** trusted -> 10.0.50.200 tcp 443 and 80 (redirect). Household listener only, never node addresses and never the admin listener.
 - **E5** servers -> WAN: tcp 443; udp/tcp 53 to 1.1.1.1 and 9.9.9.9 only (cert-manager's recursive self-check, mandatory with split-horizon DNS [R-v]). NTP and ordinary DNS go to the router. In Phase P only: tcp and udp 7844 (cloudflared). Finer FQDN filtering is done by Cilium.
 - **E6** worker address 10.0.50.21 (.22 reserved) -> pve1 tcp 8006 (CSI, pve-exporter, blackbox certificate probe).
 - **E7** worker address -> pve1 tcp 9100, 9633; -> AP1/AP2 tcp 9100; -> router input tcp 9100 and ICMP on its VLAN 50 address.
-- **E8** iot -> WAN: allowed and logged for 14 days because the ESP32's needs are unknown, then narrowed to the observed ports (X11, removal task).
-- **E9** trusted -> iot: per-device rules only (ports for the ESP32 to be determined); iot never initiates to trusted.
+- **E8** iot -> WAN: allowed. It is narrowed to the ports the devices use once the device list is known (X11, removal task). It is not logged: the router keeps its log in memory only.
+- **E9** trusted -> iot: the trusted network may open connections to the IoT network, so a phone can operate IoT devices (owner decision, 2026-10-05; widened from per-device rules). The IoT network never initiates to trusted.
 - **E10** p2p link (outside the router, enforced on the three hosts): `pve-firewall` allows pve1 -> 10.0.99.3 tcp 8007 only and nothing inbound; Windows Firewall blocks all inbound on the p2p vNIC, whose profile is pinned to Public by the idempotent PowerShell; nftables in the PBS guest allows 8007 from 10.0.99.1 and .2 and 22 from .2 only and drops the rest on both vNICs. The segment is part of the Phase 3 deny-test gate.
 - **E11** pve1 and the two AP addresses -> WAN tcp 80, 443 (package updates, notification webhooks).
 - **E12** pve1 -> 10.0.50.200 tcp 443 (the read-only OIDC realm, from Phase 11). This replaces the earlier blanket "mgmt -> servers" rule.
