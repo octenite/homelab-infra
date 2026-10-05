@@ -2,13 +2,32 @@
 
 Purpose: create the two age identities that every SOPS file is encrypted to, without a private key ever being written to disk in readable form. The workstation's disks are not encrypted (exception X23), so this matters.
 
-Who: the owner, once, in a WSL terminal inside the repository (so the pinned `age` is on the path). Nobody else can do this step, because it needs a passphrase only the owner knows.
+Who: the owner, once, in a WSL terminal inside the repository. Nobody else can do this step, because it needs a passphrase only the owner knows.
+
+## 0. Before you start
+
+The pinned tools are provided by mise, per repository. Two things must be true, or the shell answers `mise: command not found` or `age-keygen: command not found`:
+
+1. **Use a terminal opened after mise was installed.** `~/.bashrc` activates mise, and a terminal that was already open does not see it. Open a new WSL tab, or run `source ~/.bashrc` in the old one. Keep the terminal that holds the SSH agent open.
+2. **Be inside the repository.** The tools are only on the path there.
+
+```sh
+cd /mnt/d/Dev/homelab-infra
+age --version        # must print v1.x; if not, see the two points above
+```
+
+If `~/.bashrc` has no mise line (a new machine), add these two and reopen the terminal:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+eval "$(mise activate bash)"
+```
 
 ## 1. Operator key (daily use, stays on the workstation, passphrase-protected)
 
 ```sh
 mkdir -p ~/.config/sops/age && chmod 700 ~/.config/sops/age
-mise exec -- age-keygen | mise exec -- age -p -a -o ~/.config/sops/age/operator.age
+age-keygen | age -p -a -o ~/.config/sops/age/operator.age
 ```
 
 - `age-keygen` prints one line starting `Public key: age1...`. Copy that line.
@@ -18,7 +37,7 @@ mise exec -- age-keygen | mise exec -- age -p -a -o ~/.config/sops/age/operator.
 ## 2. Recovery key (offline, never on the workstation)
 
 ```sh
-mise exec -- age-keygen
+age-keygen
 ```
 
 - It prints three lines. Store all three in the password manager as "homelab age recovery key", and write them on the two paper copies.
