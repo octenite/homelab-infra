@@ -1,0 +1,10 @@
+---
+# Access points: only the wireless configuration is managed until Phase 4
+# models the rest.
+openwrt_config_managed:
+  - wireless
+
+# An access point is healthy when it reaches the router and resolves through it.
+openwrt_config_health_commands:
+  - "ping -c 2 -W 2 192.168.1.53"
+  - "nslookup openwrt.org 192.168.1.53"

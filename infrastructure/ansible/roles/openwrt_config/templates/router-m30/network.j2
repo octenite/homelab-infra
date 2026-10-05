@@ -18,8 +18,18 @@ config device
 	list ports 'lan3'
 	list ports 'lan4'
 
-config interface 'lan'
+{# Step 2.5: the bridge filters VLANs; today's network is VLAN 20, untagged
+   on every port, so no client sees a change. #}
+config bridge-vlan 'vlan20'
 	option device 'br-lan'
+	option vlan '20'
+	list ports 'lan1:u*'
+	list ports 'lan2:u*'
+	list ports 'lan3:u*'
+	list ports 'lan4:u*'
+
+config interface 'lan'
+	option device 'br-lan.20'
 	option proto 'static'
 	option ip6assign '60'
 	option multipath 'off'

@@ -1,0 +1,7 @@
+---
+# The router is healthy when its WAN gateway answers, DNS resolves through
+# the local resolver chain, and the firewall configuration loads cleanly.
+openwrt_config_health_commands:
+  - "ping -c 2 -W 2 {{ openwrt_wan_gateway }}"
+  - "nslookup openwrt.org 127.0.0.1"
+  - "fw4 check"
