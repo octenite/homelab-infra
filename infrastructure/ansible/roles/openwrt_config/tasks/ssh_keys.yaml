@@ -89,6 +89,14 @@
         cmd: "rm -f /tmp/authorized_keys.armed /tmp/authorized_keys.prev"
       changed_when: true
 
+  rescue:
+    - name: Stop and let the device restore its previous keys
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: the new key list was NOT confirmed
+          (failed task: {{ ansible_failed_task.name | default('unknown') }}).
+          If the restore was already armed, the previous key file returns by itself within two minutes.
+
 - name: Report
   ansible.builtin.debug:
     msg: >-
