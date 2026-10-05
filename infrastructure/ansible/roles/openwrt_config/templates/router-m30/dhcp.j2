@@ -1,5 +1,6 @@
 {# Managed by Ansible. Source of truth: this template plus the private inventory.
-   Derived from the live device on 2026-10-05 (uci export dhcp). #}
+   One DHCP pool per client network. Management and servers use static
+   addresses only. IPv6 services are off everywhere. #}
 config dnsmasq
 	option domainneeded '1'
 	option localise_queries '1'
@@ -22,7 +23,37 @@ config dhcp 'lan'
 	option limit '150'
 	option leasetime '12h'
 	option dhcpv4 'server'
+	option dhcpv6 'disabled'
+	option ra 'disabled'
 	option force '1'
+
+config dhcp 'iot'
+	option interface 'iot'
+	option start '100'
+	option limit '100'
+	option leasetime '24h'
+	option dhcpv4 'server'
+	option dhcpv6 'disabled'
+	option ra 'disabled'
+	option force '1'
+
+config dhcp 'guest'
+	option interface 'guest'
+	option start '100'
+	option limit '100'
+	option leasetime '2h'
+	option dhcpv4 'server'
+	option dhcpv6 'disabled'
+	option ra 'disabled'
+	option force '1'
+
+config dhcp 'mgmt'
+	option interface 'mgmt'
+	option ignore '1'
+
+config dhcp 'servers'
+	option interface 'servers'
+	option ignore '1'
 
 config dhcp 'wan'
 	option interface 'wan'
@@ -32,6 +63,13 @@ config dhcp 'wan'
 	option limit '150'
 	option dhcpv4 'disabled'
 
+{# The firewall admits the operator workstation by address (E1 to E3), so
+   that address is bound to its network card. #}
+config host 'workstation'
+	option name 'workstation'
+	list mac '{{ openwrt_workstation_mac }}'
+	option ip '192.168.1.196'
+
 config odhcpd 'odhcpd'
 	option maindhcp '0'
 	option leasefile '/tmp/odhcpd.leases'
@@ -39,4 +77,3 @@ config odhcpd 'odhcpd'
 	option loglevel '4'
 	option piodir '/tmp/odhcpd-piodir'
 	option hostsdir '/tmp/hosts'
-

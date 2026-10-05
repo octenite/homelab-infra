@@ -1,13 +1,13 @@
 {# Managed by Ansible. Source of truth: this template plus the private inventory.
-   Derived from the live device on 2026-10-05 (uci export network). #}
+   VLAN plan and port table: docs/ARCHITECTURE.md section 6. #}
 config interface 'loopback'
 	option device 'lo'
 	option proto 'static'
 	list ipaddr '127.0.0.1/8'
 
+{# No ULA prefix: IPv6 is switched off on every internal network. #}
 config globals 'globals'
 	option dhcp_default_duid '{{ openwrt_dhcp_duid }}'
-	option ula_prefix '{{ openwrt_ula_prefix }}'
 	option packet_steering '1'
 
 config device
@@ -18,22 +18,63 @@ config device
 	list ports 'lan3'
 	list ports 'lan4'
 
-{# Step 2.5: the bridge filters VLANs; today's network is VLAN 20, untagged
-   on every port, so no client sees a change. #}
+{# lan1 = Node 1: management untagged, servers tagged.
+   lan2 = workstation, lan3 and lan4 = access points: trusted untagged.
+   The access-point ports become trunks in Phase 4. #}
+config bridge-vlan 'vlan10'
+	option device 'br-lan'
+	option vlan '10'
+	list ports 'lan1:u*'
+
 config bridge-vlan 'vlan20'
 	option device 'br-lan'
 	option vlan '20'
-	list ports 'lan1:u*'
 	list ports 'lan2:u*'
 	list ports 'lan3:u*'
 	list ports 'lan4:u*'
 
+config bridge-vlan 'vlan50'
+	option device 'br-lan'
+	option vlan '50'
+	list ports 'lan1:t'
+
+config bridge-vlan 'vlan60'
+	option device 'br-lan'
+	option vlan '60'
+
+config bridge-vlan 'vlan70'
+	option device 'br-lan'
+	option vlan '70'
+
+config interface 'mgmt'
+	option device 'br-lan.10'
+	option proto 'static'
+	list ipaddr '10.0.10.1/24'
+	option delegate '0'
+
 config interface 'lan'
 	option device 'br-lan.20'
 	option proto 'static'
-	option ip6assign '60'
 	option multipath 'off'
 	list ipaddr '192.168.1.53/24'
+	option delegate '0'
+
+config interface 'servers'
+	option device 'br-lan.50'
+	option proto 'static'
+	list ipaddr '10.0.50.1/24'
+	option delegate '0'
+
+config interface 'iot'
+	option device 'br-lan.60'
+	option proto 'static'
+	list ipaddr '10.0.60.1/24'
+	option delegate '0'
+
+config interface 'guest'
+	option device 'br-lan.70'
+	option proto 'static'
+	list ipaddr '10.0.70.1/24'
 	option delegate '0'
 
 config interface 'wan'
@@ -54,4 +95,3 @@ config interface 'jiowan'
 	option multipath 'off'
 	option metric '2'
 	option auto '0'
-
