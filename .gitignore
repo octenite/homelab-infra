@@ -1,0 +1,22 @@
+# Secrets and credentials must never be committed. The policy test and gitleaks
+# are the enforcement; this file only keeps accidents out of `git status`.
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform/
+kubeconfig
+talosconfig
+.env
+.env.*
+*.pem
+*.key
+*.age
+*.iso
+
+# Tool caches and editor noise
+.venv/
+__pycache__/
+node_modules/
+.DS_Store
+Thumbs.db
+*.swp

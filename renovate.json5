@@ -1,0 +1,28 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:best-practices",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":timezone(Asia/Kolkata)",
+  ],
+  minimumReleaseAge: "3 days",
+  // The private companion repository is pinned by hand.
+  "git-submodules": { enabled: false },
+  mise: {
+    managerFilePatterns: ["/(^|/)mise\\.ci\\.toml$/"],
+  },
+  packageRules: [
+    {
+      description: "Tooling that cannot reach a host or the cluster may merge itself after green CI",
+      matchManagers: ["github-actions", "mise", "pre-commit"],
+      automerge: true,
+    },
+    {
+      description: "Everything that deploys is a reviewed pull request, grouped into the monthly window",
+      matchFileNames: ["kubernetes/**", "infrastructure/**"],
+      automerge: false,
+      schedule: ["on the first day of the month"],
+    },
+  ],
+}

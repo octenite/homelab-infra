@@ -1,0 +1,6 @@
+# Gitleaks configuration: the built-in rule set, unchanged.
+# Allowlist entries need a comment that explains why the match is not a secret.
+title = "homelab-infra"
+
+[extend]
+useDefault = true

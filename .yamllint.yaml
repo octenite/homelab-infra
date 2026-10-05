@@ -1,0 +1,14 @@
+extends: default
+
+ignore: |
+  private/
+  .git/
+
+rules:
+  line-length:
+    max: 160
+  document-start: disable
+  truthy:
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1

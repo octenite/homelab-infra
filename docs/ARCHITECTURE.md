@@ -1,0 +1,853 @@
+# Homelab Platform Architecture
+
+Status: APPROVED by the owner on 2026-10-05, with the answers recorded at the top of section 20. The follow-up choices raised by those answers were settled the same day and are recorded there. Phase 0 is closed apart from the first commit, which belongs to Phase 1. Nothing has been installed, scanned or changed. Date: 2026-10-05. This design was selected from three independently drafted proposals (resource-frugal, zero-trust-first, operability-first) scored by three reviewers. The resource-frugal proposal ranked first with all three and is the base, with ideas grafted from the other two. An adversarial review then raised 57 findings (3 blockers, 20 major, 34 minor), all resolved in this version; what was changed, and what was not adopted and why, is listed in sections 1 and 18. Companion documents: `INITIAL-ASSESSMENT.md` (current state and discovery evidence), `adr/0001-platform-stack.md` (technology choices), `research/2026-10-05-platform-research.md` (sourced evidence).
+
+Evidence labels: **[VERIFIED]** observed in discovery on 2026-10-05. **[SPEC]** user spec sheet, not observed (Node 1 is powered off). **[R-v] / [R-l] / [R-u]** research finding labelled verified / likely / unverified by the research stage (`research/2026-10-05-platform-research.md`; a label is never upgraded here). **[CHECKED url]** confirmed against a primary source on 2026-10-05 by a design agent, a judge, the red team or this synthesis. **[ESTIMATE]** sizing figure with no official source. **[ASSUMPTION]** to be confirmed, always with the phase gate that confirms it. **[PROPOSAL]** a value chosen by this design (VLAN IDs, subnets, hostnames, sizes) that the owner may change. `<zone>` is the Cloudflare zone used for the lab: `112511.xyz` (owner, 2026-10-05; exception X24). IDs: `E*` firewall exceptions (section 6), `X*` security exceptions (section 15), `Q*` decisions for the human (section 20).
+
+**Inventory results, 2026-10-05.** After the owner's answers, the router, both access points and the running Node 1 were read with the scripts in `scripts/discovery/` (read-only; raw output is kept in the private repository). Where a result differs from what the design assumed, the section named here was adjusted.
+
+| Area | Measured | Effect |
+|---|---|---|
+| Node 1 software | Proxmox VE 9.2.2, kernel 7.0.2, UEFI boot, default ext4 + LVM-thin layout, no guests, no volumes | nothing is lost by the reinstall; UEFI boot of 9.2 on this board is proven (section 3) |
+| Node 1 memory | 15.55 GiB visible to Linux; the idle default install uses about 1.65 GiB | the host estimate of 1.10 GiB looks about 0.5 GiB low; section 4 says what follows |
+| Node 1 SSD | Crucial BX500, 240 GB (223.6 GiB), DRAM-less, no power-loss protection, SATA link at 3 Gb/s, 83 % of rated life left, 414 unclean power losses logged | thin pool is about 190 GiB, not 205 (sections 3 and 8); synchronous-write speed becomes a Phase 3 gate (sections 16 and 17) |
+| Node 1 board | Gigabyte H61M-S1, BIOS F4 (2014), 2 x 8 GB DDR3-1600, microcode 0x21, DMAR tables present | an IOMMU exists after all; the design still uses no passthrough |
+| Node 1 NICs | onboard RTL8168 at 1 Gbit/s; TX201 is an RTL8125; both on `r8169`; the direct cable shows no link at either end | the two NICs can be told apart by PCI ID (section 3); the direct link needs a physical check before Phase 3 |
+| Router | M30 A1 on OpenWrt 25.12.2; no VLANs; static WAN address in 172.16.131.128/26 with a cloned MAC; a second WAN defined but disabled; DNS forced to the router, upstream through smartdns; NTP server role off; SSH password login on | patch update only; the WAN settings and DNS policy are carried into Ansible (section 6) |
+| Access points | both Mi Router 4A Gigabit v1; AP1 on 25.12.4, AP2 on 25.12.5; uplink on `lan1` (AP1) and `lan2` (AP2); about 42 MB RAM and 6.7 MB flash free | no reflash needed; the uplink port is a per-device variable (section 6) |
+
+
+Version baseline verified on 2026-10-05 (major.minor; exact patch pins live in Git and are maintained by Renovate): Proxmox VE 9.2, Proxmox Backup Server 4.2, OpenWrt 25.12, OpenTofu 1.13, bpg/proxmox 0.115, siderolabs/talos provider 0.12, Talos 1.14, Kubernetes 1.36 (deliberately not Talos' default 1.37, section 5), Cilium 1.20, Gateway API 1.6, Traefik 3.7 (patch >= 3.7.10, the first with Gateway API 1.6 support [R-v]), Argo CD 3.5, cert-manager 1.21, External Secrets Operator 2.11, OpenBao 2.7, SOPS 3.13, age 1.3, Authentik 2026.8, kube-prometheus-stack 91.x, Loki 3.7, Alloy 1.20, CloudNativePG 1.30, VolSync 0.16 (restic 0.18), Proxmox CSI 0.20, cloudflared 2026.9 [all R-v]. The Barman Cloud plugin 0.15 [R-v] is no longer part of the baseline (section 12).
+
+## 1. Design stance and executive summary
+
+Node 1 is a 2012 Ivy Bridge desktop: four threads, 16 GB DDR3 that cannot be expanded (H61 limit [R-v]), one consumer 240 GB SATA SSD (a Crucial BX500: DRAM-less, no power-loss protection, 83 % of its rated life left [VERIFIED]). The ISP uses CGNAT and no IPv6 was observed [VERIFIED], so nothing can listen on the internet. Every choice follows from those two facts.
+
+Stance: one Proxmox host, two Talos VMs (one control plane, one worker), Cilium as CNI and kube-proxy replacement with default-deny enforced from the day the first workload arrives, one Traefik instance as the Gateway API implementation with separate household and admin listeners, Argo CD reconciling one public Git repository, secrets flowing SOPS/age (bootstrap, kept in a private companion repository) to OpenBao (runtime) to External Secrets Operator (delivery), Authentik on its own small CloudNativePG cluster, and backups that are client-side encrypted before they leave the host and travel by outbound connections only (PBS on Node 2 over a direct cable, Backblaze B2 off-site).
+
+Five rules:
+
+1. **Spend RAM only where CLAUDE.md requires it or a manual step disappears.** Every component passes the section 23 test (requirement, overlap, benefit, can it wait) before it gets a RAM and CPU line.
+2. **Measure, then grow.** Every RAM figure below is an estimate until Node 1 boots. Each phase records measured numbers in `docs/platform/resource-budget.md`; nothing deploys without a line there. Standing gates: host headroom >= 1.5 GiB, worker free memory >= 10 %, host CPU idle >= 30 % over 24 h, etcd WAL fsync p99 < 25 ms; otherwise the phase stops and a lever is pulled.
+3. **Day-to-day operation depends on nothing outside the house; every external dependency is listed with its failure effect.** The operator workstation (Node 2) administers everything over the LAN from a pinned address, with a key, client certificate or second factor on every target. Remote administration is a separate optional phase. External dependencies in the baseline:
+
+| Third party | Used for | What it can do / effect when unavailable |
+|---|---|---|
+| GitHub | repositories, Actions, GHCR | holds desired state; outage: no merges or syncs of new changes, the running cluster is unaffected |
+| Mend (hosted Renovate) | dependency pull requests | can open branches and pull requests; can merge only what the ruleset lets a bot merge (tooling paths, section 14); outage: no update proposals |
+| Cloudflare | DNS zone, DNS-01; Tunnel and Access only in Phase P | controls public DNS for `<zone>`; outage: certificate renewal delayed (cert-manager renews well before expiry, about 30 days of slack on a 90-day certificate [ASSUMPTION about the lifetime in force]), LAN names still resolve locally |
+| Let's Encrypt | wildcard certificate | outage: renewal delayed |
+| Backblaze B2 | off-site backups, encrypted OpenTofu state | holds ciphertext only; outage: backups go stale (alert), `tofu plan/apply` needs the local-state break-glass (section 9) |
+| Bitwarden | root-of-trust custody | holds recovery material; outage: recovery waits, paper copies remain |
+| Telegram, healthchecks.io | alert delivery, dead-man's switch | outage: alerts not delivered; Grafana and Alertmanager still show them on the LAN |
+| factory.talos.dev, upstream image registries | Talos images, container images | needed only to build or upgrade nodes and to pull images not yet cached; the pinned Talos boot image is kept as a DR artefact in B2 and on Node 2 |
+
+   A WAN outage therefore stops updates, alert delivery and off-site copies, and nothing else. The Talos discovery service is switched off, so `discovery.talos.dev` is not a dependency [PROPOSAL; Phase 5 gate].
+4. **Privileged credentials stay on the operator workstation.** No hypervisor-administrative, router or OpenTofu credential enters the cluster or CI. The cluster holds exactly two scoped Proxmox tokens (storage attach for CSI, read-only for the exporter), listed as exception X16. Backup producers hold credentials that cannot destroy history.
+5. **Honest availability language.** Nothing here is physically highly available. The answer to failure is a tested rebuild from Git plus restore from backups: disaster recovery, not availability.
+
+Headline numbers (arithmetic in sections 4 and 5): host reserve 1.50 GiB + QEMU overhead 0.40 GiB + guests 12.00 GiB = 13.90 GiB committed against an assumed 15.60 GiB visible to Linux, leaving 1.70 GiB headroom. Inside the 9 GiB worker the platform is budgeted at 5367 MiB (5.24 GiB) and 1775 millicores of CPU requests, leaving 3289 MiB (3.21 GiB) raw for applications and 2369 MiB (2.31 GiB) after a 10 % burst reserve. Two worse cases are stated up front: expected-high (platform 6.5 GiB) leaves 1.95 GiB raw / 1.05 GiB practical; the sum of the research upper bounds (6.95 GiB) leaves 1.51 GiB raw / 0.61 GiB practical, i.e. in the research worst case this shape cannot host meaningful applications and the pre-agreed levers of Q2 apply.
+
+What changed during the adversarial review: Cilium default-deny is enforced from Phase 6 instead of audit mode until Phase 13; PostgreSQL is backed up by client-side-encrypted logical dumps and the provider-side-encrypted Barman path left the baseline; the Talos host firewall admits the pod CIDR where pods must reach host services; disaster recovery became an explicit three-stage mode chosen before bootstrap; OpenBao gained an administration path that does not depend on Authentik; SOPS ciphertext and identifying inventory moved to a private companion repository and the operator key is passphrase- or hardware-protected; admin UIs moved to a separate gateway listener reachable only from the workstation; hypervisor administration is no longer federated to the in-cluster identity provider; VLAN 10 lost its blanket rights; the Kubernetes API gets OIDC in Phase 11; Renovate automerge is limited to non-deploying tooling; the RAM budget gained an upper-bound row, a CPU ledger and a pre-agreed trigger.
+
+## 2. Target topology
+
+```
+            Internet via ISP modem (CGNAT, no IPv6 observed, no inbound possible)   [VERIFIED]
+                                   |
+   outbound only --> GitHub (public repo, private secrets repo, Actions, GHCR)
+   outbound only --> Backblaze B2 (ciphertext backups, encrypted tofu state, Object Lock)
+   outbound only --> Cloudflare (DNS zone <zone>, DNS-01; Tunnel + Access only in optional Phase P)
+   outbound only --> Telegram, healthchecks.io (alerts, dead-man's switch)
+                                   | WAN (own GMAC, never bridged)             [R-v]
++----------------------------------+-----------------------------------------------------+
+| ROUTER D-Link M30, OpenWrt 25.12 [M30 25.12.2, APs 25.12.4 and .5]                     |
+|  VLAN-aware br-lan (DSA), fw4 zones default-deny (IPv4 and IPv6), dnsmasq per VLAN,    |
+|  IPv6 RA/DHCPv6/ULA off, NTP server, split-horizon for <zone>, node-exporter-lua,      |
+|  LuCI bound to the VLAN 10 address (reached through an SSH tunnel)                     |
+|  lan1 trunk: PVID 10 + tag 50   lan2 access: 20   lan3/lan4 trunks: PVID 10 + 20,60,70 |
+|  Wi-Fi 6 radios: home->20, iot->60, guest->70                                          |
++------+--------------------------------+---------------------------+--------------------+
+       | 1 GbE                          | 1 GbE                     | 1 GbE each
++------+------------------------+  +----+----------------------+  +-+------------------+
+| NODE 1  Proxmox VE 9.2  [SPEC]|  | NODE 2 Win 11 + Hyper-V   |  | AP1 / AP2          |
+| i5-3570, 16 GiB, 240 GB SSD   |  | [VERIFIED] Ryzen 4600H,   |  | Mi Router 4A Gig   |
+| vmbr0 (onboard GbE, VLAN-     |  | 15.4 GiB, 2 TB SATA SSD   |  | OpenWrt 25.12 dumb |
+|  aware) host 10.0.10.10       |  | dock NIC: VLAN 20, static |  | AP, mgmt 10.0.10.2 |
+|  untagged = VLAN 10;          |  |  lease 192.168.1.196      |  | / .3 (no forward   |
+|  VM NICs tag 50               |  | UE302C: Hyper-V vSwitch   |  | rights), SSIDs     |
+| vmbr1 (TX201 2.5 GbE)         |  |  "p2p", host 10.0.99.2    |  | home/iot/guest     |
+|  10.0.99.1/29, no gateway     |  |  (inbound blocked)        |  | lan2 unused        |
+| ext4 root + LVM-thin pool     |  | WSL2: tooling; operator   |  +--------------------+
+| VMs:                          |  |  age key passphrase-      |
+|  talos-cp-1 2 vCPU 3 GiB      |  |  protected; no kubeconfig |
+|  talos-w-1  4 vCPU 9 GiB      |  |  or talosconfig at rest   |
+| node/smartctl exporters,      |  | disks unencrypted (X23)   |
+| chrony (2nd time source)      |  | PBS 4.2 VM 2 vCPU 4 GiB   |
++---------------+---------------+  |  vNIC1 p2p 10.0.99.3      |
+                |                  |  vNIC2 Default Switch NAT |
+                |                  |  (egress allow-list)      |
+                |                  | rclone pull-mirror of B2  |
+                |                  +------------+--------------+
+                +---- direct cable, 10.0.99.0/29, not routed ------------+
+                      carries only PVE -> PBS:8007 and iperf validation
+
+Cluster "homelab": Talos 1.14 / Kubernetes 1.36, VLAN 50 = 10.0.50.0/24 [PROPOSAL]
+  API VIP 10.0.50.10   cp-1 10.0.50.11   w-1 10.0.50.21 (w-2 .22 reserved)
+  Pods 10.244.0.0/16   Services 10.96.0.0/12   LB-IPAM pool 10.0.50.200-.219
+  Traefik: household listener 10.0.50.200 (*.<zone>), admin listener 10.0.50.201
+    (*.admin.<zone>, workstation only), both announced by Cilium L2 on VLAN 50
+  Namespaces (Pod Security baseline unless noted): kube-system, argocd, cert-manager,
+    external-secrets, openbao, gateway-internal, cnpg-system, authentik, monitoring,
+    volsync-system, etcd-backup; privileged by exception: csi-proxmox (X3b),
+    node-exporter (X3a); applications in their own namespaces
+```
+
+## 3. Proxmox host design
+
+**Constraints.** x86-64-v2 only, no AVX2 [R-v]; the firmware exposes DMAR tables, so an IOMMU is present [VERIFIED], contrary to the research expectation, and the design still uses no PCIe passthrough; the onboard NIC is a Realtek RTL8111/8168 (PCI ID 10ec:8168) and the TX201 an RTL8125 (10ec:8125) [VERIFIED]; both use the in-tree `r8169` driver and the vendor `r8125` DKMS is never installed [R-v]; Proxmox bug 7237 (Realtek links negotiating 100 Mbps on kernel 6.17) is open and its status on PVE 9.2's kernel 7.0 is unknown [R-u]. On the installed kernel 7.0.2 the onboard port links at 1 Gbit/s [VERIFIED]. The TX201 showed no link at either end of the direct cable, so the cable and both ports are checked physically before Phase 3. Node 1 runs Proxmox VE today, and the owner approved wiping it on 2026-10-05 (Q1). Before the wipe, a read-only inventory of the running host replaces spec-sheet values with measured ones (board revision, BIOS, SSD model and wear, RAM visible to Linux, NIC link speeds, IOMMU, microcode).
+
+**Install.** Official PVE 9.2 ISO, sha256 verified against the published checksum by `just pve-iso`, turned into an unattended ISO with `proxmox-auto-install-assistant prepare-iso --fetch-from iso` and an `answer.toml` template in Git [CHECKED https://pve.proxmox.com/wiki/Automated_Installation for the mechanism; the exact key names below are confirmed against that page in Phase 3]:
+- `[global]`: `fqdn = "pve1.<zone>"`, `root-password-hashed` (injected from SOPS), `root-ssh-keys` (the homelab key and the recovery key), keyboard, country, timezone.
+- `[network]`: `source = "from-answer"`, `cidr = "10.0.10.10/24"`, `gateway` and `dns` = 10.0.10.1, and a NIC filter. Both NICs share the `r8169` driver, so the filter keys on a udev property that separates the onboard port from the TX201 (PCI device ID 8168 versus 8125 is the candidate); the exact property is read with `udevadm info` in Phase 3 and is a named DR variable because a replacement board changes it.
+- `[disk-setup]`: `filesystem = "ext4"`, an explicit disk filter (a second disk must never be picked by accident), `lvm.maxroot`, `lvm.swapsize`, `lvm.minfree`.
+
+The built ISO embeds the password hash, so it is built on demand, used once and deleted, never committed (X2). First contact is defined: `just ansible pve-bootstrap` connects as `root` with the key installed by the answer file, creates the sudo user `ops`, then sets `PermitRootLogin no`; every later run uses `ops`. Console-only steps: latest BIOS for the board revision, SATA = AHCI, VT-x on, "power on after AC loss", a fresh CMOS battery (the host RTC is the cluster's fallback clock, section 6), UEFI (the existing install boots Proxmox VE 9.2 in UEFI mode with BIOS F4 [VERIFIED]); legacy BIOS + GRUB stays the fallback (both supported [R-v]).
+
+**Network boot was considered and not adopted (the owner asked for it on 2026-10-05; decision 37).** The unattended ISO above already needs no keystrokes: boot the stick and walk away. Booting the installer from the LAN instead would remove the USB stick and add a DHCP boot option and TFTP on the router, an HTTP server on Node 2 for the installer and the answer file, a firewall exception from the management VLAN to the workstation, and a DHCP lease in a VLAN that deliberately has no pool. Proxmox publishes no network-boot images; the usual route is a community script that repacks the ISO [unverified]. A standing network-boot service is also a hazard, because any machine that boots from the LAN in that VLAN would be wiped and installed. The install happens once, and again only in disaster recovery, where depending on the router and the workstation being healthy is the wrong direction. The stick-based path stays the default. Network boot can be added later as an opt-in, armed only for the duration of an install.
+
+**Storage: ext4 + LVM-thin, no ZFS.** `lvm.maxroot = 20`, `lvm.swapsize = 4`, `lvm.minfree = 4` [PROPOSAL] give about 20 GiB root, 4 GiB swap and a thin pool of roughly 190 GiB on the 223.6 GiB disk (the SSD is a 240 GB model, not 256 GB [VERIFIED]). ZFS would cost a fixed ARC (the installer default is 10 % of RAM, about 1.6 GiB here [R-v]; a 1.0 GiB cap is this design's [PROPOSAL] and needs `zfs_arc_min` checked against it [R-v]) and higher write amplification on a consumer SSD [R-l]; on a single disk it detects corruption but cannot repair it. Integrity here comes from PBS chunk verification, `restic check`, PostgreSQL restore tests and SMART monitoring. Given up: host rollback snapshots (the host rebuild is unattended install + Ansible), transparent compression, on-disk checksums. If the owner overrides to ZFS (Q3): ARC capped at 1.0 GiB and the worker shrinks from 9 to 8 GiB so the budget still closes. Thin-pool discipline: `discard=on`, `ssd=1` on every VM disk; no encryption inside the guests, so guest TRIM reaches the thin pool (section 5); `lvs` data and metadata percentages exported through the node_exporter textfile collector with alerts at 80 % and 90 %; nominal provisioning capped at 155 GiB (section 8). Swap is an OOM safety net only (`vm.swappiness=10`); swap in use above 256 MiB raises an alert because it means the budget is wrong.
+
+**Networking.** `vmbr0` on the onboard NIC, VLAN-aware, `bridge-vids 50`. The host address 10.0.10.10/24 sits untagged on `vmbr0`; router lan1 has PVID 10, so a freshly installed or rebuilt host is reachable with no VLAN configuration. This fails open (a guest NIC without a tag lands in VLAN 10), so three compensating controls are mandatory: the OpenTofu VM module requires `vlan_tag` and rejects empty, 0 and 10; a CI policy test fails any guest NIC without a tag; the weekly read-only drift job lists guest NICs through the PVE API and alerts on an untagged one. Being in VLAN 10 confers nothing by itself any more: every rule is host-scoped (section 6). The stricter tagged-only trunk was rejected because it adds a coordinated two-device change to every host rebuild, including the disaster-recovery one (decision log). `vmbr1` on the TX201 carries 10.0.99.1/29, no gateway, no guests. The hypervisor has no address in VLAN 50; the cluster reaches the PVE API through one router exception (E6). Post-install gate: `ethtool` on both NICs and a 24 h soak of the direct link. If the TX201 links at 100 Mbps, pin an older kernel with `proxmox-boot-tool kernel pin` (availability of the 6.14 series on 9.2 [R-u]) and track it as debt; if the link or the USB adapter on the far side stays unreliable, use fallback F1 (section 6).
+
+**Management plane.** `root@pam` with TOTP is break-glass only; a personal `<owner>-admin@pve` with TOTP or WebAuthn is the only account that holds `Administrator`. From Phase 11 an Authentik OIDC realm exists for convenience, mapped to the read-only `PVEAuditor` role only, with `groups-autocreate` off (groups-claim supported since PVE 8.4 [R-v]): an identity provider that runs inside the cluster must not be able to mint a hypervisor-admin session (X18). Automation identities are privilege-separated API tokens with a 12-month expiry, a 30-day expiry alert, and custom roles built from the PVE 9 privilege list (never `VM.Monitor`, never `Administrator`) [R-v]:
+- `terraform@pve` (VM.Allocate, VM.Clone, VM.Config.*, VM.PowerMgmt, VM.Audit, VM.GuestAgent.Audit, Datastore.AllocateSpace, Datastore.AllocateTemplate, Datastore.Audit, SDN.Use, Pool.Allocate, Sys.Audit, Sys.Modify), held only on the workstation; ACLs on a resource pool `talos`, `/storage/*` and `/nodes/pve1` rather than `/` wherever the API accepts it [ASSUMPTION; proven in Phase 5 and recorded, `Sys.Modify` for the image download may need a wider path].
+- `kubernetes-csi@pve` (VM.Audit, VM.Config.Disk, Datastore.Allocate, Datastore.AllocateSpace, Datastore.Audit [R-v]). Upstream grants this role at `/` [CHECKED https://github.com/sergelogvinov/proxmox-csi-plugin/blob/main/docs/install.md], which would let a compromised cluster detach or delete any disk of any VM. Here the ACL is scoped to `/vms/<worker VMIDs>` and `/storage/local-lvm` [ASSUMPTION]. Phase 7 gate: provisioning works with the scoped ACL and a negative test (touching a disk of `talos-cp-1`) is refused; if the plugin cannot work scoped, the ACL falls back to `/` and X16 records it.
+- `prometheus@pve` (PVEAuditor at `/`, granted to user and token so privilege separation stays on) [R-v]; a second PVEAuditor token `drift@pve` for the unattended drift job.
+
+No CCM identity: topology labels are set through Talos `machine.nodeLabels` (section 5). `pvecm create homelab` makes the node a one-node cluster, which the CSI plugin requires [R-v]. TLS: the node keeps the certificate issued by its own PVE cluster CA for `pve1.<zone>` and 10.0.10.10; that CA certificate (public material) is committed and handed to the three in-cluster clients (CSI, pve-exporter, blackbox) and imported once on the workstation, so no Cloudflare token lives on the hypervisor [ASSUMPTION that each client accepts a custom CA bundle; Phase 7 gate: TLS verification on for all three]. Fallback: PVE's built-in ACME DNS-01 client [CHECKED https://pve.proxmox.com/wiki/Certificate_Management] with its own `Zone:Read` + `DNS:Edit` token, which then gets a custody row and an exception.
+
+**Hardening (Ansible, idempotent).** SSH key-only with a new homelab-only key (the day-job keys on Node 2 are never used [VERIFIED they exist]) plus a recovery key whose private half lives in Bitwarden; `PermitRootLogin no` after the bootstrap play; sudo user `ops`; sshd listening on the VLAN 10 address only. `pve-firewall` at datacenter and host level, input DROP: tcp 22 and 8006 from 192.168.1.196 only; tcp 8006, 9100 and 9633 from the worker address 10.0.50.21 (.22 reserved); udp 123 from 10.0.50.11 and .21; nothing from the rest of VLAN 10 (the APs share the segment and get no access); nothing inbound on `vmbr1`. Microcode: the `non-free-firmware` component is enabled and `intel-microcode` installed, because microcode can only be loaded by the hypervisor; the Phase 3 gate records `dmesg | grep microcode` and `/sys/devices/system/cpu/vulnerabilities/*` (the last Ivy Bridge microcode is from 2019, X13). `unattended-upgrades` limited to Debian security origins, no automatic reboot; PVE packages upgraded monthly through `docs/runbooks/upgrade-pve.md`, whose first task is a verified PBS backup from the previous night. `chrony` synchronises to the router, sets `rtcsync` and serves the two Talos nodes with `local stratum 10` as fallback (section 6). KSM disabled (Proxmox documents the cross-VM side channel [CHECKED https://pve.proxmox.com/wiki/Kernel_Samepage_Merging_(KSM)]; it also hides real memory pressure). Ballooning off on every VM. `pve-no-subscription` repository (X12). Timezone set by Ansible once confirmed (information request 7). No community helper scripts. Persistent journald capped at 1 GiB.
+
+**Power.** A whole-home UPS exists (owner, 2026-10-05), so short power cuts should not reach Node 1. It has no signalling to the host today, so a long outage still ends in a hard power-off when the battery is empty. The owner reports that it switches fast enough for the desktop to ride through a power cut; a pull-the-plug test under load in Phase 3 confirms it. The unit is a generic inverter with a battery and no USB or serial port (owner, 2026-10-05), so signalling needs a small sensor: an ESP32 that measures the battery bank's DC voltage through a fused divider and reports it on the IoT VLAN. A falling voltage means the house is on battery, and a low threshold triggers an orderly shutdown of the guests and the host through NUT (`dummy-ups` driver and `upsmon`) [PROPOSAL; the NUT wiring is confirmed when it is built]. No mains-voltage wiring is involved. It is an optional task after Phase 4, when the IoT VLAN exists, with its own component document. Until it exists, the design keeps assuming that a hard power-off can happen.
+
+**Monitoring and backup of the host.** `node_exporter` and `smartctl_exporter` from the `prometheus.prometheus` Ansible collection, bound to 10.0.10.10 (SMART is invisible inside VMs [R-l]); the PVE API is scraped by an in-cluster `prometheus-pve-exporter`. PVE's native notification system sends vzdump failures and update notices to Telegram through a webhook target, independent of Kubernetes [R-l]; a vzdump hook pings healthchecks.io on success (status only, no body), so a missing backup also alerts. Host configuration: an Ansible-managed timer runs `proxmox-backup-client backup etc.pxar:/etc pve-cluster.pxar:/var/lib/pve-cluster root.pxar:/root --include-dev /etc/pve` with a client-side encryption key [R-l]; that key lives on the hypervisor, in SOPS and in Bitwarden, and never in the cluster. The authoritative rebuild path is unattended install + Ansible.
+
+## 4. VM layout and resource budget
+
+**Guests on Node 1 [PROPOSAL].**
+
+| Guest | vCPU | RAM (fixed, balloon off) | Disk (thin) | VLAN | Purpose |
+|---|---|---|---|---|---|
+| `talos-cp-1` | 2 | 3.0 GiB | 20 GiB | 50 | etcd, API server, scheduler, controller-manager; no workloads |
+| `talos-w-1` | 4 | 9.0 GiB | 48 GiB | 50 | every platform and application pod; CSI volumes attach here |
+| **Total** | 6 on 4 threads (1.5:1) | **12.0 GiB** | 68 GiB + PVs | | |
+
+`cpuunits` is weighted towards the control plane so etcd fsync is protected from application bursts. CPU is budgeted like RAM (ledger in section 5): platform CPU requests are capped at 2000 millicores of the worker's 4000, no CPU limits except on batch movers and jobs, and the standing gate of rule 2 (host idle >= 30 %, etcd fsync p99 < 25 ms) is recorded per phase. If host steal time is measured, the worker drops to 3 vCPU or gets a `cpulimit`.
+
+**Host arithmetic, recommended shape (GiB). Every line is unmeasured because Node 1 is powered off.**
+
+| Line | GiB | Status |
+|---|---|---|
+| RAM visible to Linux (16 GiB nominal less firmware/iGPU reservation) | 15.60 | ASSUMPTION; replace with `free -m` at first boot |
+| PVE services, kernel, slab (research range 1.0-1.5) | 1.10 | ESTIMATE |
+| Host exporters, chrony, backup client | 0.10 | ESTIMATE |
+| Host page-cache floor (VM disks use `cache=none`) | 0.30 | ESTIMATE |
+| **Host reserve subtotal** | **1.50** | |
+| ZFS ARC | 0.00 | by design (LVM-thin); 1.00 under the ZFS override |
+| QEMU overhead beyond guest RAM, 2 x 0.20 | 0.40 | ESTIMATE |
+| Guests, 3.0 + 9.0 | 12.00 | PROPOSAL |
+| **Committed** (1.50 + 0.00 + 0.40 + 12.00) | **13.90** | |
+| **Headroom** (15.60 - 13.90) | **1.70** (10.9 %) | |
+
+Rules: no ballooning, no overcommit, KSM off, so nothing is counted twice or assumed back. If measured "host used minus guests" exceeds 1.90 GiB, the worker shrinks by the difference through its OpenTofu variable; headroom is never traded away, because a host OOM kills a Talos VM. The optional remote-access LXC (Phase R) would cost 0.125 GiB and leave 1.575 GiB.
+
+**Measured on the existing install, 2026-10-05.** Linux sees 15.55 GiB (15918 MiB), close to the assumed 15.60. The idle default install, with no guests, uses about 1.65 GiB, against 1.10 GiB estimated for "PVE services, kernel, slab". If the reinstalled and tuned host measures the same in Phase 3, the committed total is about 14.45 GiB and headroom falls to about 1.1 GiB, below the 1.5 GiB gate. The rule above then applies: the worker is created at 8.5 GiB instead of 9.0, which takes 0.5 GiB from application room (2.31 GiB practical becomes about 1.8). The table keeps the planning figures until that measurement; nothing is resized on one reading taken 14 minutes after boot.
+
+**Topology decision: three shapes on the same 12.0 GiB guest envelope.** In-cluster figures are in MiB and use the platform table of section 5 (5367 MiB on one worker). "Node OS" is 460 for Talos, kubelet and containerd [ESTIMATE, research 300-500] plus the kubelet's 100 MiB hard-eviction threshold. These are planning figures: the real `Allocatable` is read from `kubectl describe node` in Phase 5 and the table is re-based on it.
+
+| | Single node (CP + workloads) | **1 CP + 1 worker (recommended)** | 1 CP + 2 workers |
+|---|---|---|---|
+| VM sizes (GiB) | 12.0 | 3.0 + 9.0 | 3.0 + 4.5 + 4.5 |
+| QEMU overhead (GiB) | 0.20 | 0.40 | 0.60 |
+| Committed (GiB) | 13.70 | 13.90 | 14.10 |
+| Host headroom (GiB) | 1.90 | 1.70 | 1.50 |
+| Workload-node RAM (MiB) | 12288 | 9216 | 2 x 4608 = 9216 |
+| Node OS incl. eviction threshold | 560 | 560 | 1120 |
+| Control-plane components on the workload node | 1050 | 0 (on cp-1) | 0 (on cp-1) |
+| Platform pods | 5367 | 5367 | 5367 + 365 (second node's Cilium agent 250, Envoy 60, node-exporter 25, CSI node 30) = 5732 |
+| **Raw for applications** | 12288 - 560 - 1050 - 5367 = **5311** (5.19 GiB) | 9216 - 560 - 5367 = **3289** (3.21 GiB) | 9216 - 1120 - 5732 = **2364** (2.31 GiB), split over two nodes |
+| Burst reserve, 10 % of node RAM | 1230 | 920 | 920 |
+| **Practical for applications** | 4081 (3.99 GiB) | 2369 (2.31 GiB) | 1444 (1.41 GiB) |
+| Expected-high, platform 6656 (6.5 GiB) | 4022 raw / 2792 practical | 2000 raw / 1080 practical | 1075 raw / 155 practical |
+| Research upper bound, platform 7112 (6.95 GiB) | 3566 raw / 2336 practical | 1544 raw / 624 practical | 619 raw / does not fit |
+| Talos or kubelet upgrade | full outage including the API | CP: API away a few minutes, pods keep running; worker: every application, identity and ingress are down for the drain and reboot, 5-10 minutes [ESTIMATE; measured in the Phase 11 rehearsal] | same as the middle column in practice: one worker offers 4048 MiB and the platform alone needs 5732, so a drain leaves at least 1684 MiB of platform pods Pending |
+| Application memory pressure can starve etcd / API server | yes | no | no |
+
+Control-plane VM in the two multi-VM shapes: 3072 MiB, of which about 1625 is used (Talos and kubelet 300, etcd 250, API server 650 with roughly 150 CRDs installed, controller-manager and scheduler 150, Cilium agent 200, Envoy 50, node-exporter 25) [ESTIMATE]; 1447 MiB is free and unavailable to applications. The single node recovers that 1447 plus 575 MiB of duplicated per-node overhead (300 + 200 + 50 + 25), which is exactly the 2022 MiB difference between the first two columns.
+
+**Recommendation: 1 control plane + 1 worker.** Reasons: (1) etcd and the API server are isolated from application memory pressure, and the API is the tool used to recover from every other failure; (2) the worker is pure cattle and can be resized or rebuilt by OpenTofu without touching etcd; (3) control-plane upgrades do not restart workloads; (4) two workers do not deliver rolling upgrades on this host, as the arithmetic shows, so paying 925 MiB for a second one would buy a claim the design cannot honour. The price against a single node is about 2.0 GiB of application room; 0.5 GiB of that is recoverable by trimming `talos-cp-1` to 2.5 GiB once measurement shows it idling below 1.8 GiB. The choice is reversible: the OpenTofu module takes `control_plane = { memory, cores, schedulable }` and a `workers` map, so single node (empty map, `schedulable = true`) and two workers (two entries) are variable changes plus one apply; CSI volumes re-attach to whichever VM runs the pod on the same Proxmox node [R-v]. A second worker is added only with an explicit list of what survives a drain and PriorityClasses to enforce it.
+
+**Pre-agreed trigger (approved with Q2 and Q8).** If the measured platform working set after Phase 12 exceeds 6.5 GiB, the levers are pulled in this order without a new design round: `talos-cp-1` to 2.5 GiB and the worker to 9.5; then Loki deferred or Pocket ID in place of Authentik (owner picks); then the single-node shape.
+
+**What is and is not HA.** Not physically HA anywhere: one host, one PSU, one SSD, one router, one uplink. A whole-home UPS exists but cannot signal the host yet (section 3). Logical resilience that exists: Talos A/B boot with automatic rollback, Argo CD self-heal, pod restarts, PBS plus off-site copies. Logical redundancy that deliberately does not exist: one etcd member, one worker, one OpenBao node, one PostgreSQL instance per cluster, one Traefik. Service statement: unavailable during maintenance windows and for the duration of any Node 1 repair; target recovery after total loss is one working day for the platform and two for data, to be measured in Phase 15.
+
+**Node 2.** Operator workstation and key custodian (WSL2 with pinned tooling and a passphrase- or hardware-protected age identity; kubeconfig and talosconfig are minted per session and never stored, section 9); PBS 4.2 as a Hyper-V Generation 2 VM (2 vCPU, 4 GiB fixed per the PBS recommendation [R-v], 32 GiB OS disk, 128 GiB fixed datastore VHDX on F:, ext4 in the guest so atime-based GC works [R-v]); the pull-mirror of the off-site buckets; the weekly read-only drift job. The owner confirmed on 2026-10-05 that the laptop is personally owned. The owner declined BitLocker because of its performance cost, so Node 2's disks stay unencrypted; the rules that compensate are exception X23 (section 15) and are a Phase 1 gate. The owner allows the PBS VM more memory and 1 TB or more on F:. Neither is needed: PBS is sized by the vendor rule for its datastore, and the datastore holds one 20 GiB VM and the host configuration. The allowance is recorded as room to grow. RAM on Node 2 (15.4 GiB [VERIFIED]): Windows and applications about 6 [ESTIMATE; the commit charge is measured over a normal work week before the numbers are fixed], PBS 4 fixed, WSL2 capped at 5 (dynamic; the toolchain typically uses 2-3). Worst case 15.0 of 15.4; typical about 13. Documented low-RAM options, in order: PBS at 3 GiB (below the vendor recommendation, adequate for a 128 GiB datastore); or the PBS VM started and stopped by the scheduled task around the backup window. Disk: 32 + 128 + up to 100 GiB mirror of the 1293 GB free on F: [VERIFIED]. The OS build 10.0.26300 [VERIFIED] looks like a preview-channel build [ASSUMPTION]; a GA channel is preferable for the only local backup target (information request 6). **Caveat:** it is a laptop that sleeps, reboots and leaves the house. Nothing on the critical path depends on it: no unsealing, no DNS, no identity, no Talos worker. Backup alerts fire on staleness, not on a single missed run.
+
+## 5. Kubernetes design
+
+**Kubernetes 1.36 on Talos 1.14.** Talos 1.14 ships 1.37 by default and supports 1.33-1.37 [R-v], but cert-manager 1.21 declares 1.33-1.36, ESO 2.11 declares 1.36, CloudNativePG 1.30 declares 1.34-1.36 [all R-v] and Cilium's stable compatibility table lists 1.33-1.36 [CHECKED https://docs.cilium.io/en/stable/network/kubernetes/compatibility/]. Renovate holds Kubernetes at the highest minor every platform component declares and steps Talos and Kubernetes one minor at a time. Talos 1.14 community support ends when 1.15 ships (planned about 2026-12-27 [R-v]), so the Phase 5 gate includes a rehearsed Talos patch upgrade through the provider.
+
+**Talos configuration.** The `siderolabs/talos` provider renders machine configuration from YAML patches in Git, applies it over the Talos API (`talos_machine`), bootstraps etcd (`talos_cluster`) and exposes kubeconfig and talosconfig as ephemeral values [R-v]. No SSH, no snippets, no talhelper. The secrets bundle from `talosctl gen secrets` is committed SOPS-encrypted in the private repository and is the authoritative copy. Rendered configuration lands in OpenTofu state, so state and plan encryption are mandatory from the first apply (section 9). The provider's `talos_machine` and `talos_cluster` resources are two weeks old [R-v]; fallback is the older `talos_machine_configuration_apply` + `talos_machine_bootstrap` pair. The module has a `bootstrap_mode` variable (`fresh` or `recover`): in `recover` it creates the VM and applies configuration but does not bootstrap etcd, so the operator can run `talosctl bootstrap --recover-from` [ASSUMPTION about the provider mechanics; this exact path is part of the Phase 5 gate].
+
+Image and installer:
+- One Image Factory schematic containing `qemu-guest-agent` only, pinned by ID. `intel-ucode` was dropped: microcode cannot be loaded inside a KVM guest, and it is installed on the hypervisor instead (section 3).
+- Boot image: the `nocloud` disk image, pulled through the PVE download API as `.raw.gz` or `.raw.zst` because PVE cannot decompress xz [R-v], with the provider's checksum attribute set. A copy of the pinned image is kept in B2 and on Node 2 as a DR artefact.
+- Installer for upgrades: `factory.talos.dev/nocloud-installer/<schematic>:<version>`, pinned and tracked by Renovate together with the boot image. Image Factory publishes installers per platform as `<platform>-installer/<schematic>:<version>` [CHECKED https://raw.githubusercontent.com/siderolabs/image-factory/main/docs/api.md]; the research note "use metal-installer everywhere" is deliberately not followed, because upgrading a nocloud node with the metal installer may change the platform. That the nocloud installer exists for the pinned version is an [ASSUMPTION] closed by the Phase 5 upgrade gate: after the rehearsed patch upgrade `talosctl get platformmetadata` still reports nocloud and the node keeps its address across a cold boot.
+- One source of truth for addresses: machine configuration is authoritative for the static address, hostname, routes and nameservers. The PVE cloud-init drive carries the same address only so the provider can reach the node for its first configuration.
+
+VM template: OVMF, q35, 4 MB EFI disk without pre-enrolled keys, CPU `host`, balloon 0, plain `virtio-scsi` (the Talos Proxmox guide warns against VirtIO SCSI Single [R-v]), `discard=on`, `ssd=1`, `cache=none`, virtio NIC with a mandatory tag, serial console.
+
+Machine-config patches: delete `KubeFlannelCNIConfig`; `KubeProxyConfig enabled: false`; `allowSchedulingOnControlPlanes: false`; kubelet `rotate-server-certificates: true` with the kubelet-serving-cert-approver [R-v]; worker `nodeLabels` `topology.kubernetes.io/region` and `zone` (both are kubelet-settable under NodeRestriction [CHECKED https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/]; confirmed at the first PVC); controller-manager and scheduler `bind-address=0.0.0.0` and etcd `listen-metrics-urls` for scraping (Talos 1.14 moved etcd HTTP endpoints to 2383 [R-v]; the port is confirmed in the lab, X8); `workloadIsolation: true` [R-v]; time from 10.0.50.1 and 10.0.10.10, DNS from 10.0.50.1; Layer-2 VIP 10.0.50.10 [R-l]; the discovery service disabled (two nodes, no KubeSpan; `talosctl health` is then given the node list explicitly [ASSUMPTION; Phase 5 gate]); `adminKubeconfig.certLifetime` shortened to 8 h [PROPOSAL; the default is one year, red-team CHECKED]; `kubernetesTalosAPIAccess` enabled for the `etcd-backup` namespace with the `os:etcd:backup` role only (X21); from Phase 11 the API-server OIDC arguments (section 10). Container images are taken from ghcr.io, quay.io and registry.k8s.io wherever upstream publishes there, because behind CGNAT the public address is shared and anonymous Docker Hub pulls may be rate-limited by other subscribers [R-u for the current limits]; an authenticated Docker Hub mirror entry in the Talos registry configuration is added only if the Phase 15 cold-rebuild measurement shows failed pulls.
+
+**No disk encryption inside the guests.** The earlier draft encrypted STATE and EPHEMERAL with `nodeID` keys. Those keys derive from the VM UUID, which sits in the Proxmox configuration on the same unencrypted SSD, so the control gave no confidentiality here (section 15) while costing dm-crypt CPU on four 2012 threads, blocking guest TRIM from reclaiming thin-pool space, and making the PBS backup of the control-plane VM incompressible. It is dropped and recorded in the at-rest ADR next to host-level encryption.
+
+**Talos ingress firewall.** `NetworkDefaultActionConfig ingress: block`, with one `NetworkRuleConfig` document per port group in Git:
+
+| Port group | On | Allowed sources |
+|---|---|---|
+| Talos API 50000 | both nodes | 192.168.1.196, 10.0.50.0/24; on cp-1 also 10.244.0.0/16 for the etcd-backup job (X21) |
+| trustd 50001 | cp-1 | 10.0.50.0/24 |
+| Kubernetes API 6443 | cp-1 | 192.168.1.196, 10.0.50.0/24, 10.244.0.0/16 |
+| kubelet 10250, node-exporter 9100, Cilium health 4240, Hubble peer 4244 | both nodes | 10.0.50.0/24, 10.244.0.0/16 |
+| controller-manager 10257, scheduler 10259, etcd metrics | cp-1 | 10.244.0.0/16 |
+| etcd client and peer 2379-2380 | cp-1 | not opened (single member) |
+
+The pod CIDR is required: with native routing and `bpf.masquerade`, traffic from a pod to another cluster node's address is not masqueraded [CHECKED https://docs.cilium.io/en/stable/network/concepts/masquerading/], so pods on the worker reach the API server, kubelet and metrics ports on cp-1 with their pod address. Without these rules Argo CD, cert-manager, ESO, CloudNativePG, CoreDNS and every Prometheus control-plane scrape would be dropped. The firewall therefore narrows host services to "VLAN 50 nodes, the pod CIDR and the workstation"; which pod may use them is decided by Cilium policy. VLAN 10 is not a source. The firewall protects host services; community reports show it does not reliably filter CNI-forwarded traffic [CHECKED https://github.com/siderolabs/talos/discussions/10347], so LoadBalancer and pod traffic are governed by Cilium policy and no NodePorts or hostPorts are used. Phase 6 gate: `talosctl get nftableschain` matches Git; a port check from VLAN 20 shows only intended ports; from a pod on the worker `kubectl get --raw /readyz` succeeds; later, all kube-prometheus-stack control-plane targets are UP with the firewall enforced (Phase 9); the Traefik LoadBalancer addresses still answer.
+
+**CIDRs [PROPOSAL].** Nodes 10.0.50.0/24, pods 10.244.0.0/16, services 10.96.0.0/12, LB-IPAM 10.0.50.200-.219. No overlap with the VLAN plan, with 192.168.1.0/24, with the ISP ranges seen in discovery (172.16.131.x, 192.168.199.x [VERIFIED]) or with 100.64.0.0/10.
+
+**Cilium 1.20 [R-v unless marked].** `ipam.mode=kubernetes`; `kubeProxyReplacement=true` with KubePrism (`localhost:7445`); native routing with `autoDirectNodeRoutes` (one L2 segment); `bpf.masquerade=true`; LB-IPAM with L2 announcements (beta; one node answers ARP, which is the topology here; fallback is a NodePort plus one router DNAT rule); `gatewayAPI.enabled=false`; L7 proxy on for the DNS proxy that `toFQDNs` needs; Hubble in the agent with relay and UI off (`hubble observe` through `kubectl exec`); one operator replica; Talos cgroup and capability settings; policy enforcement mode `default` and `policyAuditMode` off; no transparent encryption (X14); host firewall off (documented lockout risk). Cilium is installed once by `just bootstrap` from the same rendered manifests Argo CD later owns (X1).
+
+**Network policy (CLAUDE.md section 9): enforced from Phase 6, never audit mode.** The earlier draft ran policies in audit mode until Phase 13. That mechanism does not exist per namespace (audit mode is daemon-wide or per endpoint and resets on agent restart [CHECKED https://docs.cilium.io/en/stable/security/policy-creation/]) and it would have left OpenBao and the identity database without enforced policy for seven phases. Instead:
+- **Deny by construction.** One `CiliumClusterwideNetworkPolicy` selects every pod in every namespace and allows only DNS to CoreDNS. Because an endpoint selected by a policy with ingress and egress sections enters default-deny for both directions [CHECKED https://docs.cilium.io/en/stable/security/policy/intro/], a namespace that ships no allow rules has no connectivity, and a new namespace is denied without opting in. It is applied in Phase 6 through the bootstrap render path together with the explicit policies for kube-system (CoreDNS, metrics-server, the certificate approver) and adopted by Argo CD in Phase 7.
+- **Each component ships its allow policies in the same pull request that deploys it**, and its phase gate includes `hubble observe --verdict DROPPED` showing no unexpected drops for that namespace.
+- **Observation without relaxation.** When a flow has to be discovered, a policy with `enableDefaultDeny: false` (declarative, in Git) or a short per-endpoint audit is a debugging aid for one component, never a state of the cluster. No exception row is needed because nothing is relaxed.
+- CI policy test: every namespace manifest carries the labels the layer policies key on, and only an allow-list of namespaces may be labelled privileged.
+
+Per layer:
+- infrastructure (argocd, cert-manager, external-secrets, openbao, csi-proxmox, volsync-system, cnpg-system, etcd-backup): API server entity; world egress on 443 to named FQDNs only (GitHub, registries, Let's Encrypt, Cloudflare API, B2); cert-manager additionally udp/tcp 53 to 1.1.1.1 and 9.9.9.9; csi-proxmox to 10.0.10.10:8006; etcd-backup to cp-1:50000 and B2 only.
+- monitoring: Prometheus scrapes metrics ports, node addresses and the VLAN 10 exporters; Alertmanager to Telegram and healthchecks.io; Alloy to the API server and Loki only.
+- databases: each PostgreSQL accepts 5432 only from its consumer namespace, its dump job and the operator; the dump job reaches B2 only.
+- ingress: Traefik pods have their own identity; application namespaces allow ingress from `gateway-internal` only; Traefik accepts the `world` and `remote-node`/`host` entities on its listener ports.
+- OIDC back-channel (component `oidc-client`): Argo CD, Grafana and OpenBao call `https://auth.<zone>`, which resolves to the household listener address and is translated by Cilium to the Traefik pods, so FQDN or world rules do not match. The component allows egress from those namespaces to the Traefik pods on the listener port and from Traefik to the Authentik server. The API server's own OIDC discovery leaves cp-1 on the host network and is admitted by Traefik's `remote-node` rule.
+- external access (Phase P): `cloudflared` has no ingress, egress to Cloudflare edge and to `gateway-external` only; `gateway-external` accepts only `cloudflared`.
+- applications: explicit allows only; no application reaches 10.0.0.0/16 or 192.168.1.0/24 without a named exception.
+
+**In-cluster budget, worker (idle) [ESTIMATE; research gives 5-8 GiB for a full platform [R-u]].** Memory requests are set near these figures and memory limits near twice them, except PostgreSQL (Guaranteed). CPU figures are requests in millicores; there are no CPU limits. The values live in Git.
+
+| Component | MiB | CPU request (m) | Arrives in phase |
+|---|---|---|---|
+| Cilium agent 250, operator 70, Envoy 60 | 380 | 150 | 5 |
+| CoreDNS x2 | 60 | 100 | 5 |
+| metrics-server 40, kubelet-serving-cert-approver 20 | 60 | 60 | 7 |
+| Argo CD: controller 350, repo-server 200, server 90, applicationset 70, redis 30 (Dex and notifications off) | 740 | 275 | 7 |
+| Proxmox CSI controller + node plugin | 90 | 20 | 7 |
+| cert-manager (3 pods) | 110 | 30 | 8 |
+| OpenBao (1 Raft node) | 200 | 50 | 8 |
+| External Secrets Operator (3 pods) | 150 | 30 | 8 |
+| kube-prometheus-stack: Prometheus 700, operator 70, Alertmanager 40, Grafana 250 (with its two sidecars), kube-state-metrics 50, node-exporter 25 | 1135 | 305 | 9 |
+| prometheus-pve-exporter 40, blackbox exporter 30 | 70 | 20 | 9 |
+| Traefik (one Deployment, two listeners) | 100 | 50 | 10 |
+| CloudNativePG operator | 80 | 25 | 11 |
+| `pg-authentik` (512 Guaranteed) | 512 | 250 | 11 |
+| Authentik server + worker (2026.8 resource regression #26592 noted [R-v]; upstream's stated host minimum is 2 GB [R-v]) | 1000 | 250 | 11 |
+| VolSync controller (movers and dump jobs are transient) | 80 | 10 | 11 |
+| Loki monolithic 450, Alloy single Deployment 150 | 600 | 150 | 12 |
+| **Platform total** | **5367 = 5.24 GiB** | **1775** | |
+| Optional Phase P: cloudflared x2 60, Traefik external 100 | +160 | +70 | P |
+
+Cumulative memory checkpoints: 440 after Phase 5, 1330 after 7, 1790 after 8, 2995 after 9, 3095 after 10, 4767 after 11, 5367 after 12.
+
+| Case | Platform (MiB) | Raw for applications (9216 - 560 - platform) | Practical (raw - 920 burst reserve) |
+|---|---|---|---|
+| Budget | 5367 | **3289** (3.21 GiB) | **2369** (2.31 GiB) |
+| Expected-high | 6656 (6.5 GiB) | 2000 (1.95 GiB) | 1080 (1.05 GiB) |
+| Research upper bound: Cilium 500, CoreDNS 80, metrics-server and approver 80, Argo CD 950, CSI 120, cert-manager 150, OpenBao 250, ESO 200, kube-prometheus-stack 1750, exporters 100, Traefik 150, CloudNativePG operator 120, `pg-authentik` 512, Authentik 1200, VolSync 100, Loki and Alloy 850 | 7112 (6.95 GiB) | 1544 (1.51 GiB) | 624 (0.61 GiB) |
+
+With Phase P the practical budget figure is 2209. CPU: 1775 m of platform requests against the cap of 2000 m leaves at least 2000 m of the worker's 4000 m requestable by applications. The burst reserve covers VolSync movers, dump jobs, repo-server spikes and rolling restarts.
+
+Levers, in order: trim `talos-cp-1` to 2.5 GiB and give the worker 9.5 (+0.5 GiB); Prometheus series drops and 60 s scrapes; let API-only controllers (cert-manager, ESO) tolerate the control-plane taint (+0.26 GiB); shorten Loki retention or defer Loki; Pocket ID instead of Authentik and its database (about -1.5 GiB, Q8); single-node shape (+2.0 GiB) as the last resort. The trigger for pulling them without a new design round is in section 4.
+
+**Storage classes.** `proxmox-lvm-thin` (default; Proxmox CSI on `local-lvm`, `WaitForFirstConsumer`, expansion on, `Delete`) and `proxmox-lvm-thin-retain` (databases, OpenBao). No VolumeSnapshotClass: CSI snapshots are experimental full copies that need `root@pam` in the cluster [R-v]. Limits of this choice, stated here and in section 8: there is no point-in-time copy of a volume except a full CSI clone; every PV is a SCSI disk hot-plugged into the one worker VM, and the plugin looks for a free LUN in the range 1-29 [CHECKED https://raw.githubusercontent.com/sergelogvinov/proxmox-csi-plugin/main/pkg/csi/utils.go], so the plan caps attached volumes at 20. Whether the plugin marks PV disks `backup=0` is [R-u] (a read of the same source today found no explicit setting); the design does not depend on it, because the worker VM is not backed up with vzdump at all (section 12). PVE 9 compatibility of the plugin is [R-l] and is a Phase 7 gate; fallback is a Talos user volume with local-path and the same backup design.
+
+## 6. Network design
+
+**Today [VERIFIED]:** one flat network 192.168.1.0/24, router at .53, APs at .2 and .3, an ESP32 at .222, no VLANs. Inventory [VERIFIED]: the M30 runs OpenWrt 25.12.2 with one bridge over lan1-lan4 and no VLAN filtering; its WAN is a static address in 172.16.131.128/26 on a cloned MAC address, which is kept as a private inventory variable because the ISP presumably binds the service to it; a second WAN interface is defined but disabled; the LAN zone accepts everything; SSH password login is on and LuCI listens on every interface. Both access points are v1 hardware on 25.12.4 and 25.12.5, with DHCP off.
+
+**VLAN and IP plan [PROPOSAL].**
+
+| VLAN | Zone | Subnet | Router | Members |
+|---|---|---|---|---|
+| 10 | mgmt | 10.0.10.0/24 | .1 | AP1 .2, AP2 .3, pve1 .10; static only, no DHCP pool |
+| 20 | trusted | **192.168.1.0/24 kept** | .53 (unchanged) | laptops, phones, Node 2 at .196 (MAC-bound static lease), SSID `home` |
+| 30 | remote | 10.0.30.0/24 | - | reserved for optional Phase R |
+| 40 | dmz | 10.0.40.0/24 | - | reserved, not built: under CGNAT there is no inbound path to place in a DMZ |
+| 50 | servers | 10.0.50.0/24 | .1 | Talos VMs, API VIP, LoadBalancer pool |
+| 60 | iot | 10.0.60.0/24 | .1 | ESP32 and future devices, SSID `iot` |
+| 70 | guest | 10.0.70.0/24 | .1 | SSID `guest`, client isolation |
+| - | p2p | 10.0.99.0/29 | none | pve1 .1, Node 2 host .2, PBS VM .3 |
+
+Why this plan: keeping 192.168.1.0/24 as VLAN 20 means no household device is renumbered and the router keeps its address; segmentation comes from zones, not prefixes. New segments use 10.0.<VLAN>.0/24 so the third octet equals the VLAN ID and none collides with common home and hotel 192.168.x ranges or with the ISP's 172.16.131.x and 192.168.199.x [VERIFIED]. 10.0.20.0/24 is reserved so the trusted LAN can be renumbered into the same scheme later as an optional one-evening change (12 h leases). Before commit, the full traceroute is checked for 10.0.x hops (information request).
+
+**VLAN 10 confers no rights by membership.** The two consumer APs radiate the guest and IoT SSIDs and share VLAN 10 with the hypervisor, so every rule below is scoped to a host address: the AP addresses have no forward rights and no access to router SSH or LuCI, the hypervisor's own firewall ignores the rest of the segment (section 3), and the Talos firewall does not list VLAN 10. There is no DHCP pool and no spare management port: the earlier break-glass port on AP1 is removed, because break-glass no longer needs it (see Administration). Residual: someone who unplugs an AP or Node 1 inside the home and configures a static address can reach router DNS and NTP and nothing else: the hypervisor answers its SSH and UI ports only to 192.168.1.196, and a packet forged with that source from inside VLAN 10 gets its reply routed to the real workstation, so no session completes; the APs' own SSH is key-only (X10).
+
+**Ports [PROPOSAL].**
+
+| Port | Mode | VLANs | Peer |
+|---|---|---|---|
+| M30 WAN | routed, outside the bridge | - | ISP modem |
+| M30 lan1 | trunk | PVID 10 untagged, 50 tagged | Node 1 onboard NIC |
+| M30 lan2 | access | 20 untagged | Node 2 dock NIC; no vSwitch is ever bound to it and no trunk is delivered to the laptop |
+| M30 lan3, lan4 | trunk | PVID 10 untagged (AP management), 20/60/70 tagged | AP1, AP2 |
+| M30 radios | - | `home`->20, `iot`->60, `guest`->70 | Wi-Fi clients |
+| AP uplink port (`lan1` on AP1, `lan2` on AP2 [VERIFIED]; a per-device variable) | trunk uplink | as lan3/lan4; DHCP off, no routing | M30 |
+| AP other LAN port | disabled | not a bridge member | - |
+| Node 1 TX201 / Node 2 UE302C | point-to-point | 10.0.99.0/29 | each other |
+| PBS VM second vNIC | Hyper-V Default Switch (NAT) | egress allow-list only | updates, notifications |
+
+**Firewall matrix (fw4 zones, which apply to IPv4 and IPv6; default `forward=REJECT`, `input=DROP`; every non-deny cell is an exception).**
+
+| from \ to | WAN | mgmt 10 | trusted 20 | servers 50 | iot 60 | guest 70 | router input |
+|---|---|---|---|---|---|---|---|
+| mgmt 10 | E11 | - | deny | deny, E12 | deny | deny | DNS/NTP/ICMP only |
+| trusted 20 | allow | deny, E2 | - | deny, E3, E4 | deny, E9 | deny | DHCP/DNS/NTP/ICMP; tcp 22 only per E1 |
+| servers 50 | E5 | deny, E6, E7, E13 | deny | - | deny | deny | DNS/NTP/ICMP; 9100 per E7 |
+| iot 60 | E8 | deny | deny | deny | - | deny | DHCP/DNS/NTP |
+| guest 70 | allow | deny | deny | deny | deny | - | DHCP/DNS |
+| WAN | - | deny | deny | deny | deny | deny | drop |
+
+Each exception is one commented rule in Git carrying its ID:
+- **E1** workstation 192.168.1.196 -> router input tcp 22. LuCI is reached through that SSH session (`ssh -L`), not through a firewall rule.
+- **E2** workstation -> mgmt: pve1 tcp 22, 8006; AP1/AP2 tcp 22; ICMP.
+- **E3** workstation -> 10.0.50.10:6443 (Kubernetes API), 10.0.50.11 and .21:50000 (Talos API), and 10.0.50.201 tcp 443 (admin listener: Argo CD, OpenBao, Grafana, Prometheus, Alertmanager, Authentik admin interface).
+- **E4** trusted -> 10.0.50.200 tcp 443 and 80 (redirect). Household listener only, never node addresses and never the admin listener.
+- **E5** servers -> WAN: tcp 443; udp/tcp 53 to 1.1.1.1 and 9.9.9.9 only (cert-manager's recursive self-check, mandatory with split-horizon DNS [R-v]). NTP and ordinary DNS go to the router. In Phase P only: tcp and udp 7844 (cloudflared). Finer FQDN filtering is done by Cilium.
+- **E6** worker address 10.0.50.21 (.22 reserved) -> pve1 tcp 8006 (CSI, pve-exporter, blackbox certificate probe).
+- **E7** worker address -> pve1 tcp 9100, 9633; -> AP1/AP2 tcp 9100; -> router input tcp 9100 and ICMP on its VLAN 50 address.
+- **E8** iot -> WAN: allowed and logged for 14 days because the ESP32's needs are unknown, then narrowed to the observed ports (X11, removal task).
+- **E9** trusted -> iot: per-device rules only (ports for the ESP32 to be determined); iot never initiates to trusted.
+- **E10** p2p link (outside the router, enforced on the three hosts): `pve-firewall` allows pve1 -> 10.0.99.3 tcp 8007 only and nothing inbound; Windows Firewall blocks all inbound on the p2p vNIC, whose profile is pinned to Public by the idempotent PowerShell; nftables in the PBS guest allows 8007 from 10.0.99.1 and .2 and 22 from .2 only and drops the rest on both vNICs. The segment is part of the Phase 3 deny-test gate.
+- **E11** pve1 and the two AP addresses -> WAN tcp 80, 443 (package updates, notification webhooks).
+- **E12** pve1 -> 10.0.50.200 tcp 443 (the read-only OIDC realm, from Phase 11). This replaces the earlier blanket "mgmt -> servers" rule.
+- **E13** Talos node addresses 10.0.50.11 and .21 -> pve1 udp 123 (second time source).
+
+E6 and E7 are written for the worker address, but with `bpf.masquerade` every pod's traffic leaves the cluster with that address, so at the router and at `pve-firewall` "the worker" means "any pod". The discriminating control is Cilium egress policy, which is why it is enforced (Phase 6) before the CSI token is installed (Phase 7), and why the tokens themselves are scoped (X16).
+
+Admin exceptions E1-E3 are IP-based and spoofable inside VLAN 20 (X9). They are acceptable because every target behind them requires something stronger than a password: router and AP SSH are key-only and LuCI is only reachable inside that SSH session; PVE SSH is key-only and its UI requires password plus TOTP or WebAuthn; the Talos API requires a client certificate; the Kubernetes API a client certificate or, from Phase 11, OIDC with MFA; the admin listener's applications sit behind Authentik with MFA. The single-factor residues are the Grafana and Argo CD local break-glass accounts, both reachable only through E3 (X5). The pinned address is the laptop, including WSL2 and its containers, which are the admin environment by design; the PBS VM also leaves through the laptop's NAT, so a Hyper-V port ACL and the guest's own nftables deny it everything except its update and notification endpoints (10.0.10.0/24, 10.0.50.0/24 and the router's management ports are explicitly denied).
+
+**IPv6 posture.** Discovery saw no IPv6 on the WAN side; The inventory found no `wan6` interface, but a ULA prefix and a /60 assignment on the LAN bridge of all three devices, with no RA or DHCPv6 service configured [VERIFIED]. Ansible disables `wan6`, the ULA prefix and odhcpd RA/DHCPv6 on every interface, keeps an explicit IPv6 forward REJECT, and the Phase 2 and Phase 4 gates include IPv6 negative tests (no router advertisement seen, no IPv6 path between VLANs). If the ISP later offers IPv6, enabling it is a design change with its own matrix.
+
+**DHCP, DNS, NTP.** One dnsmasq DHCP section per client VLAN (20, 60, 70) and static leases for infrastructure, all rendered by Ansible (`community.openwrt` [R-v]); MAC addresses, SSIDs and other identifiers come from the private inventory (section 14). Talos nodes and VLAN 10 hosts use static addresses. Device names live in `home.arpa`.
+- Names: household applications are `app.<zone>`, admin interfaces are `name.admin.<zone>`. On the router: `list address '/<zone>/10.0.50.200'`, `list address '/admin.<zone>/10.0.50.201'` and `list address '/pve1.<zone>/10.0.10.10'`; dnsmasq answers with the most specific domain, so no ordering trick is needed. dnsmasq never forwards names under an `address=` domain, which is why `<zone>` must hold nothing else (Q5).
+- Clients that bypass the router's resolver (Android Private DNS, browser DoH, Node 2's dnscrypt-proxy [VERIFIED installed]) would get NXDOMAIN for every lab name. Two DNS-only (not proxied) wildcard records are therefore published in Cloudflare by OpenTofu: `*.<zone>` -> 10.0.50.200 and `*.admin.<zone>` -> 10.0.50.201. They disclose two private addresses and nothing else. The local `address=` entries stay, so names resolve with the WAN down (rule 3), and `list rebind_domain '/<zone>/'` is set because forwarded answers for the zone now contain private addresses [R-v]. Alternative if the owner does not want private addresses in public DNS (Q5): keep the zone local-only, serve the `use-application-dns.net` canary from dnsmasq and document "Private DNS off on the home SSID".
+- cert-manager runs with `--dns01-recursive-nameservers=1.1.1.1:53,9.9.9.9:53` and `-only` [R-v], opened in E5 and in Cilium.
+- Existing DNS policy, kept [VERIFIED present today]: the router redirects all LAN DNS on port 53 to itself, rejects DNS-over-TLS towards the internet, and resolves upstream through a local smartdns instance. The redirect is applied per client VLAN. The servers VLAN is exempt for the two resolvers of E5, otherwise cert-manager's self-check would be answered by the router.
+- NTP: the M30 serves all VLANs. Its NTP server role is off today [VERIFIED] and is enabled by Ansible; the devices' time zone setting (UTC today) is left alone. The M30 has no battery-backed clock, so after a power cut with the WAN slow or down it has no valid time to serve. The hypervisor, which has an RTC, is therefore the second source for the two Talos nodes (E13, chrony `local stratum 10`); etcd, kubelet certificates and OIDC tokens then agree on one clock even without the internet. Phase 8 gate: power-cycle everything with the WAN unplugged; the cluster returns healthy and clocks agree.
+
+**The direct link.** Backup traffic only (PVE -> PBS:8007) plus iperf validation. Default: the existing cabling, a Hyper-V external vSwitch `p2p` on the UE302C with a host vNIC (10.0.99.2) and the PBS vNIC (10.0.99.3); stability of a vSwitch on a USB NIC across sleep and resume is an [ASSUMPTION] tested by the Phase 3 soak. Pods cannot reach this link and nothing depends on that. 2.5 GbE is an optimisation, not a requirement: the source is a SATA 3 Gb/s SSD with SHA-256 computed on Ivy Bridge, and after the first run backups are incremental. **Fallback F1:** move the cable from the UE302C to Node 2's built-in Realtek GbE port (a native PCIe NIC, present and unused [VERIFIED]) and bind `p2p` there: same subnet, no router rule, no vSwitch on the laptop's uplink, 1 GbE. **Fallback F2 (last resort):** PBS over the LAN through the dock NIC with one router rule; it puts a vSwitch on the workstation's only uplink and needs a mgmt -> trusted exception, so it requires a new approval.
+
+**Administration.** From the LAN: Node 2 at its pinned address through E1-E3. LuCI stays enabled on the router and the APs, bound to their VLAN 10 address, behind the root password (Bitwarden) and reachable only through the key-only SSH session; disabling it is optional hardening. Break-glass if the workstation is dead: any machine given the static address 192.168.1.196 on a wired VLAN 20 port, with the recovery SSH key and the offline age key from Bitwarden (this is step 0 of the "Node 2 lost" runbook); OpenWrt failsafe mode; the Node 1 console. From outside the house: **not provided in the baseline.** Phase R (optional, own approval) adds it under these conditions: remote access terminates in its own VLAN 30 and fw4 zone with its own E-rows (never source-NATed into VLAN 10 or to the workstation's address), ACLs limited to the E1-E3 targets, tailnet lock, device approval, key expiry, and a GitHub identity with MFA rather than Authentik. The preferred form is a 128 MiB LXC on Proxmox in VLAN 30, so the device that enforces segmentation does not also terminate remote access; a subnet router on the M30 is the alternative after checking that the package fits its 50 MiB UBI overlay (installed size [R-u]). Either way the ISP's CGNAT range must be outside 100.64.0.0/10 [R-l]; the router's WAN address is in 172.16.131.128/26 [VERIFIED], so there is no overlap. Proxmox, PBS, the Kubernetes and Talos APIs, OpenBao, Argo CD and LuCI are never published through Cloudflare Tunnel.
+
+**Migration order and lockout guard.** Guard for every step: a `sysupgrade -b` archive and `uci export` first, both SOPS-encrypted in the private repository; changes pushed by Ansible from Node 2 on its wired port, never over Wi-Fi; each network change arms a timed revert (restore the previous config and reload after 5 minutes) that is cancelled only after the workstation reconnects and confirms; the M30's dual-UBI fallback and recovery UI (needs a Chromium browser [R-v]) are the last resort.
+1. [manual] Install the homelab and recovery SSH keys on the M30 and both APs; record release, `board_name`, IPv6 and NTP defaults; commit the encrypted exports; walk the house on the M30's radios alone and record whether coverage is acceptable. Gate: read-only inventory complete.
+2. The M30 runs 25.12.2, AP1 25.12.4 and AP2 25.12.5 [VERIFIED], so this step is a patch update of the M30 inside the 25.12 series. The path from an older release is kept for disaster recovery: bring the M30 to 25.12 (24.10 lost security support after September 2026 [R-v]) by the path its current release allows, decided from step 1: from 24.10, an in-place sysupgrade; from 23.05, either through 24.10 with a config backup at each hop or a clean flash followed by Ansible re-provisioning in a maintenance window, with the existing `uci export` modelled in Ansible first. Whether config-preserving upgrades may skip a release series is confirmed on the 25.12 release notes before scheduling [ASSUMPTION that they may not]. 25.12 replaces opkg with apk [R-v]. The matching recovery image is kept and every image is verified against the signed sha256sums.
+3. On the M30 only: VLAN-aware bridge with the existing LAN as VLAN 20 untagged on lan2-lan4 (no client-visible change) and lan1 as PVID 10 + 50 tagged (Node 1 is off [VERIFIED]); zones, the matrix, IPv6 posture, VLANs 60/70 and the `iot` and `guest` SSIDs on the M30's own radios. Gate: allow and deny cells tested from a client in each VLAN, in both address families; live `uci export` equals Git.
+4. Install Proxmox into VLAN 10 (Phase 3).
+5. Phase 4, before any cluster work: APs to 25.12 one at a time (releases <= 19.07 need `sysupgrade -n -F` and re-provisioning; v1 or v2 image chosen from `board_name` [R-v]; both units are v1 and already on 25.12 [VERIFIED], so they need a patch update only), lan3/lan4 become trunks, AP management moves to VLAN 10, the ESP32 moves to `iot`. Whether the M30's radios cover the house while an AP is down is an [ASSUMPTION] answered by the walk in step 1; if they do not, each AP is done in a window the household agrees to. Gate: full deny-matrix test; iperf3 VLAN 20 -> 50 at >= 900 Mbit/s with software offload [R-l expectation].
+
+## 7. Ingress, TLS and public exposure
+
+**Gateway: Traefik 3.7 (>= 3.7.10), one Deployment, two listeners.** Gateway API 1.6 standard-channel CRDs as their own Argo CD Application. Traefik is the research recommendation [R-v]: smallest footprint, a v1.6 conformance report, and `ExtensionRef` to a ForwardAuth Middleware for applications without native OIDC. Cilium's Gateway is rejected: all its Gateway traffic shares one reserved `ingress` identity [CHECKED https://docs.cilium.io/en/stable/network/servicemesh/gateway-api/gateway-api/], so policy cannot separate an internal from an external Gateway; internet-facing parsing would run in the CNI's proxy; and its ExternalAuth has an open regression [R-v]. The cost is about 100 MiB.
+- **Household listener** (`Gateway internal`, LoadBalancer 10.0.50.200, E4): application routes and the Authentik login flow and OIDC endpoints at `auth.<zone>`. Authentik's `/if/admin/` path is not routed here; its API has to be, because the login flows use it, and is protected by Authentik's own authorisation and admin MFA.
+- **Admin listener** (`Gateway admin`, LoadBalancer 10.0.50.201, E3, workstation only): Argo CD, OpenBao, Grafana, Prometheus, Alertmanager and the Authentik admin interface, under `*.admin.<zone>`.
+- The two Gateways bind to different Traefik entryPoints, each behind its own Service and address, so an admin hostname requested through the household address is not served [ASSUMPTION about Traefik's per-listener route binding; Phase 10 gate: an admin hostname sent to 10.0.50.200 with the right SNI and Host returns 404, and the admin address is unreachable from a phone on `home`].
+- CI policy tests: a route in a namespace labelled `tier=admin` may attach only to `Gateway admin`; a route into a namespace labelled `auth=forward` must carry the ForwardAuth `ExtensionRef` (no fail-open by omission). Phase rule: UIs without their own login (Prometheus, Alertmanager) get no route before ForwardAuth exists in Phase 11; until then they are reached with `kubectl port-forward`.
+
+**TLS.** ClusterIssuers `letsencrypt-staging` and `letsencrypt-production` (ACME DNS-01 through Cloudflare, token scoped to `Zone:Read` + `DNS:Edit` on `<zone>` [R-v]) and `internal-ca` for in-cluster TLS (the OpenBao listener). One certificate with `<zone>`, `*.<zone>` and `*.admin.<zone>`. DNS-01 is the only challenge that works under CGNAT and the only one that issues wildcards. PVE keeps the certificate from its own CA, which clients are given (section 3); PBS keeps a self-signed certificate pinned by fingerprint in the PVE storage definition.
+
+**Public exposure: nothing on day one.** Optional Phase P, when the owner names the first public application:
+- A second Traefik in `gateway-external`, ClusterIP only, reachable only from `cloudflared` pods; this boundary is enforceable because both sides have distinct pod identities.
+- `cloudflared` as a two-replica Deployment (Cloudflare's documented pattern [R-v]; rolling restarts only, both replicas die with the worker), tunnel token delivered by ESO, ingress rules in a ConfigMap in Git: one explicit hostname rule per application, then a catch-all 404, origin TLS verified.
+- Publishing takes four reviewed diffs: the HTTPRoute lists both Gateways as parents (LAN clients keep resolving the name to the household listener), the namespace label `exposure=public`, the cloudflared rule, and an explicit proxied DNS record that overrides the wildcard. A CI policy test fails a public route from an unlabelled namespace or one that is missing the internal parent.
+- Cloudflare Access (free plan, 50 seats [R-v]) as edge default-deny. Anything that sits behind a login uses an Access identity provider that enforces MFA (GitHub or Google with two-factor); e-mail one-time PIN [CHECKED https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/one-time-pin/; availability on the free plan not stated on that page] is a single factor and is accepted only for low-sensitivity applications. Authentik is deliberately not the Access identity provider: that would require publishing Authentik with an Access Bypass so Cloudflare can reach its token and JWKS endpoints. If a public application needs Authentik login for remote users, only the flow and OIDC endpoint paths of `auth.<zone>` are routed on the external gateway, behind an Access Allow policy, never Bypass; `/if/admin/` is never routed there.
+- Tunnel, DNS records and Access applications are OpenTofu resources (`infrastructure/opentofu/cloud`), applied in attended sessions with an account-level token that exists only for this phase (custody in section 9).
+- Cloudflare terminates TLS and can read tunnelled traffic (X15). No bulk media through the tunnel (CDN terms [R-l]).
+
+## 8. Storage and data
+
+**CSI: Proxmox CSI 0.20 on `local-lvm`.** A PV is a thin LV hot-plugged into the VM that runs the pod [R-v]. Rejected: Longhorn (4 vCPU and 4 GiB per node, replicas on one SSD), Rook-Ceph (> 4 GiB), democratic-csi (root-equivalent SSH credential to the hypervisor inside the cluster) [all R-v].
+
+**Capacity plan for the ~190 GiB thin pool [PROPOSAL; nominal, thin-provisioned].**
+
+| Consumer | GiB | Class | PV disks attached to the worker |
+|---|---|---|---|
+| `talos-cp-1` system disk (etcd) | 20 | VM disk | - |
+| `talos-w-1` system disk (images, emptyDir) | 48 | VM disk | - |
+| Prometheus TSDB (15 d, `retentionSize` 12 GiB) | 15 | default | 1 |
+| Loki (14 d retention; Loki does not prune when the disk fills, ingestion fails [R-v], hence retention plus an alert) | 15 | default | 1 |
+| `pg-authentik` | 8 | retain | 1 |
+| OpenBao Raft | 2 | retain | 1 |
+| Authentik media, Alertmanager | 1 + 1 | default | 2 |
+| VolSync restic cache for the one protected platform PVC (`cacheCapacity` 1 GiB [CHECKED https://volsync.readthedocs.io/en/stable/usage/restic/index.html]) | 1 | default | 1, only while the mover runs |
+| Application reserve, spent PVC by PVC through pull requests (each protected PVC also costs a 1 GiB cache volume; a `Clone` backup needs the source size again while it runs) | 34 | default | up to 13 more |
+| **Total nominal** | **145** | cap 155 GiB; alerts at 80 % and 90 % actual use | **cap 20** of the 29 LUNs the plugin can use; alert at 18 |
+
+Consequence for applications: with data, database and cache volumes an application costs two to three attachments, so the cap is reached at about five applications; beyond that, state is consolidated (several small databases in one CloudNativePG cluster per trust group) or a second worker is added. The per-VM limit is confirmed at the Phase 7 gate and recorded.
+
+**Consistency limit of the storage choice.** With CSI snapshots banned, VolSync `copyMethod: Direct` backs up a live, mounted filesystem [CHECKED same VolSync page: "Do no create a PiT copy"]. That is fine for file-only data and wrong for an embedded database, where the backup can be internally inconsistent and still "succeed". Every PVC is therefore classified in its component document: (a) files only -> `Direct`; (b) embedded database (SQLite, LevelDB and similar) -> an application-level dump or `.backup` CronJob into the PVC before the VolSync trigger, or `copyMethod: Clone` where a transient full copy fits the pool margin; (c) anything larger or busier -> move the state to CloudNativePG. The platform's only VolSync-protected PVC today is Authentik's media volume (class a).
+
+**What lives where.** Node 1 SSD: the single live copy of everything. Node 2 F: (2 TB SATA SSD, unencrypted, X23): PBS datastore and the mirror of the off-site buckets, all ciphertext. Backblaze B2: restic repositories (PVC data, PostgreSQL dumps, OpenBao snapshots), age-encrypted etcd snapshots, encrypted OpenTofu state, repository bundles. GitHub and local clones: everything declarative. Bitwarden and paper: root-of-trust secrets. Grafana, Argo CD, cert-manager and ESO are stateless by design. Each application database is its own small CloudNativePG cluster counted in the application budget; Authentik's database is not shared, so restoring an application never rolls back identity. The additional storage is one 1 TB external USB hard disk (owner, 2026-10-05); it becomes the offline copy (section 12). The owner also offered to move Node 2's 2 TB SSD into Node 1. That is not adopted now (decision 38): the SSD is the second-machine copy that 3-2-1 depends on, it holds about 500 GB of the owner's own data today, and no application needs bulk storage yet. It is revisited when the application list exists; if a media or photo application is chosen, the SSD moves to Node 1 as a data disk and the local backup copy moves to the external disk. Until then bulk media does not fit on Node 1.
+
+## 9. Secrets
+
+**Three layers.** SOPS + age: everything that must exist before or outside the cluster. OpenBao KV v2: runtime authority for what pods consume. ESO with the stable Vault provider pointed at OpenBao (the dedicated provider is Alpha [R-v]): the only delivery path. Argo CD never decrypts (upstream guidance [R-v]). No age private key in the cluster, in CI or on Node 1.
+
+**Two repositories.** The public repository holds code and manifests. Every SOPS file and the identifying inventory (MAC addresses, SSIDs, e-mail addresses, chat IDs) live in a private companion repository, mounted as a Git submodule at `private/` and pinned by commit. Reason: ciphertext in a public repository is downloadable for ever, so one later leak of an age key would expose every secret ever committed, including material that cannot simply be rotated (the cluster CA in the Talos bundle); `sops updatekeys` and `sops rotate` protect only future commits. A private repository reduces that exposure to "GitHub account compromise plus key leak" at the cost of a submodule. Argo CD never needs it (it reads no SOPS file), so the cluster still pulls a public repository without credentials. Q6 offers the alternatives.
+
+**Bootstrap chain.**
+1. age identities, all listed per path in `private/.sops.yaml`:
+   - **operator** key in WSL, never stored in the clear: a passphrase-encrypted identity loaded with `SOPS_AGE_KEY_CMD` [R-v for the variable] for each session; `age-plugin-yubikey` [R-v] is the upgrade if the owner buys hardware keys (Q15).
+   - **recovery** key, offline: Bitwarden plus two sealed paper copies in two physical locations. It is used only from an offline or live-USB environment, in drills and in real recovery, never on the daily workstation.
+   - **etcd-backup** keypair: the public half encrypts etcd snapshots in the cluster; the private half is a SOPS file wrapped to operator and recovery. Routine etcd restores therefore never touch the recovery key.
+   - **drift** key, unattended on Node 2, a recipient only for `private/drift/*.sops.yaml` (read-only credentials, see section 14).
+2. SOPS files in `private/`: OpenTofu credentials and the state passphrase; the Talos secrets bundle; Ansible variables (password hashes, Wi-Fi PSKs, webhook tokens) and the private inventory; the two bootstrap Secrets; `openbao-seed.sops.yaml` (externally issued credentials: Cloudflare DNS token, per-writer B2 keys, restic passwords, the PVE exporter token, Telegram token, healthchecks URLs); `dr.sops.yaml` (B2 read key and restic password for the OpenBao snapshot repository, so OpenBao can be restored before OpenBao exists); encrypted `uci export` and `sysupgrade -b` archives.
+3. OpenTofu runs under `sops exec-env`; state and plan files are client-side encrypted (PBKDF2 passphrase [R-v]) in a versioned B2 bucket through the S3 backend with the documented non-AWS `skip_*` flags [CHECKED https://opentofu.org/docs/language/settings/backends/s3/] and `use_lockfile` off (single operator; B2 conditional-write support is not documented [CHECKED https://www.backblaze.com/docs/cloud-storage-s3-compatible-api]). The backend combination is untested here: Phase 3 gate is an init, apply and state-pull round trip; fallback is Cloudflare R2, then local encrypted state. WAN-outage break-glass: every apply ends by saving the still-encrypted `tofu state pull` output on Node 2 (it is ciphertext, so the unencrypted disk does not matter), and a documented backend override lets `plan` and `apply` run from that copy.
+4. `just bootstrap` installs Cilium, the policy baseline and Argo CD and applies exactly **two** SOPS-decrypted Secrets through `sops exec-file` (X1): `openbao/openbao-unseal` and the Proxmox CSI token. The second is unavoidable: OpenBao's Raft volume is a CSI volume, so CSI must work before OpenBao exists. These two Secrets stay operator-applied for the life of the cluster, not only at bootstrap: `just rotate-seal-key` and `just rotate-csi-token` are the rotation procedures, and alerts fire when either Secret is missing or the token is within 30 days of expiry.
+5. OpenBao: one integrated-Raft node, `seal "static"` reading the mounted key [R-v]. Declarative self-initialisation creates the audit device, the KV mount, Kubernetes auth, the policies and the roles; the root token is never returned and is revoked after use; no recovery keys are generated and the stanzas run once only [CHECKED https://openbao.org/docs/configuration/self-init/]. Because of that, the administration path is designed in from the first start (below). The feature is young: Phase 8 gate proves it; fallback is a scripted `just openbao-init` (recovery keys returned once, root token revoked after the first `openbao-config` run).
+6. `just openbao-seed` writes the seed file into OpenBao through a `kubectl port-forward`, logging in with a 10-minute ServiceAccount token bound to a write-only `seed` role. SOPS stays the source of truth for externally issued credentials; OpenBao distributes them.
+7. Secrets generated in the cluster (Authentik secret key, OIDC client secrets, database credentials) come from ESO Password generators that run once and are written to OpenBao with PushSecret `updatePolicy: IfNotExists`; consumers read only from OpenBao [R-v for generators and PushSecret]. A rebuilt cluster therefore never overwrites a restored value with a freshly generated one.
+
+**OpenBao administration without Authentik.** The self-init stanzas include a Kubernetes-auth role `admin` (10-minute tokens) bound to a ServiceAccount `openbao/openbao-admin` that does not exist in Git or in the cluster. `just openbao-admin` creates that ServiceAccount, mints a token, runs the Git-tracked, idempotent `just openbao-config` (policies, auth roles, the OIDC auth method, per-application roles in Phase 14) and deletes the ServiceAccount; an alert fires if it exists for more than 30 minutes. This adds no new trust (cluster-admin could already read the seal key, X4), it is audited by the OpenBao audit device, and it works when Authentik is down, which matters because Authentik's own secrets are served from OpenBao. In Phase 8 the same path is used once to create recovery keys through the authenticated rotation endpoint [CHECKED https://openbao.org/docs/api/system/rotate/; that the static seal supports recovery keys is an ASSUMPTION], stored in Bitwarden and on paper as a second path that does not depend on Kubernetes auth. From Phase 11 the OIDC auth method gives humans a UI login mapped to an `apps-operator` policy (application paths only, no `sys/`, no auth or policy changes, no platform credentials), so a compromised Authentik cannot rewrite OpenBao. Phase 8 gate: an admin login and a policy change succeed with Authentik absent.
+
+**Rule: any secret that protects a backup is born in SOPS and copied to Bitwarden, never generated only in the cluster.** Otherwise losing OpenBao would make the PVC and database backups unreadable.
+
+**Custody and rotation.**
+
+| Material | Lives in | Rotation | Recovery |
+|---|---|---|---|
+| age recovery key | Bitwarden + two paper copies in two locations; used offline only | on exposure | - |
+| age operator key | WSL on Node 2, passphrase-encrypted (or on a hardware key) | yearly and on device loss: `sops updatekeys -y`; on suspected compromise the full runbook below | recovery key re-wraps |
+| age drift key | Node 2, unattended; decrypts read-only material only | yearly | re-create |
+| etcd-backup age key | public half in the cluster; private half in SOPS | on compromise | recovery key |
+| OpenBao static seal key | Kubernetes Secret + SOPS + Bitwarden + paper | yearly via `previous_key` [R-v], `just rotate-seal-key` | Raft snapshot + same key |
+| OpenBao recovery keys (if the seal supports them) | Bitwarden + paper | on exposure | scripted re-init |
+| Talos secrets bundle | SOPS | on compromise (planned cluster rebuild) | needed for etcd restore |
+| talosconfig, kubeconfig | not stored: minted per session with short lifetimes (admin kubeconfig 8 h; routine Talos work uses an `os:reader` config) | per session | regenerate from the bundle |
+| Homelab SSH key | Node 2, passphrase + agent (or a FIDO2-backed key) | yearly | recovery SSH key |
+| Recovery SSH key | private half in Bitwarden; public half authorised on every host by Ansible | on use | console |
+| PVE tokens | SOPS (terraform, CSI, drift), OpenBao (exporter) | 12-month expiry, Ansible; 30-day expiry alert | re-mint |
+| Cloudflare tokens | cert-manager DNS-01 (`Zone:Read` + `DNS:Edit` on `<zone>`): SOPS seed + OpenBao. OpenTofu DNS token (same scope): SOPS. Phase P only: account-level Tunnel/Access token in SOPS, tunnel token via ESO | yearly | re-issue |
+| B2 master key | Bitwarden only; taken out for attended `tofu apply` of the `cloud` root, never in SOPS or OpenBao | on exposure | account recovery |
+| B2 per-writer keys, read-only mirror key | SOPS seed + OpenBao; the mirror key (ciphertext-only buckets) on Node 2 | yearly | re-mint with the master key |
+| Backup passwords (restic repositories, state passphrase), PBS client key | SOPS + Bitwarden; restic passwords also in OpenBao; the PBS client key on the hypervisor, never in the cluster | on compromise only | Bitwarden |
+| Break-glass passwords (root@pam, PBS root, OpenWrt root, Grafana and Argo CD local admins, Authentik recovery admin) | Bitwarden | yearly | - |
+
+Every secret has a row in `docs/security/secrets-register.md` (owner, location, rotation trigger, procedure). The owner is the single platform admin today. Bitwarden is the one place where everything meets; it and GitHub are protected with hardware FIDO2 keys if the owner buys them (Q15), their recovery codes are on the paper copies, and the register states where each account's second factor lives.
+
+**Runbook `operator-key-compromised.md`.** A leaked operator key is not a re-wrap. Re-encryption protects only future commits; everything the key could ever read is treated as disclosed. The runbook re-issues every secret in the register: all cloud and PVE tokens, restic passwords (new repositories where history must stay confidential), the state passphrase, Wi-Fi PSKs and password hashes, the OpenBao seal key (via `previous_key`), and the Talos secrets bundle, which means a planned cluster rebuild through the DR path. It ends by rotating the GitHub credentials that can read the private repository and reviewing GitHub and B2 access logs.
+
+**Trust boundary, stated plainly (X4).** Anyone who can read Secrets in the `openbao` namespace or etcd can unseal OpenBao, and cluster-admin can mint a token for any ServiceAccount and therefore read what ESO reads. This is accepted because the alternatives (manual Shamir unseal after every power cut on a host whose UPS cannot signal it, or a second always-on system) do not fit one host.
+
+## 10. Identity
+
+Authentik 2026.8: server (with embedded outpost) and worker, no Redis, database `pg-authentik` (one CloudNativePG instance, 512 MiB Guaranteed, `enablePDB: false` so a node drain is not blocked [CHECKED https://cloudnative-pg.io/docs/devel/cloudnative-pg.v1 and https://cloudnative-pg.io/docs/devel/kubernetes_upgrade], `max_connections` >= 100 because Authentik uses about 50 % more connections since Redis was removed [R-v]). Trusted proxy CIDRs set explicitly; Base URL set (mandatory from 2026.11 [R-v]). Configuration as code through blueprints in Git. Hostname `auth.<zone>` on the household listener for flows and OIDC; the admin interface only at `auth.admin.<zone>`; not published.
+
+| Service | Integration | Mapping | Break-glass (independent of Authentik) |
+|---|---|---|---|
+| Argo CD | native `oidc.config`, Dex off [R-v] | `platform-admins` -> admin, `platform-viewers` -> readonly | local `admin` disabled; enabled by a Git change |
+| Grafana | `generic_oauth`, PKCE, strict role mapping [R-v] | admins -> Admin, viewers -> Viewer | one local admin, password only, reachable only on the admin listener |
+| OpenBao | `oidc` auth method [R-v] for the UI | admins -> `apps-operator` (application paths only) | `just openbao-admin` (Kubernetes auth), recovery keys |
+| Kubernetes API | from Phase 11: API-server OIDC arguments through Talos `cluster.apiServer` [R-l; community-confirmed, https://github.com/siderolabs/talos/discussions/6880] with `kubelogin` on the workstation | `platform-admins` -> cluster-admin, `platform-viewers` -> view (ClusterRoleBindings) | Talos-issued admin kubeconfig, minted on demand with an 8 h certificate and never stored; until Phase 11 it is the daily credential (X17) |
+| Proxmox VE | OpenID realm from Phase 11, groups-autocreate off [R-v] | admins -> `PVEAuditor` (read-only) only | `<owner>-admin@pve` with TOTP/WebAuthn holds Administrator; `root@pam` + TOTP |
+| PBS | not federated (X18): it lives on the laptop, must work with the cluster down and has no path to the gateway | - | local admin + TOTP |
+| Prometheus, Alertmanager and other UIs without a login | Traefik ForwardAuth -> Authentik outpost [R-v], on the admin listener, no route before Phase 11 | admins | `kubectl port-forward` |
+| Talos API, OpenWrt SSH/LuCI | no OIDC exists; client certificate / SSH key (X6) | - | console |
+| GitHub, Cloudflare, Backblaze, Bitwarden | own accounts, own MFA | - | recovery codes on paper |
+
+Why hypervisor and backup administration are not federated: with Administrator mapped to an Authentik group, anyone with cluster-admin or with read access to Authentik's signing key or database could forge a login and own the hypervisor, and through PBS Admin prune every backup. PVE does not apply its own second factor to OIDC users. Read-only federation keeps single sign-on for looking and keeps changing things behind a local, MFA-protected account.
+
+Groups: `platform-admins`, `platform-viewers`, `household`. The owner gets a daily account and an administrative one; no shared accounts. MFA is mandatory in the default flow (WebAuthn or passkey preferred, TOTP accepted; ente-auth is installed [VERIFIED]), with a stricter flow for admins. The bootstrap account `akadmin` is deactivated as soon as a named recovery administrator with WebAuthn and TOTP exists; if every administrator is locked out, a recovery link is created from inside the pod by a cluster administrator [R-l]. **Circularity rule (X5):** every system needed to reach or rebuild Authentik (Proxmox, PBS, the Kubernetes API, OpenBao, GitHub, Cloudflare, Bitwarden, the router) keeps an identity that is not federated to Authentik, listed in `DISASTER-RECOVERY.md` and exercised in each drill.
+
+## 11. Observability and alerting
+
+**Components (footprints in section 5).** kube-prometheus-stack with the CRDs as a separate Application, `ServerSideApply=true` and server-side diff [R-v]; Prometheus with 60 s scrapes, 15 d / 12 GiB retention and histogram and cAdvisor drops targeting about 10k series [R-v evidence]; one Alertmanager; stateless Grafana with a small hand-built dashboard set (host, cluster, network, backups, certificates), each with an owner line. Loki monolithic on a filesystem PV with the memcached caches disabled (their defaults alone would exhaust the host [R-l]). Alloy as one Deployment using the GA API log tailer, no host privileges [R-v]. Blackbox exporter probing internal HTTPS names on both listeners, the PVE certificate, DNS on the router, ICMP to the router and, in Phase P, the public hostnames (the only end-to-end proof that the tunnel works).
+
+**Pod Security.** `monitoring` (Prometheus, Grafana, Loki, Alloy, Alertmanager, the exporters) stays at `baseline`. node-exporter, which needs host namespaces, runs alone in a `node-exporter` namespace through the chart's namespace override [R-l], and the Proxmox CSI node plugin requires `csi-proxmox` to be privileged [CHECKED https://github.com/sergelogvinov/proxmox-csi-plugin/blob/main/docs/install.md]. Those two namespaces are the only privileged ones outside kube-system (X3a, X3b); each contains nothing else, no AppProject other than `platform` can deploy into them, and a CI policy test fails any other namespace that carries `enforce=privileged`.
+
+**Outside the cluster.** Proxmox host: node and smartctl exporters (E7), PVE API through pve-exporter (E6). OpenWrt: `prometheus-node-exporter-lua` with wifi, netstat, nft-counter and thermal collectors [R-v]; AP liveness is the success of that scrape, so no ICMP rule towards the APs is needed. PBS: no Prometheus endpoint exists [R-v]; its native notifications go straight to Telegram, and no community exporter is added. Node 2 is not scraped.
+
+**Audit trails, stated honestly (X19).** Authentik events and the OpenBao audit device reach Loki from Phase 12 and are kept 14 days on the same SSD; two log-based alerts watch them (OpenBao policy or auth change, Authentik administrator login). The Kubernetes API audit log is a rotating file on the control-plane node that the API-based Alloy tailer cannot collect; it is retained on the node, not centralised, and is lost on a rebuild. Talos machine logs stay on `talosctl logs` (no GA Alloy receiver [R-v]). Proxmox task logs, Argo CD history and Git are the other trails. None of this survives a compromise of the host; shipping audit streams off-host (a small Vector aggregator [R-v] and an object-locked bucket) is recorded as a later hardening task, decided in Phase 13.
+
+**Delivery, all outbound.** Alertmanager -> Telegram (native receiver [R-v]). The always-firing Watchdog -> healthchecks.io, the only way a single host reports its own death. PVE and PBS native notifications -> Telegram, independent of Kubernetes. Four healthchecks (free tier allows 20 [R-v]), all status-only pings without a body: Watchdog, nightly vzdump, weekly Node 2 mirror, weekly read-only drift job.
+
+**Initial alerts (each ships with `docs/runbooks/alert-<name>.md`; the Phase 12 gate fires each one on purpose and follows its runbook).** HostDown (heartbeat missing 10 min; inhibits everything else); NodeNotReady; HostMemoryLow (available < 600 MiB or swap > 256 MiB); WorkerMemoryPressure (< 10 % free or any OOM kill); HostCPUSaturated (idle < 30 % over 24 h or steal present); EtcdSlowDisk (WAL fsync p99 > 25 ms); ThinPoolFilling (80 % / 90 %, metadata 80 %); FilesystemFilling; AttachedVolumesHigh (>= 18 PV disks on the worker); SSDWearOrErrors; NicLinkSpeedDegraded (only while carrier is up: `node_network_carrier == 1` and speed below expected, so a sleeping or absent laptop does not fire it); ClockSkew; PodCrashLooping, with a rule that maps exit code 132 (SIGILL) to the "image needs a newer CPU level" runbook; DeploymentUnavailable; ArgoAppDegradedOrOutOfSync; CertificateExpiringSoon (< 14 d, from cert-manager and blackbox); KubeAPIDown / EtcdUnhealthy; EtcdBackupStale (24 h); PostgresProblem (instance not ready, connections near the limit); PostgresDumpStale (twice the dump interval); VolSyncBackupStale (36 h per PVC); OpenBaoSealedOrDown; OpenBaoAdminAccountPresent (30 min); BootstrapSecretMissing; PveTokenExpiring (30 d); ExternalSecretNotSynced; PrometheusRetentionSizeHit; LokiIngestionErrors; VMBackupStale (48 h, external); RouterOrAPDown (exporter scrape failing, ICMP for the router); ProbeFailed; DriftDetected; AuditEvent (the two log-based rules above); TunnelDown (Phase P). Backup alerts are staleness-based because Node 2 sleeps. No paging on CPU throttling.
+
+## 12. Backup design 3-2-1
+
+Three copies: live on Node 1, a second on Node 2's SSD, a third off-site in Backblaze B2. Two media classes: local SSD and cloud object storage. All off-site paths are outbound HTTPS. **Every backup in the baseline is encrypted by its producer before it leaves the host**; no baseline dataset relies on provider-side encryption.
+
+| Dataset | Tool | Copy 2 (Node 2) | Off-site | Frequency | Retention | Encryption (client-side) | Verification |
+|---|---|---|---|---|---|---|---|
+| `talos-cp-1` VM image, which contains etcd | vzdump -> PBS | PBS datastore | none needed: rebuilt from Git | nightly, in the owner's window | 7 d / 4 w / 3 m | PBS client key | PBS verify monthly; restore to a spare VMID quarterly |
+| `talos-w-1` | not backed up: cattle, rebuilt by OpenTofu; its PV disks are covered by the rows below, so vzdump can never capture them whatever the CSI plugin's backup flag is | - | - | - | - | - | worker rebuild rehearsed in Phase 5 |
+| Proxmox host config | `proxmox-backup-client` timer | PBS | Git holds the Ansible source | nightly | 14 d / 6 m | client key | file restore of `/etc/pve` quarterly |
+| PVC data | VolSync restic, `Direct` or `Clone` or after an application dump, per the class in section 8 [R-v] | pull-mirror | B2, one repository per PVC | nightly | 7 d / 4 w / 6 m | restic | `restic check --read-data-subset` monthly on the mirror; one PVC restored quarterly and proven by an application-level assertion (the application starts and its own integrity check passes, for example `PRAGMA integrity_check`), not by a checksum compare against a live volume |
+| PostgreSQL | CronJob per cluster: `pg_dump -Fc` into an emptyDir, then `restic backup` | pull-mirror | B2, one repository per cluster | every 6 h for `pg-authentik`; nightly by default | 7 d / 4 w / 6 m | restic | every run lists the archive with `pg_restore --list`; quarterly restore into a scratch cluster with a row-count assertion |
+| etcd | `talos-backup` CronJob, `os:etcd:backup` role [R-v] (X21) | pull-mirror | B2 | 6 h | 14 d | age, to the etcd-backup public key | `bootstrap --recover-from` through the OpenTofu `recover` mode, rehearsed in Phase 5 and each drill |
+| OpenBao | CronJob: `bao operator raft snapshot save`, then restic; also run by hand at the end of every application onboarding | pull-mirror | B2 | 6 h, half an hour before the database dumps | 30 d | restic | restore into a throwaway instance quarterly |
+| OpenTofu state | B2 backend, versioned bucket | pull-mirror + the local break-glass copy | B2 | on apply | 30 d of versions | native state encryption | `tofu plan` clean after a state restore test |
+| OpenWrt config | Ansible in Git + SOPS-encrypted `sysupgrade -b` and `uci export` in the private repository + recovery images | clone | GitHub | on change | history | SOPS | re-provision one AP from Git yearly |
+| Git repositories (public and private) | GitHub + clones | working clone | GitHub; quarterly `git bundle` of both to B2 | on push | history | SOPS for secrets | clone and decrypt with the recovery key, offline, at each drill |
+| Root-of-trust secrets | Bitwarden + two paper copies in two locations | - | Bitwarden | on change | - | Bitwarden | quarterly: decrypt one SOPS file using only the recovery key, in an offline environment |
+| Logs, metrics | none (X8b) | - | - | - | 14 d / 15 d | - | accepted loss |
+
+**PostgreSQL: why logical dumps and not Barman in the baseline.** The CloudNativePG Barman Cloud plugin can only use server-side encryption [CHECKED https://docs.pgbarman.org/release/3.20.0/user_guide/barman_cloud.html; client-provided keys are still a pull request, https://github.com/cloudnative-pg/plugin-barman-cloud/pull/1017]. Base backups and WAL of the identity database (password hashes, TOTP seeds, OIDC client secrets) would sit in B2 readable by the provider and by any holder of a bucket read key, and the mirror would land them in the clear on a laptop. Continuous WAL archiving to the cloud also couples the identity service to the WAN: CloudNativePG forces a WAL switch every 5 minutes [CHECKED https://cloudnative-pg.io/docs/devel/wal_archiving], about 4.6 GiB a day of 16 MiB segments, so an ISP or provider outage of under two days would fill an 8 GiB volume and stop PostgreSQL. Encrypted dumps avoid both problems and remove a sidecar and an operator (about 115 MiB). The price is recovery point: 6 hours for identity instead of minutes, which is acceptable for a household whose accounts and MFA enrolments change rarely. Point-in-time recovery remains available as an opt-in Kustomize component for a database whose data justifies it, under conditions that are part of the component and of exception X22 (not active in the baseline): server-side encryption at B2 accepted for that database, the mirror of its bucket written through an rclone `crypt` remote, WAL on a separate `walStorage` volume sized for a stated outage tolerance with `walSegmentSize` reduced at creation [CHECKED API reference above], alerts on archive failures over 30 minutes and on WAL volume use, and the encrypted dump kept as the copy of record.
+
+**Credentials that cannot destroy history.** The hypervisor's PBS token holds `DatastoreBackup` only; prune, GC and verify are PBS-side jobs [CHECKED https://pbs.proxmox.com/docs/user-management.html]. B2: one bucket per data class, one application key per writer, created without the delete capability where the client tolerates it. Backup buckets are created with Object Lock and a default retention of 30 days [R-v that B2 offers it and that it must be set at creation], so neither a compromised cluster key nor the workstation's credentials can erase history inside that window; a lifecycle rule removes hidden versions after the lock expires. How restic's pruning behaves on a locked, versioned bucket is an [ASSUMPTION]: the Phase 8 gate attempts a version delete with the cluster key and with the master key and runs a prune cycle; the fallback is a longer lifecycle window without the lock. The B2 master key stays in Bitwarden (section 9).
+
+**Honest limit.** For PVC, PostgreSQL and OpenBao data, copy 2 is a mirror of copy 3, not an independent backup chain. It protects against provider loss, account lockout and deletion (the mirror keeps a 30-day `--backup-dir` trash), not against corruption written by the backup producer; that is caught by `restic check` and the scheduled restores. etcd is the exception: it has two independent chains (talos-backup to B2 and the nightly PBS image of the control-plane VM). An independent second chain for everything else, pushed to a laptop that sleeps, would fail nightly; this is accepted and recorded.
+
+**PBS on Node 2 (Q10).** Sizing in section 4. With the worker out of scope the datastore holds one 20 GiB VM and the host configuration, which is why 128 GiB is ample and why "no PBS" is a legitimate lean alternative in Q10. Checkpoints disabled on the datastore disk; Secure Boot attempted with the Microsoft UEFI CA template and disabled as exception X7 if the ISO will not boot (Debian 13 is not yet in Microsoft's Hyper-V matrix [R-v]). Installed by hand from the checksum-verified ISO (one-time manual step), then configured by Ansible, including its nftables rules (E10). Prune daily, GC weekly, verify monthly. PBS is built in Phase 3, before the first guest exists, so no interim backup path is needed.
+
+**Node 2 pull-mirror.** A scheduled task runs `rclone sync` (installed [VERIFIED]) from the B2 buckets to `F:\homelab-mirror` with a read-only key, then pings healthchecks.io. Node 2 initiates, so an absent laptop delays the copy instead of failing it. Everything it downloads is ciphertext (restic repositories, age files, encrypted state), which is what makes an unencrypted F: acceptable (X23). Phase 8 and Phase 11 gate, repeated for every bucket: an object fetched with the read key is not parseable as a snapshot, dump, tarball or state file, and neither is any file under the mirror.
+
+**Offline copy on the external disk [PROPOSAL].** The 1 TB external USB hard disk is attached to Node 2 once a month, `just offline-copy` syncs `F:\homelab-mirror` to it and prints the age of the newest object in every bucket, and the disk is unplugged and stored away from the laptop. It holds ciphertext only, so it needs no encryption of its own. It is the one copy that neither a compromised credential nor ransomware on the workstation can reach, and it is not counted towards 3-2-1 because it depends on a human. Node 1 is the wrong place for this disk: its ports are USB 2.0 only [R-v], and a disk that stays attached is not offline.
+
+**Off-site (Q11).** Backblaze B2 as the single provider: USD 6.95 per TB-month, first 10 GB free, free egress up to three times stored volume [R-v]. At an assumed <= 60 GB, including the 30 days of locked history, this is under USD 1 per month. Every S3 client gets a real restore test, because SDK checksum changes broke S3-compatible targets silently in 2025-2026 [R-v].
+
+Runbooks, created with the phase that introduces each dataset: `docs/runbooks/restore-vm.md`, `restore-pve-host.md`, `restore-pvc.md`, `restore-postgres.md`, `restore-talos-etcd.md`, `restore-openbao.md`, `restore-openwrt.md`, `restore-secrets.md`, `operator-key-compromised.md`.
+
+## 13. Disaster recovery flow
+
+Scenario: Node 1 is destroyed; the router, Node 2, GitHub, Cloudflare, B2 and Bitwarden survive. **[M]** manual; **[S]** one command or one pull request by a human; **[A]** automated.
+
+**Recovery is a mode chosen before bootstrap, not a clean-up after it.** If Argo CD simply converged everything on a new cluster, stateful workloads would start on empty volumes before any restore: OpenBao would initialise empty and its backup job would upload an empty snapshot, generators would mint new secrets, databases would be created empty and Authentik would migrate one. A single Git value `mode` in the root kustomization therefore has three states, each a one-line commit made by the `just` recipe:
+- `normal`: everything syncs (the state of a healthy cluster and of a first install).
+- `dr-core`: only the CRD and platform-core ApplicationSets are rendered (Cilium, CSI, cert-manager, OpenBao, the ESO operator, Traefik, monitoring). No backup producer exists in this mode, because every producer lives in the stateful layer.
+- `dr-data`: the stateful layer and the applications are rendered with the `dr-restore` component: CronJobs suspended, VolSync ReplicationSources paused, consumers of restored data held at zero replicas, restore Jobs and ReplicationDestinations rendered with the disaster timestamp.
+
+Steps:
+
+0. **[M]** Only if Node 2 is also gone: any laptop, set to the static address 192.168.1.196 on router port lan2; tooling from `mise.toml`; both repositories cloned; the recovery age key and recovery SSH key taken from Bitwarden.
+1. **[M]** Obtain an x86-64-v2 host with >= 16 GiB RAM and VT-x; BIOS checklist; cable NIC 1 to router lan1 (already PVID 10 + tagged 50, so no router change).
+2. **[S]** If the hardware differs, edit the DR variables (NIC filter, disk filter) listed in the runbook; `just pve-iso`. **[M]** Write to USB and boot. **[A]** Proxmox installs itself with its final address and the SSH keys.
+3. **[S]** `just ansible pve-bootstrap`, then `just ansible pve` -> **[A]** users, bridges, firewall, roles, exporters, chrony, PBS storage, timers. **[S]** Re-minted API token secrets (shown once) are committed SOPS-encrypted to the private repository and the new PVE CA certificate to the public one. (Restoring `/etc/pve/priv/token.cfg` from the PBS host backup is the alternative that avoids re-minting.)
+4. **[S]** `just bootstrap DR=<RFC 3339 time of the disaster>` commits `mode: dr-core` with that timestamp, then runs `just tofu-apply cluster` -> **[A]** image download with checksum, two VMs, machine configuration from the preserved secrets bundle, a fresh etcd. On total loss etcd is deliberately **not** restored: every object is in Git and old PV objects would point at disks that no longer exist. **[A]** Cilium, the policy baseline, Argo CD and the two bootstrap Secrets follow; Argo CD syncs the core layer; OpenBao starts and self-initialises empty.
+5. **[S]** `just dr-openbao`: logs in through the `openbao-admin` path, restores with restic the newest Raft snapshot **older than the timestamp** (credentials from `dr.sops.yaml`), runs `bao operator raft snapshot restore -force`; the restored data unseals with the unchanged static key. **[S]** `just openbao-seed` re-applies the credentials re-minted in step 3.
+6. **[S]** `just dr-data` commits `mode: dr-data`. **[A]** ESO delivers the restored secrets (PushSecret `IfNotExists` leaves them untouched); CloudNativePG creates each cluster with the restored credentials; a restore Job per cluster pipes `restic dump` of the newest dump older than the timestamp into `pg_restore`; each ReplicationDestination restores into its pre-created PVC with `restoreAsOf` set to the timestamp [CHECKED https://volsync.readthedocs.io/en/stable/usage/restic/index.html] (the volume populator cannot be used: it requires snapshot copy mode [CHECKED https://volsync.readthedocs.io/en/stable/usage/volume-populator/index.html]).
+7. **[S]** `just dr-verify` runs the data-level assertions (row counts, application integrity checks, restic snapshot IDs and ages) and prints the recovery point actually achieved. When it is green, **[S]** `just dr-exit` commits `mode: normal`: consumers scale up, backup producers resume. **[A]** Authentik returns with its users and clients; cert-manager re-issues the wildcard.
+8. **[M]** Validation: OIDC login, a Telegram test alert, healthchecks green; first PBS backup of the new host; timings recorded in `DISASTER-RECOVERY.md`.
+
+The field names behind `dr-data` (CronJob `suspend`, VolSync `paused`, the generator patches) are [ASSUMPTION] until the Phase 11 rehearsal, which runs exactly steps 4-7 against the live cluster's backups on a scratch namespace set, and the Phase 15 drill, which runs them from zero.
+
+Targets until measured in Phase 15: platform in one working day, data in two; recovery point 24 h for PVCs, 6 h for the identity database and OpenBao, 24 h for other databases unless their component says otherwise, 6 h for etcd where it is used.
+
+**Manual steps that remain:** hardware and BIOS; booting the USB stick; committing re-minted tokens and the CA certificate; the six `just` commands of steps 4-7; validation.
+
+| Other scenario | Path |
+|---|---|
+| Control-plane VM lost, worker intact | restore the VM from PBS (fastest), or recreate it with OpenTofu in `recover` mode and `talosctl bootstrap --recover-from` the latest etcd snapshot, decrypted with the etcd-backup key |
+| Worker VM lost, thin pool intact | OpenTofu recreates it; PV disks still exist and re-attach |
+| Node 2 lost | step 0 above; rebuild PBS (history lost, off-site intact); issue a new operator key, a new homelab SSH key and a new drift key. The old disk is unencrypted (X23): if the laptop was stolen and not merely broken, also re-mint the read-only drift credentials and the mirror key, and run `operator-key-compromised.md` unless the key passphrases were strong |
+| Operator key or laptop suspected compromised | `operator-key-compromised.md`: re-issue every secret, planned cluster rebuild |
+| Router dead | **[M]** flash OpenWrt through the recovery UI, install the SSH keys; **[A]** Ansible |
+| Both nodes lost | everything above from any laptop; Bitwarden + GitHub + B2 are sufficient by design, and this is the path the Phase 15 drill rehearses |
+| House lost, phone lost | Bitwarden is reached with the second hardware key or its recovery code from the paper copy kept at the second location; that copy also carries the recovery age key and the GitHub and Backblaze recovery codes. Walked through once as a table-top exercise in Phase 15 |
+| GitHub or Cloudflare account lost | local clones and bundles; DNS recreated by OpenTofu in a new account; documented, not drilled |
+| WAN or B2 down for days | no service impact in the baseline: backups go stale and alert, `tofu` uses the local state copy, certificate renewal has weeks of slack. The fill time of any opt-in WAL-archiving database is measured in its own drill |
+
+## 14. Repository structure and GitOps/CI flow
+
+The existing `claude.md` is renamed `CLAUDE.md` in the first commit (case matters on Linux runners).
+
+```
+homelab-infra/                         PUBLIC: code and manifests, no ciphertext, no identifiers
+  README.md  SECURITY.md  DISASTER-RECOVERY.md  CLAUDE.md
+  .gitleaks.toml  .pre-commit-config.yaml  .yamllint.yaml  .gitmodules
+  mise.toml  mise.lock  justfile  renovate.json5  charts.lock
+  .github/workflows/  ci.yaml  image.yaml  chart-lock.yaml        CODEOWNERS
+  docs/  INITIAL-ASSESSMENT.md  ARCHITECTURE.md  adr/  research/  runbooks/  components/  network/  platform/  security/  phases/
+  infrastructure/
+    opentofu/  modules/talos-vm/   cloud/ (Cloudflare, B2)   cluster/ (Proxmox VMs, Talos)
+    ansible/   playbooks/ (pve-bootstrap, pve, pbs, openwrt)  roles/
+    proxmox/   answer.toml template, PVE CA certificate
+    talos/     schematic.yaml  patches/ (one NetworkRuleConfig per port group)
+    node2/     idempotent PowerShell: PBS VM, vSwitch, firewall and port ACLs, .wslconfig, mirror and drift tasks
+  kubernetes/
+    argocd/      root Application (holds the `mode` switch): AppProjects + ApplicationSets
+    components/  netpol-baseline, oidc-client, volsync-backup, pg-dump, dr-restore, pg-pitr (opt-in)
+    crds/        gateway-api, prometheus-operator-crds
+    platform/core/      cilium, csi-proxmox, cert-manager, openbao, external-secrets, traefik, monitoring, ...
+    platform/stateful/  secret stores and PushSecrets, cnpg clusters, authentik, openbao-backup, etcd-backup, ...
+    apps/        one directory per application
+  policy/        CI policy tests
+  scripts/       discovery/ (read-only inventory of OpenWrt devices and the Proxmox host)
+  private/       Git submodule -> homelab-private (PRIVATE), pinned by commit:
+                 .sops.yaml, tofu/, talos/secrets.sops.yaml, ansible/ (secret vars, private inventory),
+                 bootstrap/ (the two Secrets), openbao-seed.sops.yaml, dr.sops.yaml, drift/, openwrt-exports/
+```
+
+`docs/components/<name>.md` follows the ten headings CLAUDE.md section 21 requires (purpose, architecture, dependencies, deployment, configuration, security, backup, restore, troubleshooting, removal), and for every PVC its consistency class (section 8).
+
+**What may be public.** The public tree contains topology, the addressing plan, firewall rules and the lab domain (a public DNS name in any case). It contains no SOPS file and no identifier: a CI policy test fails on any `*.sops.*` file and on MAC-address and e-mail patterns in the public tree, and Gitleaks runs over full history. The private repository has its own small workflow (`sops filestatus` on every file, Gitleaks) and a pre-commit hook that refuses an unencrypted file.
+
+**One render path.** Each component directory is a `kustomization.yaml` that inflates its pinned upstream Helm chart (`helmCharts:` plus a local `values.yaml`) and adds local resources (HTTPRoute, ExternalSecret, CiliumNetworkPolicy, ServiceMonitor, PrometheusRule). Argo CD and CI both run `kustomize build --enable-helm`, and no chart is vendored. Two caveats, both stated: Kustomize describes its Helm inflation as "a limited subset of helm features" [CHECKED https://kubectl.docs.kubernetes.io/references/kustomize/kustomization/helmcharts/], and charts are pinned by version, not digest, so "what CI validated is what the cluster applies" holds only while upstream does not republish a version. Mitigations: Kubernetes version and API versions set explicitly per chart; a Phase 7 gate diffs the rendered Cilium and kube-prometheus-stack output against `helm template`; `charts.lock` records the sha256 of every chart archive, CI verifies it on each pull request and a daily `chart-lock.yaml` workflow re-pulls every pinned version and fails if a hash moved; OCI chart sources are preferred where upstream publishes them. The residual window between a republish and that daily check is exception X20; the fallback for a chart that renders differently is an Argo CD multi-source Helm Application.
+
+**Argo CD.** One root Application (applied once by `just bootstrap`, then self-managed) holding two AppProjects (`platform`; `apps`, which cannot touch platform namespaces, privileged namespaces or cluster-scoped kinds) and four ApplicationSets with Git directory generators (`crds`, `platform-core`, `platform-stateful`, `apps`); the `mode` value decides which are rendered (section 13). Ordering between generated Applications is by convergence: automated sync, self-heal, prune, retry with backoff. Sync waves are used only inside an Application; ordering sibling Applications from an ApplicationSet needs Progressive Syncs, which is Beta and opt-in [CHECKED https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Progressive-Syncs/]. Argo CD reads only the public repository and needs no repository credential.
+
+**Delivery flows.**
+- Kubernetes: branch -> pull request -> CI -> review -> merge -> Argo CD syncs -> validation. `kubectl` is for diagnostics, the documented bootstrap and the two operator-applied Secrets.
+- Infrastructure: same pull request and CI gate, then the operator runs `just tofu-apply <root>`, `just ansible <playbook>` or `just openbao-config` from Node 2. Hosted runners cannot reach a CGNAT lab, and a runner or in-cluster job holding hypervisor and router credentials is rejected (rule 4).
+- Drift, in two parts. *Unattended, weekly, read-only:* a scheduled task on Node 2 uses only the `drift` age key, which decrypts a PVEAuditor token and a forced-command SSH key and nothing else. It audits guest NIC tags and VM settings through the PVE API and asks the router, the APs and the hypervisor for hashes of their managed configuration files (the forced command prints hashes, never content), compares them with the hashes recorded at the last apply, and pings healthchecks.io with the exit status only. Cluster drift is Argo CD's job. *Attended, monthly, in the maintenance window:* `just drift-full` runs `tofu plan -detailed-exitcode` and Ansible `--check --diff` with the operator key. It cannot be unattended, because the state passphrase alone opens the rendered Talos configuration. Secret-bearing Ansible tasks carry `no_log` and `diff: false`, SOPS content is diffed through `sops exec-file` so no plaintext file is written, and the detailed log is shown in the terminal and never written to disk (X23).
+- Images: `image.yaml` builds with BuildKit (`GOAMD64=v2` at most for Go binaries, because Node 1 is x86-64-v2 only), scans with Trivy (fail on HIGH/CRITICAL), pushes to GHCR with a semver tag, SBOM and provenance; Renovate opens the pull request that pins `tag@sha256`. No Argo CD Image Updater.
+- Emergency change: perform it, document it, reproduce it in Git, remove the drift (CLAUDE.md section 22); the drift jobs prove the last step.
+
+**CI (`ci.yaml`, every pull request; tools pinned in `mise.toml`; one `just ci` recipe locally and in Actions; every action SHA-pinned; `permissions: contents: read`; no secrets in pull-request jobs; the submodule is not checked out).** yamllint; `helm lint` for local charts; `kustomize build --enable-helm` of every directory piped to kubeconform (`-strict`, CRD catalogue, pinned Kubernetes version); `charts.lock` verification; `tofu fmt -check`, `tofu init -backend=false`, `tofu validate`; ansible-lint (production profile); shellcheck and shfmt; actionlint; Gitleaks over full history; Trivy config and filesystem; Checkov; Semgrep CE (`--config auto --metrics off --error`); Renovate config validation; policy tests on the rendered output: every image has an explicit non-floating tag and first-party images a digest; resources and a non-root context on every container; only allow-listed namespaces are privileged; every namespace carries its policy labels; admin-tier routes attach only to the admin Gateway and forward-auth routes carry the filter; public routes only from `exposure=public` namespaces and with both parents; every guest NIC tagged; no ciphertext or identifiers in the public tree. HIGH/CRITICAL findings and any secret finding fail the build. On the public repository these are required checks under an enforced ruleset with SARIF in code scanning; GitHub Free cannot enforce either on a private one [R-v].
+
+**Review, honestly.** There is one maintainer, and GitHub does not let an author approve their own pull request. The ruleset therefore requires a pull request and green checks for everything, and CODEOWNERS plus one required approval for bot-authored pull requests under `kubernetes/` and `infrastructure/`, which the owner gives. Owner-authored changes are reviewed by CI and by the pull-request record only.
+
+**Renovate.** Hosted Mend app [R-l]: `config:best-practices`, dependency dashboard, managers for kustomize (charts and image digests), terraform with the OpenTofu registry, github-actions, mise, pre-commit, and regex managers for Talos (boot image and installer together), Kubernetes, the schematic and OpenWrt [R-v]. **Automerge is limited to dependencies that cannot reach the cluster or a host:** GitHub Action digests, pre-commit hooks and mise tool pins, after three days and green CI. Everything under `kubernetes/` and `infrastructure/` is a reviewed pull request, grouped by Renovate's `schedule` into the monthly maintenance window, so no chart bump restarts a single-replica platform while the owner is away; security fixes are merged out of band by the owner. Talos and Kubernetes move one minor at a time; ESO (a new minor about every three weeks, only the newest supported [R-v]) and bpg/proxmox (0.x) are always read by hand. The pull-request template carries a reminder for base-image major changes: check that the image still runs on x86-64-v2.
+
+## 15. Security model and documented exceptions
+
+**Model.** Default-deny at four layers, each enforced from the phase that introduces it: router zones for both address families (Phase 2), `pve-firewall` (Phase 3), the Talos ingress firewall for host services and a cluster-wide Cilium default-deny for every pod (both Phase 6). No inbound path from the internet. Management interfaces never public, and inside the house on a separate listener that only the workstation reaches. Identity centralised in Authentik with MFA and separate admin accounts for everything that runs on the platform; the systems underneath it (hypervisor, backup server, router, cloud accounts) keep independent MFA-protected identities. Least-privilege, expiring, privilege-separated and path-scoped tokens. No plaintext secret in Git, CI, OpenTofu state or plan; no ciphertext in the public repository. SSH key-only and no root login on Proxmox and PBS; no SSH on Talos; the operator's keys are passphrase- or hardware-protected, and because the workstation disks are not encrypted (X23) no plaintext secret is ever written to them. Pod Security `baseline` enforced and `restricted` warned; non-root, read-only root filesystem, dropped capabilities and resource limits wherever the upstream image allows, enforced by CI policy tests. Versions pinned everywhere, first-party images by digest. Scanning on every change. Every baseline backup encrypted by its producer, with scheduled restores and object-locked history. Audit trails exist but are not centralised off-host (X19).
+
+**At-rest encryption, stated honestly.** No control in this design provides confidentiality against theft of the Node 1 SSD: the guests are not encrypted (a key derived from data on the same disk protected nothing, section 5) and the OpenBao seal key sits in etcd on that disk. What does hold: every backup in the baseline is client-side encrypted before it leaves the host (restic, age, the PBS client key, OpenTofu state encryption); the Node 2 volumes are unencrypted by the owner's decision (X23), so they hold only ciphertext and passphrase-protected keys; the procedure after a lost or discarded Node 1 disk is secure erase where possible and rotation of every secret in the register. Host-level disk encryption on Node 1 is the only real control and is deferred to an ADR, because an unattended reboot needs the key on the same machine or a network unlock service. CSI LUKS is not used.
+
+| ID | Exception | Why accepted | Mitigation / removal |
+|---|---|---|---|
+| X1 | Imperative bootstrap of Cilium, the policy baseline and Argo CD; two Secrets (seal key, CSI token) stay operator-applied for the life of the cluster | nothing can reconcile before a CNI and Argo CD exist; OpenBao cannot deliver the secrets it needs to start | scripted, same render path, adopted by Argo CD; `just rotate-*` recipes; alerts on a missing Secret and on token expiry |
+| X2 | Hands-on steps: BIOS, USB boot, first SSH key on OpenWrt, firmware flashing, PBS install; the install ISO embeds a password hash | no out-of-band management | runbooks; ISO built on demand and deleted; all images checksum-verified |
+| X3a | `node-exporter` namespace is privileged | host namespaces are needed to see the node | the namespace contains only that DaemonSet; `monitoring` stays baseline; CI allow-list |
+| X3b | `csi-proxmox` namespace is privileged | required by the CSI node plugin | only the CSI pods; default-deny policy; no other AppProject may deploy there |
+| X4 | OpenBao static seal key in a Kubernetes Secret; an on-demand Kubernetes-auth admin role | unattended recovery after power loss; administration must not depend on Authentik | RBAC, yearly rotation, audit device, alert when the admin ServiceAccount exists; evaluate TPM or YubiKey later |
+| X5 | Local break-glass accounts outside Authentik; the Grafana and Argo CD local admins are password-only | Authentik runs on the platform it protects | Bitwarden; reachable only from the workstation on the admin listener; tested in drills; `akadmin` deactivated |
+| X6 | OpenWrt and Talos have no OIDC; LuCI stays enabled with a self-signed certificate | not supported by the products; LuCI kept for operability | LuCI bound to the VLAN 10 address and reached only inside the key-only SSH session |
+| X7 | PBS on a laptop under Hyper-V, Secure Boot possibly off | only second device available | client-side encryption; guest firewall and port ACL; off-site independent of PBS |
+| X8 | etcd metrics over plain HTTP; scheduler and controller-manager on 0.0.0.0 | required for scraping on Talos | Talos firewall restricts them to VLAN 50 node addresses and the pod CIDR; Cilium policy admits only Prometheus |
+| X8b | Logs and metrics are not backed up | cost outweighs value | retention only; revisit if audit needs grow |
+| X9 | Admin access from Node 2 is IP-based (E1-E3), and the address covers WSL2 and its containers | LAN administration must not depend on a third party | MAC-bound lease; key, certificate or second factor on every target; the PBS VM is fenced off the admin targets |
+| X10 | The host bridge's untagged VLAN is management, shared with the AP management addresses | simple install and DR | no rights by VLAN membership, all rules host-scoped; no DHCP; guest NIC tags enforced three ways (section 3) |
+| X11 | IoT egress open for 14 days | ESP32 needs unknown | logged, then narrowed (task) |
+| X12 | `pve-no-subscription` repository; the public repository reveals topology, addressing and the lab domain | no subscription budget; public buys enforced rulesets and code scanning | monthly controlled upgrades; ciphertext and identifiers only in the private repository; CI pattern tests |
+| X13 | CPU out of microcode servicing since 2019 [R-v]; single replicas everywhere | hardware reality | last microcode loaded on the host; no untrusted multi-tenant workloads; plan a refresh |
+| X14 | No transparent encryption between pods | one trusted L2 segment on one host, four threads | revisit if a second host appears |
+| X15 | Cloudflare terminates TLS for anything published (Phase P) | only inbound-free option | nothing administrative is published; MFA-enforcing Access provider |
+| X16 | Two Proxmox tokens live in the cluster (CSI storage attach, read-only exporter), and node-address firewall rules admit any pod | storage and monitoring need them | ACLs scoped to the worker VMs and one storage (negative test in Phase 7; `/` only if the plugin demands it, recorded); Cilium egress policy enforced before the token exists |
+| X17 | Until Phase 11 the Kubernetes API is administered with a Talos-issued certificate that bypasses RBAC | the identity provider does not exist yet | minted per session, 8 h, never stored; removal task: API-server OIDC in Phase 11, after which it is break-glass only |
+| X18 | PBS is not federated; the PVE OIDC realm is read-only | an in-cluster identity provider must not be able to mint hypervisor or backup administrators | local MFA-protected admins; listed in the circularity rule |
+| X19 | Audit logs are not centralised off-host; the Kubernetes audit log stays on the control-plane node | RAM and complexity | two log-based alerts; off-host shipping decided in Phase 13 |
+| X20 | Helm charts are pinned by version, not digest, at render time | Kustomize Helm inflation has no digest pin | `charts.lock` verified in CI and daily; OCI sources preferred |
+| X21 | One in-cluster job (`etcd-backup`) may call the Talos API with the `os:etcd:backup` role; an etcd snapshot contains every Secret | etcd needs an automated backup | one namespace, one role, policy limits it to the control-plane node and B2; snapshots age-encrypted |
+| X22 | Reserved, not active: a database that opts into Barman point-in-time recovery stores base backups and WAL under provider-side encryption only | the plugin has no client-side encryption | conditions in section 12; removal when client-provided keys ship upstream |
+| X23 | Node 2's disks are not encrypted (owner decision, 2026-10-05: BitLocker's performance cost; the laptop mostly stays at home) | owner's call on a personal machine | nothing readable is stored there: the age operator key and the SSH key are passphrase-protected with a long passphrase and loaded into an in-memory agent per session; the unattended drift key is wrapped with Windows DPAPI and opens read-only credentials only; SOPS files are used through `sops exec-env` and `exec-file`, never decrypted to a file; kubeconfig and talosconfig are never stored; backup data on F: is ciphertext; attended logs are not written to disk. A theft still yields the PBS VM's system disk (its configuration and local password hashes) and the ciphertext, so the "Node 2 lost" path rotates more than it would otherwise. Revisit if the laptop starts travelling |
+| X24 | The lab zone is the owner's existing domain, which also carries Zoho mail records that are not in use (owner decision, risk accepted 2026-10-05) | no second domain to buy or manage | Cloudflare tokens are scoped per zone, so the DNS-01 token in the cluster can edit every record, including MX, SPF and DKIM; inside the house every name under the zone resolves to the gateway, so mail host names in the zone do not resolve locally. Removal: delete the unused mail records, or move mail to another domain before it is ever used for account recovery |
+
+## 16. Implementation phases
+
+No phase starts until the previous gate is recorded in `docs/phases/`. Standing gates from Phase 5: host headroom >= 1.5 GiB, worker free >= 10 %, host CPU idle >= 30 % over 24 h, etcd fsync p99 < 25 ms. Every component is done only when the CLAUDE.md section 27 checklist is met (in Git, automated, secrets protected, CI, monitoring, backup, docs, recovery, pinned) and, from Phase 6, when its network policies are enforced with no unexpected drops.
+
+| # | Scope | Gate | Worker platform RAM (planned, MiB) |
+|---|---|---|---|
+| 0 | Close discovery: section 20 answers; read-only OpenWrt inventory; Node 1 contents; Windows commit charge measured for a week | written approvals; `INITIAL-ASSESSMENT.md`, `ARCHITECTURE.md`, ADR-0001 merged | - |
+| 1 | Both repositories, standards, mise/just/pre-commit, SOPS + age and custody, CI with all scanners and policy tests, Renovate, ruleset | laptop confirmed personally owned (done, 2026-10-05); X23 controls verified: operator identity and SSH key protected by a long passphrase, drift key DPAPI-wrapped, and a secret scan of the working tree and the WSL home directory finds nothing readable; a planted secret is blocked locally and in CI; the recovery key alone, in an offline environment, decrypts a file | - |
+| 2 | Router: upgrade by the path its release allows, VLANs, zones, matrix, IPv6 posture, DNS/DHCP/NTP, exporter, `iot`/`guest` on M30 radios, LuCI rebinding | section 6 step 3 gate in both address families; revert guard exercised once on purpose | - |
+| 3 | Proxmox unattended install and bootstrap play, hardening, microcode, exporters, native notifications, healthchecks, OpenTofu backend with encrypted state, PBS VM and its fences, first host backup | NIC speeds and 24 h direct-link soak (else F1); an etcd-style synchronous-write benchmark on the thin pool, judged against etcd's published disk guidance (if it fails, the SSD is replaced before Phase 5); `free -m` recorded and budget re-based; host without guests <= 1.5 GiB; microcode and vulnerability files recorded; p2p deny test; backup restored to a temp dir; state round trip | host only |
+| 4 | APs to 25.12, trunks, SSIDs, IoT move | full deny-matrix test from every VLAN, IPv4 and IPv6 | - |
+| 5 | OpenTofu: Talos VMs, Kubernetes, Cilium bootstrap, vzdump of `talos-cp-1` | `talosctl health`; `Allocatable` recorded and budget re-based; worker rebuilt from scratch; one Talos patch upgrade through the provider with platform and address unchanged after a cold boot; etcd snapshot restored once through the `recover` mode; token ACL scope recorded | 440 |
+| 6 | Cilium LB-IPAM, L2, cluster-wide default-deny and kube-system policies **enforced**, Talos firewall | `cilium connectivity test` adapted to the baseline; a pod in a fresh namespace has no connectivity; firewall gate of section 5 including `/readyz` from a worker pod | 440 |
+| 7 | Argo CD ownership, Proxmox CSI, metrics-server | zero diff on adoption; render-diff gate; a PVC provisions, expands and survives a pod restart with the scoped ACL; negative ACL test; TLS verification on with the PVE CA; per-VM attach limit and the `backup` flag of a PV disk recorded | 1330 |
+| 8 | cert-manager (internal CA), OpenBao, ESO, seed, OpenBao and etcd backup jobs | power-cycle with the WAN unplugged: OpenBao unseals unattended and clocks agree; admin login and a policy change with no Authentik; recovery-key attempt recorded; snapshot restored into a throwaway instance; object-lock and delete tests; fetched objects not parseable | 1790 |
+| 9 | kube-prometheus-stack, Alertmanager -> Telegram, Watchdog, exporters, blackbox; UIs by port-forward only | all control-plane targets UP with the firewall enforced; test alert received; dead-man fires when Alertmanager is scaled to zero; series count, RSS and CPU recorded | 2995 |
+| 10 | Let's Encrypt issuer, Traefik with household and admin listeners, split-horizon and public wildcard DNS | trusted certificate; a test route reachable from VLAN 20 and not from guest or iot; an admin hostname via the household address returns 404; the admin address is unreachable from a phone | 3095 |
+| 11 | CloudNativePG, dump jobs, VolSync, Authentik, OIDC roll-out including the Kubernetes API and the read-only PVE realm, ForwardAuth routes | dump restored into a scratch cluster; one PVC restore with an application assertion; `dr-core` -> `dr-data` -> `normal` rehearsed in order; a worker `talosctl upgrade` completes unattended with databases present and the outage is measured; MFA enforced; `akadmin` deactivated; every break-glass path tested; ciphertext check for every bucket and the mirror | 4767 |
+| 12 | Loki, Alloy, full alert catalogue including the audit rules, runbooks | every alert fired once on purpose and its runbook followed | 5367 |
+| 13 | Hardening and backup audit: `restricted` warnings triaged, both drift jobs live, every restore runbook executed once, audit-shipping decision, platform working set compared with the 6.5 GiB trigger | section 12 verification column green; trigger outcome recorded and, if hit, the agreed lever applied | 5367 |
+| 14 | Applications, one at a time, each with policy, backup class, alerts, docs; OpenBao snapshot at the end of each onboarding | definition of done per application; application RAM, CPU and volume count within the measured budget | measured |
+| 15 | Disaster-recovery drill from zero, including the "both nodes lost" path and the "house lost" table-top | drill report merged; RTO/RPO measured; cold image pulls succeeded; manual-step list updated | - |
+| P | Optional: public edge (cloudflared, external Traefik, Access with an MFA provider) | external probe green; unauthenticated request blocked at the edge; admin paths not routed | +160 |
+| R | Optional: remote administration in its own zone | section 6 conditions; reachable from mobile data; ACL negative test | +0.125 GiB on host if LXC |
+
+## 17. Risks, assumptions, and decisions requiring human approval
+
+**Top risks.**
+
+| Risk | Likelihood / impact | Mitigation |
+|---|---|---|
+| RAM estimates are wrong (nothing is measured; research range for the platform is 5-8 GiB; the research upper bound leaves 0.61 GiB for applications) | medium / high | budget 5.24 GiB with expected-high and upper-bound rows; per-phase gates; a pre-agreed trigger and lever order (section 4) |
+| CPU: 6 vCPU on four 2012 threads; Authentik 2026.8 CPU regression [R-v] | medium / medium | CPU request ledger with a cap; idle and fsync gates; worker to 3 vCPU if steal appears |
+| The SSD is a DRAM-less budget model (Crucial BX500, no power-loss protection, 83 % life left, 414 unclean power losses logged): it may be too slow for etcd's synchronous writes, and it can corrupt on a power cut | medium / total outage | SMART alerts, backups with restore tests, the existing home UPS and the battery sensor of section 3; a synchronous-write benchmark as a Phase 3 gate, and a used enterprise SATA SSD with power-loss protection as the recommended purchase if it fails |
+| Operator key or laptop compromised | low / very high | passphrase or hardware protection, nothing readable on the unencrypted disk (X23), ciphertext only in a private repository, no stored kubeconfig, full re-issue runbook |
+| Bitwarden account compromised or lost | low / very high | hardware second factor, two paper copies in two places, table-top drill |
+| Node 2 absent for days; copy 2 goes stale | high / medium | off-site copy is independent of Node 2; 48 h external alert |
+| WAN or B2 outage for days | medium / low | no baseline service depends on it; staleness alerts; local state copy |
+| VLAN migration locks the household out | low / high | router-only first, timed revert, wired workstation, APs after the host is stable, coverage checked beforehand |
+| Default-deny from day one breaks a component during roll-out | medium / low | policies ship with each component; Hubble drop check in every gate; `enableDefaultDeny: false` as a debugging aid |
+| TX201 links at 100 Mbps, or the USB NIC misbehaves under Hyper-V | medium / low | kernel pin; fallback F1 to the laptop's onboard port |
+| Young or beta features on the critical path | medium / medium | each has a gate and a named fallback: L2 announcements (NodePort + DNAT), static seal and self-init (scripted init), Proxmox CSI on PVE 9 and scoped ACLs (local-path on a user volume; ACL at `/`), talos provider 0.12 resources (older resource pair), nocloud installer (metal path with machine-config addressing), B2 state backend (R2, local), Kustomize Helm inflation (multi-source Helm Application), two Traefik listeners (two Deployments) |
+| Upstream cadence outpaces one operator (ESO every three weeks; Talos 1.14 support ends about 2026-12-27) | high / low | reviewed monthly window; upgrade rehearsed in Phase 5 and 11 |
+| Every worker upgrade is an outage of all applications, identity and ingress | certain / low | stated in the service statement; maintenance window; PodDisruptionBudgets that would block the drain are disabled |
+| The single worker runs out of disk attachments (cap 20) | medium / low | PV count in the capacity plan; alert at 18; consolidate databases |
+| Shared CGNAT address is rate-limited by Docker Hub during a rebuild | medium / medium | non-Docker-Hub sources preferred; measured in Phase 15; authenticated mirror as the fallback |
+| Node 2 is employer-managed (Windows 11 Enterprise and day-job SSH keys [VERIFIED]; it is not domain-, Entra- or workplace-joined [VERIFIED], so ownership still needs the owner's word) or runs a preview build | unknown / high | ownership confirmed by the owner on 2026-10-05; the preview-build question stays open |
+| One maintainer: owner-authored changes have no second reviewer | certain / medium | CI as the reviewer; bot changes need the owner's approval; small pull requests |
+| Free-tier dependencies (Cloudflare, Mend, healthchecks.io, GitHub) | low / medium | each has a documented alternative; none holds unique data |
+
+**Assumptions to confirm.** Linux sees 15.55 GiB (measured). Node 1 may be wiped (confirmed). The M30 and both APs run 25.12, and both APs are v1 hardware (verified). A zone can be dedicated to the lab. Timezone Asia/Kolkata. No existing Hyper-V VMs compete for Node 2's RAM. Data to protect is <= 60 GB at first. The owner is the only administrator. The Hyper-V vSwitch on the USB adapter is stable. The H61 firmware boots Proxmox VE 9.2 in UEFI mode (verified on the existing install). The laptop is personal (confirmed); BitLocker is declined (X23). The M30's radios alone cover the house well enough for a maintenance window. Every item marked [ASSUMPTION] in sections 3-13 carries the gate that confirms it.
+
+**Decisions.** The fifteen grouped decisions with recommended defaults and consequences are in section 20.
+
+## 18. Deviations from the CLAUDE.md suggested stack and why
+
+| CLAUDE.md suggestion | This design | Reason |
+|---|---|---|
+| Phase order (SOPS at 8, scanning at 13, Renovate at 14, backup at 12, observability at 11) | SOPS, scanning, Renovate in Phase 1; router before Proxmox; PBS with the hypervisor; secrets before ingress; observability before identity; backup with each stateful component | the first commit must already be guarded; the host is installed once into its final VLAN; backups precede data; identity is deployed under monitoring |
+| VLAN 40 DMZ | reserved, not built | CGNAT leaves no inbound path; the public boundary is a separate ClusterIP-only gateway reachable only from cloudflared |
+| VLAN 20 implied on a new subnet | existing 192.168.1.0/24 kept as VLAN 20 | no household renumbering; segmentation is by zone |
+| "Management -> infrastructure: allowed" | host-scoped rules only; the admin source is the pinned workstation in VLAN 20 | the consumer APs live in the management VLAN; membership must not confer rights |
+| "OpenTofu -> VM -> cloud-init -> Ansible/Talos" | cloud-init carries only the first-contact address; Talos is configured over its API by the Talos provider; Ansible manages Proxmox, PBS and OpenWrt | full configuration through cloud-init needs root SSH snippets on the hypervisor |
+| Helm for third-party charts; Kustomize overlays | Helm charts inflated by Kustomize; no overlays for a single environment | one render path for CI and Argo CD |
+| Restic/Kopia | restic only | upstream VolSync has no Kopia mover [R-v] |
+| CloudNativePG (backups implied through its own tooling) | CloudNativePG with encrypted logical dumps; Barman point-in-time recovery opt-in only | the Barman plugin cannot encrypt client-side; WAL archiving ties identity to the WAN |
+| "Use OIDC wherever supported" | not for PBS; read-only for Proxmox VE | the identity provider runs on the hypervisor it would administer |
+| One repository | a public repository plus a private submodule for ciphertext and identifiers | ciphertext in public history cannot be withdrawn |
+| Hubble "if acceptable" | Hubble in the agent; no relay, no UI | 0.1-0.25 GiB saved [R-u]; CLI and metrics retained |
+| Kubernetes version (latest implied) | 1.36 | four platform components have not declared 1.37 |
+| "Multiple VMs when budget permits" | exactly two | section 4 arithmetic |
+| PBS "when appropriate" | on Node 2 under Hyper-V, for the control-plane VM and the host configuration | Proxmox advises against PBS on the hypervisor it protects [R-v]; Node 1 has no RAM for it |
+| Remote state "if available" | Backblaze B2 with client-side encryption | same provider as the backups; versioned bucket |
+| Cloudflare Tunnel for exposed services | optional Phase P, with Cloudflare Access and an MFA-enforcing provider | nothing is public on day one; Authentik's admin surface stays off the internet |
+| Additions not in the list | Proxmox CSI, VolSync, talos-backup, blackbox exporter, mise, healthchecks.io, rclone, Telegram, kubelogin | each fills a required function with the smallest maintained option; recorded in ADR-0001 |
+| Suggested or commonly paired tools not adopted | Tailscale (baseline), external-dns, k8s_gateway, Proxmox CCM, Velero, Barman plugin (baseline), Argo CD Image Updater / Dex / notifications, PBS exporter, Cilium Gateway, CSI LUKS, Talos disk encryption | each overlaps something present, adds no protection here, or is not needed until a later phase |
+| Ansible for all host configuration | Node 2 is configured by small idempotent PowerShell scripts in Git | it is a personal Windows workstation, not managed infrastructure |
+| CI deploys infrastructure | operator-run applies after merge | no runner can reach a CGNAT lab safely; Argo CD remains the only Kubernetes deployer |
+
+**Reviewer findings on the three proposals that were not adopted in full, with reasons.**
+- *Fail-closed tagged-only trunk to Node 1.* Not adopted; the untagged management VLAN stays with three compensating controls and no rights by membership, because the tagged-only variant adds a two-device change to every rebuild, including under DR stress.
+- *An independent second backup chain for PVC data.* Not adopted; the limit is documented (section 12) because a push target on a sleeping laptop fails nightly.
+- *Kustomize Helm inflation departs from plain Helm.* Kept (two of three reviewers rated the single render path a strength), with the upstream caveat cited, a render-diff gate, a chart lock and a named fallback.
+- *OpenBao self-initialisation is young.* Kept with a gate and a scripted fallback, because it is the only path in which no root token leaves the pod.
+
+**Adversarial-review findings: all 57 were accepted as problems. Where the adopted fix differs from the proposed one:**
+- *Keep Barman with a server-side-encryption exception plus an extra encrypted dump chain.* Went further: Barman left the baseline and encrypted dumps are the only PostgreSQL backup, which also removes the WAL/WAN coupling. Point-in-time recovery is an opt-in under X22.
+- *A separate VLAN for AP management, or a break-glass port kept administratively disabled.* Not adopted: host-scoped rules give the APs no rights, and the break-glass port was removed entirely because a statically addressed replacement workstation replaces it. One VLAN fewer, one port fewer.
+- *Onboard GbE as the default for the backup link.* Adopted as fallback F1; the default stays the existing cabling and the Phase 3 soak decides.
+- *Authenticated Docker Hub mirror or a pull-through cache.* Conditional on the Phase 15 measurement: it puts a credential on every node, and a cache costs RAM and disk.
+- *VolSync cache volumes on a local-path class.* Not adopted: it adds a provisioner and a third privileged namespace; a 1 GiB cache per protected PVC is counted in the plan instead.
+- *Manual sync for Cilium, OpenBao and Argo CD.* Not adopted: merges under `kubernetes/` already need the owner's approval, and manual sync would leave drift unhealed.
+- *Post-quantum age recipients.* Not adopted: SOPS support is unverified; moving ciphertext out of the public repository addresses the same harvest risk.
+- *Ship audit streams off-host now.* Deferred to a Phase 13 decision (X19); the two alerts were adopted.
+- *Move the CSI token to ESO after bootstrap.* Not adopted: both bootstrap Secrets keep one mechanism, with rotation recipes and alerts.
+- *Remove LuCI from the workstation rules.* Adopted in a form that also honours the instruction to keep LuCI available: it listens on the management VLAN address and is reached inside the key-only SSH session.
+- *Prefer hardware keys and a second location.* Offered as purchases in Q15 and as a custody rule; not made a blocker for Phase 1.
+
+## 19. Decision log
+
+| # | Decision | Alternatives considered | Reason | Reversibility | Confidence |
+|---|---|---|---|---|---|
+| 1 | Resource-frugal proposal as the base | zero-trust-first; operability-first | ranked first by all three reviewers; the only shape whose headroom survives a wrong assumption | n/a | high |
+| 2 | 1 control plane (3 GiB) + 1 worker (9 GiB), with a pre-agreed trigger | single node (+2.0 GiB for applications, full outage on every upgrade, etcd shares application memory pressure); 1 CP + 2 workers (-0.9 GiB, no real rolling upgrades); 3 CPs (unaffordable, logical HA only) | section 4 arithmetic | high: module variables, one apply | high |
+| 3 | ext4 + LVM-thin | ZFS single disk with a 1 GiB ARC cap | 1 GiB RAM and SSD wear for detection without repair | low: reinstall (which is the DR path anyway) | medium-high |
+| 4 | Kubernetes 1.36 on Talos 1.14 | Talos default 1.37 | declared support of cert-manager, ESO, CloudNativePG, Cilium | high: Renovate pull request | high |
+| 5 | Traefik as the only Gateway implementation, two listeners; second instance only in Phase P | Cilium Gateway (no extra pod, shared `ingress` identity, public parsing in the CNI); Envoy Gateway (+0.3 GiB) | research recommendation; policy-enforceable boundary; ForwardAuth | high: HTTPRoutes are portable | high |
+| 6 | Dedicated lab zone with local wildcards and matching DNS-only public records | `lab.<domain>` names in a shared zone; local-only zone (breaks DoH clients); k8s_gateway + external-dns | a wildcard on a shared zone shadows real records; clients that bypass the router still resolve | medium: hostnames and OIDC issuer change | medium (zone unknown) |
+| 7 | Keep 192.168.1.0/24 as VLAN 20; new VLANs in 10.0.<VLAN>.0/24 | renumber everything now; all 192.168.x | no household disruption; no collision with ISP or common remote ranges | high: 10.0.20.0/24 reserved | high |
+| 8 | Untagged management VLAN on the host bridge with enforced guest tags; no rights by VLAN membership | tagged-only trunk; separate AP management VLAN | simple install and DR; host-scoped rules make membership worthless | high | medium |
+| 9 | LAN administration from a pinned workstation address; no Tailscale in the baseline; no break-glass port | Tailscale as the admin plane; tagged VLAN 10 vNIC on Node 2; spare management port on an AP | simplicity principle (CLAUDE.md principle 20); no third-party dependency for daily work; a replacement workstation is the break-glass | high | high |
+| 10 | LuCI kept, bound to the management VLAN address, reached through SSH | LuCI open to the workstation over HTTPS; disable after bootstrap | operability without a password-only path | high | high |
+| 11 | Two SOPS bootstrap Secrets (seal key, CSI token), operator-applied permanently | one (deadlocks: OpenBao's volume needs CSI); ESO adoption of the CSI token | minimum that breaks the circularity; one mechanism | high | high |
+| 12 | OpenBao static seal, single Raft node, self-init with an on-demand Kubernetes-auth admin path | Shamir manual unseal; transit unseal from Node 2; admin only through Authentik OIDC (circular, and self-init creates no recovery keys) | unattended recovery on a host whose UPS cannot signal it; administration independent of Authentik | medium | medium (self-init young) |
+| 13 | Externally issued credentials: SOPS seed file -> `just openbao-seed` | third OpenTofu root with the Vault provider (unverified on OpenBao 2.7) | fewer moving parts; SOPS already holds them | high | medium-high |
+| 14 | Dedicated `pg-authentik`, 512 MiB, PodDisruptionBudget off | shared `pg-platform`, 384 MiB | connection count; restoring an application must not roll back identity; drains must complete | high | high |
+| 15 | Authentik as identity provider | Pocket ID (saves about 1.5 GiB; no forward-auth, no passwords) | CLAUDE.md names Authentik; ForwardAuth needed | medium | medium (largest tenant) |
+| 16 | Cloudflare Access with an MFA-enforcing provider in Phase P | Authentik as Access IdP (needs a public Bypass on the IdP); e-mail one-time PIN only | keeps the identity provider's admin surface off the internet; no single-factor edge | high | medium (plan detail unchecked) |
+| 17 | Fresh cluster from Git on total loss; no etcd restore | restore etcd, then prune orphaned PVs | fewer steps, no orphan cleanup | n/a | high |
+| 18 | Disaster recovery as a three-state mode chosen before bootstrap; PVC restore by ReplicationDestination with `restoreAsOf` | converge everything, then restore (restores race empty workloads and empty backups); volume populator (needs CSI snapshots) | the only order in which restored data is not overwritten | n/a | medium (rehearsed in Phase 11) |
+| 19 | Backblaze B2 as the single object-storage provider, including state | B2 + R2; PBS S3 datastore for VM images | one provider; versioning and Object Lock; VM images are cattle | high: `tofu init -migrate-state` | medium (backend combination untested) |
+| 20 | PBS token `DatastoreBackup` only; non-deleting B2 keys; Object Lock on backup buckets | producer-side prune with full keys | neither a compromised producer nor the workstation can erase history | high | medium (restic on locked buckets to be proven) |
+| 21 | Drift detection split: unattended read-only weekly, attended full monthly | one unattended job holding the operator key and the state passphrase; in-cluster CronJob | no full-privilege credential usable without a human | high | high |
+| 22 | Kustomize with Helm inflation as the single render path, with a chart lock | Argo CD multi-source Helm Applications | CI validates what Argo CD applies | high per component | medium |
+| 23 | ApplicationSets with convergence and retry; four sets keyed to the recovery mode | cross-Application sync waves (needs Beta Progressive Syncs) | accurate description of Argo CD behaviour | high | high |
+| 24 | Cilium default-deny enforced cluster-wide from Phase 6; policies ship with each component | audit mode until Phase 13 (not available per namespace; leaves secrets and identity unprotected for seven phases) | CLAUDE.md sections 9 and 20; deny by construction for new namespaces | high | high |
+| 25 | IoT/guest VLANs on the M30 in Phase 2; APs in Phase 4 | all APs before Proxmox; APs after the whole platform | segmentation early without a big-bang on household Wi-Fi | high | medium (AP releases unknown) |
+| 26 | No CSI LUKS and no Talos guest disk encryption; at-rest limits stated | `nodeID` encryption (key material on the same disk; blocks TRIM, defeats backup compression); LUKS StorageClass keyed from ESO | no confidentiality gained, real costs | high | high |
+| 27 | Public repository for code, private submodule for ciphertext and identifiers | everything public (ciphertext downloadable for ever); everything private on GitHub Free (no enforced rulesets or code scanning) | keeps the free CI controls without publishing every crown jewel's ciphertext | medium: public history stays public | medium (owner's call) |
+| 28 | KSM off, ballooning off, `PermitRootLogin no` after the bootstrap play | KSM as bonus memory; root SSH kept | side channel and hidden pressure; root SSH not needed on one node | high | high |
+| 29 | PostgreSQL backups as encrypted logical dumps; Barman opt-in | Barman WAL and base backups to B2 with server-side encryption | client-side encryption; no WAN coupling; less RAM; 6 h recovery point accepted | high: enable the component | high |
+| 30 | Admin interfaces on a separate listener and address, workstation only | all routes on the household gateway | management interfaces should not be reachable from every phone | high | medium (Traefik binding to be proven) |
+| 31 | Hypervisor administration not federated (PVE read-only realm, PBS local) | Administrator and Admin mapped from Authentik groups | no cluster-to-hypervisor escalation path | high | high |
+| 32 | Kubernetes API OIDC in Phase 11; Talos-issued kubeconfig minted per session | long-lived admin kubeconfig on the workstation | RBAC, MFA and attribution on the most powerful interface | high | medium (Talos primary documentation not found) |
+| 33 | Renovate automerge only for tooling; platform updates reviewed in a monthly window | automerge digests and patches everywhere | no unreviewed path into the cluster; no restarts while away | high | high |
+| 34 | Back up only the control-plane VM with vzdump | both VMs | the worker is cattle; PV data can never be captured by accident | high | high |
+| 35 | Hypervisor as second NTP source for the cluster | router only | the router has no RTC; etcd and certificates need one agreed clock after a power cut | high | high |
+| 36 | PVE keeps its own CA certificate, trusted explicitly by three clients | PVE ACME DNS-01 with a zone-edit token on the hypervisor | one credential fewer on the hypervisor | high | medium (client CA support to be proven) |
+| 37 | Install medium: unattended USB stick with the answer file embedded | network boot of the installer (iPXE, TFTP on the router, HTTP on Node 2); answer file fetched over HTTP | already zero-touch; no boot service to secure; disaster recovery must not depend on the router and the workstation | high: network boot can be added as an opt-in | high |
+| 38 | Node 2's 2 TB SSD stays in Node 2 as the local backup copy; the 1 TB external disk becomes a monthly offline copy | move the SSD into Node 1 as a data or mirror disk; external disk on Node 1 | 3-2-1 needs the second copy on a second machine; no application needs bulk storage yet; Node 1 has USB 2.0 only | high: revisit with the application list | medium |
+| 39 | Node 2 runs without disk encryption; nothing readable is stored on it (X23) | BitLocker on all volumes; BitLocker on F: only; an encrypted container for key material | owner decision; every artefact kept there is already ciphertext or passphrase-protected | high | medium |
+
+## 20. Open questions for the human
+
+**Owner answers, 2026-10-05.** The owner accepted the recommended default for every decision below, with these specifics.
+
+| # | Answer |
+|---|---|
+| Q1 | Yes, wipe Node 1. It runs Proxmox VE today. The owner asked for the most automated reinstall available, including network boot; see section 3 and decision 37 |
+| Q2-Q4, Q7-Q9, Q11-Q13 | Defaults |
+| Q5 | The existing domain `112511.xyz` is the lab zone. It also carries Zoho mail records that are not in use; the owner accepted that risk (X24). The two DNS-only wildcard records are published |
+| Q6 | Public code repository plus a private companion repository |
+| Q10 | The laptop is personally owned. BitLocker is declined (exception X23). The PBS VM is approved, with more memory and 1 TB or more of F: available if ever needed |
+| Q14 | Default. All three OpenWrt devices already run 25.12 (verified in the inventory); the lab SSH key is installed on them and on Node 1 |
+| Q15 | A whole-home inverter UPS exists, with no data port; signalling needs the battery sensor of section 3. FIDO2 keys will be bought later. The CMOS battery is in place. Storage offers are answered by decision 38 |
+
+**Follow-ups raised by those answers, settled 2026-10-05.**
+
+| # | Question | Answer |
+|---|---|---|
+| FU1 | Which DNS zone does the lab use, given that the existing zone carries mail? | The existing domain. The owner accepted the risk that a cluster credential can edit the mail records; the mail service is not in use (X24) |
+| FU2 | UPS make, model and ports; does the desktop ride through a power cut? | A generic inverter with a battery and no USB or serial port. The desktop rides through. Signalling is the DIY battery sensor of section 3 |
+| FU3 | Git author identity for the public repository | The owner's GitHub no-reply address, set in the repository's local Git configuration |
+
+**Information still outstanding:** the application wishlist (request 5), which the owner is still exploring; Node 2's existing Hyper-V VMs, on-hours and Windows channel (request 6); whether dnscrypt-proxy is the system resolver (request 9); household user count and data volume (request 10). Requests 1, 3 and 8 were answered by the inventories; requests 2, 4 and 7 by the owner.
+
+**Decisions (15), as asked.**
+
+| # | Decision | Recommended default | If you choose otherwise |
+|---|---|---|---|
+| Q1 | May Node 1's SSD be wiped for a clean Proxmox VE 9.2 install? | Yes, after you confirm what is on it | If it holds data: the disk is imaged to Node 2 first; Phase 3 waits |
+| Q2 | Cluster shape, and the trigger for changing it | 1 control plane (3 GiB) + 1 worker (9 GiB); if the measured platform exceeds 6.5 GiB after Phase 12, apply in order: control plane to 2.5 GiB, then defer Loki or switch to Pocket ID, then single node | Single node now: about 2.0 GiB more for applications, every upgrade is a full outage. Two workers: about 0.9 GiB less, no real rolling upgrades. No pre-approved trigger: a new design round when the budget is missed |
+| Q3 | Host filesystem | ext4 + LVM-thin | ZFS: ARC capped at 1 GiB, worker shrinks to 8 GiB, application room drops by 1 GiB |
+| Q4 | Addressing: keep 192.168.1.0/24 as the trusted VLAN 20; new VLANs 10/50/60/70 in 10.0.<VLAN>.0/24; SSIDs `home`, `iot`, `guest` served by the M30 and both APs; IPv6 switched off on the LAN | Yes as proposed | Renumbering now: every household device re-leases and the router address changes during migration |
+| Q5 | DNS zone for the lab, and two DNS-only public wildcard records that point at private addresses (10.0.50.200, 10.0.50.201) | A Cloudflare zone used for nothing else (your existing zone if it is empty, otherwise a second cheap domain); publish the two records | Shared zone: services move under `lab.<domain>`, the DNS-01 token can edit the whole zone, public hostnames need per-host certificates. No public records: phones with Private DNS and browsers with DoH cannot resolve lab names until that is switched off |
+| Q6 | Repository layout | Public code repository plus a private companion repository (submodule) for all SOPS ciphertext and identifying inventory | Everything public: simpler, but every secret's ciphertext is downloadable for ever and a later key leak exposes all of it retroactively. Everything private on GitHub Free: no enforced required checks, no code scanning, and Argo CD needs a read-only HTTPS token (not an SSH deploy key, the firewall allows only 443) as a third bootstrap Secret |
+| Q7 | Gateway implementation | Traefik 3.7, one instance with a household and an admin listener | Cilium Gateway: saves about 0.1 GiB, loses the enforceable internal/external boundary and the separate admin listener |
+| Q8 | Identity provider; hypervisor federation | Authentik; Proxmox VE read-only through OIDC, PBS local, administrators local with MFA | Pocket ID: saves about 1.5 GiB, passkey-only, no forward-auth for applications without a login. Full federation of Proxmox: whoever controls the cluster controls the hypervisor |
+| Q9 | OpenBao static auto-unseal with the key in a Kubernetes Secret; root-of-trust custody in Bitwarden plus two sealed paper copies in two places | Yes to both; you name the second place | Manual unseal: secrets stay sealed after every power cut until you intervene. One paper copy at home: a fire or theft leaves Bitwarden as the only copy |
+| Q10 | Node 2 as workstation, key custodian and PBS host: **confirm the laptop is personally owned and not employer-managed, and that BitLocker may be enabled on C:, D: and F:**; PBS VM with 4 GiB and a 128 GiB VHDX on F:, vSwitch on the UE302C, WSL2 capped at 5 GiB, a nightly backup window you name; no Talos worker on it | Yes; you supply the window | If employer-managed or BitLocker is not possible: key custody and PBS move to a personal device. No PBS at all: saves 4 GiB on the laptop and a manual install; the control-plane VM is then protected only by etcd snapshots and the host configuration by a restic job to B2. PBS at 3 GiB or started only for the window are the low-RAM variants |
+| Q11 | Off-site and alerting accounts: Backblaze B2 with Object Lock (under USD 1 per month at the assumed volume), Telegram bot, healthchecks.io free tier, hosted Mend Renovate app; PostgreSQL protected by encrypted dumps every 6 h (identity) or nightly | Yes | Another provider changes bucket policy details and the state backend; without healthchecks.io a dead host cannot report itself. Point-in-time recovery instead of dumps: minutes of recovery point, but backups readable by the provider and identity coupled to the WAN |
+| Q12 | Public exposure | Nothing public initially; later through Cloudflare Tunnel with Access behind an MFA-enforcing login; no media streaming through the tunnel | Publishing from day one pulls Phase P forward and costs 160 MiB |
+| Q13 | Remote administration from outside the house | None initially; LAN-only from the pinned workstation | Phase R: one more third-party control plane, its own VLAN and firewall zone, a 128 MiB LXC or a package on the router |
+| Q14 | OpenWrt: bring the M30 and both APs to 25.12 in maintenance windows (through 24.10 or by clean flash if they run something older, with a configuration wipe on the APs if they run 19.07 or older); LuCI stays enabled but only through the SSH tunnel; no spare management port | Yes | Staying on an older release leaves the network devices without security updates and blocks the Ansible path. LuCI directly reachable from the workstation: the device that enforces all segmentation is then protected by a password alone |
+| Q15 | Hardware purchases | A small UPS with NUT (strongly recommended); two FIDO2 security keys for Bitwarden, GitHub and optionally the age and SSH keys (recommended); a CMOS battery for Node 1; a second SATA SSD optional | Without a UPS every power cut is a crash of etcd and PostgreSQL on a consumer SSD. Without hardware keys the operator key is passphrase-protected only and the cloud accounts rely on TOTP |
+
+**Information requests (no decision, facts only).**
+1. What is installed on Node 1 today; the board revision and BIOS version; the SSD model.
+2. The Cloudflare domain name and what the zone currently carries (mail, website, other records).
+3. Permission to install a homelab SSH key on the M30 and both APs so their OpenWrt releases, configuration and hardware revisions (v1 or v2) can be read.
+4. The "additional storage devices": type, capacity, interface.
+5. The application wishlist, with which applications must be public and rough sizes. This is the only input that can invalidate the RAM, CPU and volume budgets.
+6. Node 2: existing Hyper-V VMs (needs an elevated prompt); the hours it is reliably on; BitLocker is off on C:, D:, F: and G: [VERIFIED] and stays off by the owner's decision (X23); whether build 10.0.26300 is a preview-channel build and may move to a GA channel.
+7. Timezone: the workstation is set to India Standard Time [VERIFIED]; confirm Asia/Kolkata for every schedule.
+8. The router's WAN address range (is it inside 100.64.0.0/10?) and a full traceroute, to rule out 10.0.x hops upstream.
+9. Whether dnscrypt-proxy is Node 2's system resolver.
+10. Number of household users who need accounts; expected volume of data to protect; whether you already own a FIDO2 key.

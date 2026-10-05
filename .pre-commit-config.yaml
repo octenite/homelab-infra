@@ -1,0 +1,35 @@
+# Local hooks only: every tool comes from mise.toml, so the hook and CI run
+# the same pinned versions. Install once with `just setup`.
+repos:
+  - repo: local
+    hooks:
+      - id: gitleaks
+        name: gitleaks (staged changes)
+        entry: mise exec -- gitleaks git --pre-commit --staged --redact --no-banner
+        language: system
+        pass_filenames: false
+      - id: public-tree
+        name: public tree policy (no ciphertext, no identifiers)
+        entry: sh policy/public-tree.sh
+        language: system
+        pass_filenames: false
+      - id: yamllint
+        name: yamllint
+        entry: mise exec -- yamllint --strict
+        language: system
+        types: [yaml]
+      - id: shellcheck
+        name: shellcheck
+        entry: mise exec -- shellcheck
+        language: system
+        types: [shell]
+      - id: shfmt
+        name: shfmt
+        entry: mise exec -- shfmt -d
+        language: system
+        types: [shell]
+      - id: actionlint
+        name: actionlint
+        entry: mise exec -- actionlint
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$

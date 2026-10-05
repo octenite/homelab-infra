@@ -1,0 +1,7 @@
+# Heavier scanners, loaded on top of mise.toml when MISE_ENV=ci.
+# CI always sets it. Locally: `MISE_ENV=ci mise install` and then `just scan`.
+
+[tools]
+trivy = "0.75.0"
+"pipx:checkov" = "3.3.22"
+"pipx:semgrep" = "1.179.0"
