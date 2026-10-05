@@ -13,7 +13,50 @@ setup:
     git submodule update --init
 
 # All fast checks. The pre-commit hook and the CI lint job run this.
-lint: yaml shell actions policy
+lint: yaml shell actions policy ansible-lint
+
+# Install the pinned Ansible collections into infrastructure/ansible/collections.
+ansible-deps:
+    cd infrastructure/ansible && ANSIBLE_CONFIG="$PWD/ansible.cfg" ansible-galaxy collection install -r requirements.yml -p ./collections
+
+# Ansible playbooks and roles, production profile.
+ansible-lint: ansible-deps
+    cd infrastructure/ansible && ANSIBLE_CONFIG="$PWD/ansible.cfg" ansible-lint --profile production --offline playbooks roles
+
+# Open an operator session: SSH agent and decrypted age key, both in memory only.
+session-start:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    umask 077
+    sock="$HOME/.ssh/homelab-agent.sock"
+    if ! SSH_AUTH_SOCK="$sock" ssh-add -l >/dev/null 2>&1; then
+        rm -f "$sock"
+        ssh-agent -a "$sock" >/dev/null
+        SSH_AUTH_SOCK="$sock" ssh-add "$HOME/.ssh/homelab_ed25519"
+    fi
+    mkdir -p /dev/shm/homelab-session
+    age -d -o /dev/shm/homelab-session/age.key "$HOME/.config/sops/age/operator.age"
+    echo "Session open. The decrypted key is in RAM only. Close it with: just session-end"
+
+# Close the operator session and remove every decrypted artefact from memory.
+session-end:
+    rm -rf /dev/shm/homelab-session /dev/shm/homelab-render
+    @echo "Session closed. The SSH agent keeps running until: ssh-agent -k, or the terminal closes."
+
+# Read-only: compare network devices with Git. Example: just openwrt-check openwrt_routers
+openwrt-check target="openwrt_routers":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd infrastructure/ansible
+    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
+    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
+    if [ -r /dev/shm/homelab-session/age.key ]; then
+        export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
+    else
+        export ANSIBLE_VARS_ENABLED=host_group_vars
+        echo "No key session open: secret values are compared masked. Run 'just session-start' for an exact comparison."
+    fi
+    ansible-playbook playbooks/openwrt-check.yaml -e "target={{target}}"
 
 # YAML syntax and style.
 yaml:

@@ -1,0 +1,20 @@
+---
+# Configuration files under /etc/config that this role owns on a device.
+# Each one is a template in templates/<inventory_hostname>/<name>.j2.
+openwrt_config_managed:
+  - network
+  - wireless
+  - dhcp
+  - firewall
+  - system
+  - dropbear
+  - uhttpd
+  - smartdns
+
+# Rendered files contain Wi-Fi keys. Both directories are RAM-backed, so
+# nothing readable reaches a disk (exception X23).
+openwrt_config_render_local: "/dev/shm/homelab-render/{{ inventory_hostname }}"
+openwrt_config_render_remote: /tmp/homelab-render
+
+# Secret-bearing option values are masked in every diff that is displayed.
+openwrt_config_redact: "s/(option (key|sae_password|password|private_key|preshared_key|psk) ').*'/\\1<redacted>'/"

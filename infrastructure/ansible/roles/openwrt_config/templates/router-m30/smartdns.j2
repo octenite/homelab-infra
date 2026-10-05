@@ -1,0 +1,58 @@
+{# Managed by Ansible. Source of truth: this template plus the private inventory.
+   Derived from the live device on 2026-10-05 (uci export smartdns). #}
+config smartdns
+	option enabled '1'
+	option server_name 'smartdns'
+	option port '6053'
+	option auto_set_dnsmasq '0'
+	option tcp_server '1'
+	option ipv6_server '1'
+	option bind_device '1'
+	option dualstack_ip_selection '1'
+	option serve_expired '0'
+	option cache_size '65536'
+	option cache_persist '1'
+	option resolve_local_hostnames '1'
+	option force_https_soa '0'
+	option rr_ttl_min '600'
+	option seconddns_port '6553'
+	option seconddns_tcp_server '1'
+	option bind_device_name 'lo'
+	option prefetch_domain '1'
+	option speed_check_mode 'ping,tcp:443'
+	option response_mode 'fastest-ip'
+	option log_level 'off'
+	option old_port '6053'
+	option old_enabled '1'
+	option old_auto_set_dnsmasq '0'
+
+config domain-rule
+
+config client-rule
+
+config ip-rule
+
+config server
+	option enabled '1'
+	option name 'Cloudflare-DoH'
+	option ip 'https://cloudflare-dns.com/dns-query'
+	option type 'https'
+
+config server
+	option enabled '1'
+	option name 'Cloudflare-Secondary'
+	option ip 'https://1.1.1.1/dns-query'
+	option type 'https'
+
+config server
+	option enabled '1'
+	option name 'Quad9'
+	option ip 'https://dns.quad9.net/dns-query'
+	option type 'https'
+
+config server
+	option enabled '1'
+	option name 'Mullvad-DoH'
+	option ip 'https://dns.mullvad.net/dns-query'
+	option type 'https'
+

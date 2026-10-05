@@ -1,0 +1,156 @@
+---
+# Read-only comparison of Git against the device.
+#
+# Both sides are passed through `uci export`, which prints a configuration in
+# one normal form. Equal output means equal configuration, whatever the
+# formatting of the file on the device.
+
+- name: Create the local render directory in memory
+  ansible.builtin.file:
+    path: "{{ openwrt_config_render_local }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  check_mode: false
+  changed_when: false
+
+- name: Render the configuration files locally
+  ansible.builtin.template:
+    src: "{{ inventory_hostname }}/{{ item }}.j2"
+    dest: "{{ openwrt_config_render_local }}/{{ item }}"
+    mode: "0600"
+  loop: "{{ openwrt_config_managed }}"
+  delegate_to: localhost
+  check_mode: false
+  changed_when: false
+  no_log: true
+
+- name: Create the render directory in the device's RAM disk
+  community.openwrt.file:
+    path: "{{ openwrt_config_render_remote }}"
+    state: directory
+    mode: "0700"
+  check_mode: false
+  changed_when: false
+
+- name: Copy the rendered files to the device's RAM disk
+  community.openwrt.copy:
+    src: "{{ openwrt_config_render_local }}/{{ item }}"
+    dest: "{{ openwrt_config_render_remote }}/{{ item }}"
+    mode: "0600"
+  loop: "{{ openwrt_config_managed }}"
+  check_mode: false
+  changed_when: false
+  no_log: true
+
+- name: Export the rendered configuration in normal form
+  community.openwrt.command:
+    cmd: "uci -c {{ openwrt_config_render_remote }} export {{ item }}"
+  loop: "{{ openwrt_config_managed }}"
+  register: openwrt_config_want
+  check_mode: false
+  changed_when: false
+  no_log: true
+
+- name: Export the live configuration in normal form
+  community.openwrt.command:
+    cmd: "uci export {{ item }}"
+  loop: "{{ openwrt_config_managed }}"
+  register: openwrt_config_have
+  check_mode: false
+  changed_when: false
+  no_log: true
+
+- name: Remove the render directory from the device
+  community.openwrt.file:
+    path: "{{ openwrt_config_render_remote }}"
+    state: absent
+  check_mode: false
+  changed_when: false
+
+- name: Save both exports locally in memory
+  ansible.builtin.copy:
+    content: "{{ item.1.stdout }}\n"
+    dest: "{{ openwrt_config_render_local }}/{{ item.1.item }}.{{ item.0 }}"
+    mode: "0600"
+  loop: >-
+    {{ (['want'] | product(openwrt_config_want.results) | list)
+       + (['have'] | product(openwrt_config_have.results) | list) }}
+  delegate_to: localhost
+  check_mode: false
+  changed_when: false
+  no_log: true
+
+- name: Diff live against Git, secrets masked
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      diff -u --label "live/{{ item }}" --label "git/{{ item }}"
+      <(sed -E "{{ openwrt_config_redact }}" "{{ openwrt_config_render_local }}/{{ item }}.have")
+      <(sed -E "{{ openwrt_config_redact }}" "{{ openwrt_config_render_local }}/{{ item }}.want")
+    executable: /bin/bash
+  loop: "{{ openwrt_config_managed }}"
+  register: openwrt_config_diff
+  delegate_to: localhost
+  check_mode: false
+  changed_when: false
+  failed_when: openwrt_config_diff.rc > 1
+
+- name: Compare secret values without showing them
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      cmp -s "{{ openwrt_config_render_local }}/{{ item }}.have" "{{ openwrt_config_render_local }}/{{ item }}.want"
+    executable: /bin/bash
+  loop: "{{ openwrt_config_managed }}"
+  register: openwrt_config_exact
+  delegate_to: localhost
+  check_mode: false
+  changed_when: false
+  failed_when: false
+
+- name: Remove the local render directory
+  ansible.builtin.file:
+    path: "{{ openwrt_config_render_local }}"
+    state: absent
+  delegate_to: localhost
+  check_mode: false
+  changed_when: false
+
+- name: Collect the result per file
+  ansible.builtin.set_fact:
+    openwrt_config_report: >-
+      {{ openwrt_config_report | default([]) + [{
+           'file': item.0.item,
+           'visible_difference': item.0.rc != 0,
+           'identical_including_secrets': item.1.rc == 0,
+           'diff': item.0.stdout
+         }] }}
+  loop: "{{ openwrt_config_diff.results | zip(openwrt_config_exact.results) | list }}"
+  loop_control:
+    label: "{{ item.0.item }}"
+
+- name: Show differences
+  ansible.builtin.debug:
+    msg: "{{ item.diff.split('\n') }}"
+  loop: "{{ openwrt_config_report | selectattr('visible_difference') | list }}"
+  loop_control:
+    label: "{{ item.file }}"
+
+- name: Summary
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.file }}:
+      {{ 'DIFFERS' if item.visible_difference
+         else ('identical' if item.identical_including_secrets
+               else 'identical apart from secret values (compare again with the key session open)') }}
+  loop: "{{ openwrt_config_report }}"
+  loop_control:
+    label: "{{ item.file }}"
+
+- name: Fail when Git and the device differ
+  ansible.builtin.assert:
+    that:
+      - openwrt_config_report | selectattr('visible_difference') | list | length == 0
+    fail_msg: "The device does not match Git. See the differences above."
+    success_msg: "The device matches Git in every managed file."

@@ -59,7 +59,17 @@ The operator key is decrypted into the memory of one command and never stored:
 SOPS_AGE_KEY="$(age -d ~/.config/sops/age/operator.age)" sops edit private/<file>.sops.yaml
 ```
 
-`age -d` asks for the passphrase. The decrypted key exists only in that one `sops` process. Do not `export` it, and do not redirect it to a file.
+`age -d` asks for the passphrase. The decrypted key exists only in that one `sops` process. Do not `export` it, and do not redirect it to a file on a disk.
+
+For longer work, such as an Ansible run that reads the encrypted inventory, open a session instead:
+
+```sh
+just session-start     # asks for the SSH key passphrase and the age passphrase
+just openwrt-check     # or any other recipe that needs secrets
+just session-end       # removes the decrypted key
+```
+
+The session keeps the decrypted key in `/dev/shm`, which is memory, not disk. It disappears on `just session-end`, when WSL stops, or when the laptop powers off. Always close the session when the work is done.
 
 ## Verification (Phase 1 gate)
 
