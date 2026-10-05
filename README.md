@@ -36,7 +36,10 @@ Encrypted secrets and the identifying inventory live in a private companion repo
 Work from Linux. On Windows that means WSL2: Ansible needs it, and the Git hooks are installed there.
 
 ```sh
-# once: install mise (https://mise.jdx.dev), then
+# once: install mise (https://mise.jdx.dev) and activate it in ~/.bashrc:
+#   export PATH="$HOME/.local/bin:$PATH"
+#   eval "$(mise activate bash)"
+# then, in a new terminal, inside the repository:
 mise trust
 just setup      # pinned tools, Git hooks, submodule
 just lint       # fast checks: YAML, shell, workflows, public-tree policy
