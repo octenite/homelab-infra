@@ -1,0 +1,97 @@
+---
+# Manage /etc/dropbear/authorized_keys from the inventory list
+# openwrt_ssh_authorized_keys. Guarded twice: the list must contain a key the
+# operator's agent holds, and the previous file comes back by itself unless a
+# fresh login succeeds.
+
+- name: Read the public keys held by the operator's agent
+  ansible.builtin.command:
+    cmd: ssh-add -L
+  delegate_to: localhost
+  changed_when: false
+  check_mode: false
+  register: openwrt_config_agent_keys
+
+- name: Refuse a key list that would lock the operator out
+  ansible.builtin.assert:
+    that:
+      - openwrt_ssh_authorized_keys | length >= 2
+      - >-
+        (openwrt_config_agent_keys.stdout_lines | map('split') | map(attribute=1) | list)
+        | intersect(openwrt_ssh_authorized_keys | map('split') | map(attribute=1) | list)
+        | length > 0
+    fail_msg: "The key list must hold at least two keys, one of them loaded in the agent."
+    quiet: true
+
+- name: Read the current authorized keys
+  community.openwrt.slurp:
+    src: /etc/dropbear/authorized_keys
+  register: openwrt_config_keys_now
+  check_mode: false
+
+- name: Compare with the inventory
+  ansible.builtin.set_fact:
+    openwrt_config_keys_want: "{{ openwrt_ssh_authorized_keys | join('\n') }}\n"
+    openwrt_config_keys_differ: >-
+      {{ (openwrt_config_keys_now.content | b64decode | trim)
+         != (openwrt_ssh_authorized_keys | join('\n') | trim) }}
+
+- name: Replace the authorized keys, with an automatic restore
+  when: openwrt_config_keys_differ
+  block:
+    - name: Write the wanted key list to a local file in memory
+      ansible.builtin.copy:
+        content: "{{ openwrt_config_keys_want }}"
+        dest: "/dev/shm/homelab-authorized-keys-{{ inventory_hostname }}"
+        mode: "0600"
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Keep the previous file and arm its restore
+      community.openwrt.command:
+        cmd: >-
+          sh -c 'cp -p /etc/dropbear/authorized_keys /tmp/authorized_keys.prev &&
+          touch /tmp/authorized_keys.armed'
+      changed_when: true
+
+    - name: Start the restore timer on the device
+      community.openwrt.nohup:
+        command: >-
+          [ -f /tmp/authorized_keys.armed ] &&
+          cp -p /tmp/authorized_keys.prev /etc/dropbear/authorized_keys;
+          rm -f /tmp/authorized_keys.armed
+        delay: 120
+
+    - name: Install the new key list
+      community.openwrt.copy:
+        src: "/dev/shm/homelab-authorized-keys-{{ inventory_hostname }}"
+        dest: /etc/dropbear/authorized_keys
+        mode: "0600"
+
+    - name: Remove the local file
+      ansible.builtin.file:
+        path: "/dev/shm/homelab-authorized-keys-{{ inventory_hostname }}"
+        state: absent
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Drop the open connection so the next task has to log in again
+      ansible.builtin.meta: reset_connection
+
+    - name: Log in again with a key
+      community.openwrt.command:
+        cmd: "wc -l /etc/dropbear/authorized_keys"
+      changed_when: false
+      register: openwrt_config_keys_after
+
+    - name: Confirm by disarming the restore
+      community.openwrt.command:
+        cmd: "rm -f /tmp/authorized_keys.armed /tmp/authorized_keys.prev"
+      changed_when: true
+
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ openwrt_ssh_authorized_keys | length }} authorised keys
+      ({{ openwrt_ssh_authorized_keys | map('split') | map(attribute=2) | join(', ') }}),
+      {{ 'updated and verified by a fresh login' if openwrt_config_keys_differ else 'already as in the inventory' }}.

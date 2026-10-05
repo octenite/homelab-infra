@@ -18,3 +18,27 @@ openwrt_config_render_remote: /tmp/homelab-render
 
 # Secret-bearing option values are masked in every diff that is displayed.
 openwrt_config_redact: "s/(option (key|sae_password|password|private_key|preshared_key|psk) ').*'/\\1<redacted>'/"
+
+# compare.yaml behaviour; apply.yaml overrides both.
+openwrt_config_fail_on_diff: true
+openwrt_config_keep_render: false
+
+# --- apply.yaml ---
+# Snapshot of the previous configuration and the revert scripts, in the
+# device's RAM disk.
+openwrt_config_rollback_dir: /tmp/homelab-rollback
+# The device restores the snapshot by itself this many seconds after a change
+# unless the change was confirmed.
+openwrt_config_revert_seconds: 300
+# Set to false to leave a change unconfirmed on purpose (revert drill).
+openwrt_config_confirm: true
+# Commands run on the device after a change. All must succeed before the
+# change is confirmed.
+openwrt_config_health_commands:
+  - "ping -c 2 -W 2 {{ openwrt_wan_gateway }}"
+  - "nslookup openwrt.org 127.0.0.1"
+# Commands run on the workstation after a change: it must still reach the
+# internet through the device.
+openwrt_config_health_local_commands:
+  - "curl -fsS -m 8 -o /dev/null https://www.cloudflare.com/cdn-cgi/trace"
+  - "getent hosts openwrt.org"

@@ -1,0 +1,18 @@
+---
+# Changes devices. Every change is guarded by an automatic revert on the
+# device, which is disarmed only after the workstation has reconnected and
+# the health checks have passed. One device at a time.
+- name: Apply the configuration in Git to OpenWrt devices
+  hosts: "{{ target }}"
+  gather_facts: false
+  serial: 1
+  vars:
+    # The collection's init role would otherwise install packages.
+    openwrt_install_recommended_packages: false
+  roles:
+    - role: community.openwrt.init
+  tasks:
+    - name: Apply with automatic revert
+      ansible.builtin.import_role:
+        name: openwrt_config
+        tasks_from: apply
