@@ -1,6 +1,6 @@
 # Phase 1 gate record: repositories, standards, tooling, CI
 
-Status: **open.** Everything is in place. Two decryption checks by the owner close the phase.
+Status: **closed, 2026-10-05.** The owner ran both decryption checks: the operator key decrypts the self-test file, and the recovery key alone decrypts it too.
 
 ## Done and verified (2026-10-05)
 
@@ -33,7 +33,7 @@ Status: **open.** Everything is in place. Two decryption checks by the owner clo
 
 | # | Item | How |
 |---|---|---|
-| 1 | Age keys | Created by the owner on 2026-10-05. `private/.sops.yaml` lists both public keys, and `private/selftest/selftest.sops.yaml` is encrypted to both. A scan of the WSL home directory finds no readable age private key. **Still to do, owner only:** the two decryption checks in `docs/runbooks/bootstrap-keys.md` (operator key now; recovery key alone, offline, before the first real secret is stored) |
+| 1 | Age keys | Created by the owner on 2026-10-05. `private/.sops.yaml` lists both public keys, and `private/selftest/selftest.sops.yaml` is encrypted to both. A scan of the WSL home directory finds no readable age private key. Both decryption checks in `docs/runbooks/bootstrap-keys.md` were run by the owner on 2026-10-05 and passed |
 | 2 | Install the hosted Renovate app on `octenite/homelab-infra` | Done by the owner on 2026-10-05; the first run is awaited |
 | 3 | GitHub token at rest on the workstation | Decided 2026-10-05: the owner keeps the current storage for now and will move to a fine-grained token later. Until then this is a known gap against exception X23: a stolen laptop yields a token that can push to both repositories. The ruleset on `main` and the ciphertext-only rule limit what that token can reach |
 
