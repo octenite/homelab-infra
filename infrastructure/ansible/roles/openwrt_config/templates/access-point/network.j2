@@ -1,0 +1,65 @@
+{# Managed by Ansible. Shared by all access points; per-device values come
+   from playbooks/host_vars and the private inventory.
+   The uplink is a trunk: management untagged, trusted, IoT and guest tagged.
+   The access point has an address in the management network only; the three
+   client networks are bridged between Wi-Fi and the uplink without one. #}
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	list ipaddr '127.0.0.1/8'
+
+config globals 'globals'
+	option dhcp_default_duid '{{ openwrt_dhcp_duid }}'
+	option packet_steering '1'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	list ports '{{ openwrt_ap_uplink_port }}'
+{% for p in openwrt_ap_access_ports %}
+	list ports '{{ p }}'
+{% endfor %}
+
+config bridge-vlan 'vlan10'
+	option device 'br-lan'
+	option vlan '10'
+	list ports '{{ openwrt_ap_uplink_port }}:u*'
+
+{# Wired devices on an access point's spare port belong to the trusted network. #}
+config bridge-vlan 'vlan20'
+	option device 'br-lan'
+	option vlan '20'
+	list ports '{{ openwrt_ap_uplink_port }}:t'
+{% for p in openwrt_ap_access_ports %}
+	list ports '{{ p }}:u*'
+{% endfor %}
+
+config bridge-vlan 'vlan60'
+	option device 'br-lan'
+	option vlan '60'
+	list ports '{{ openwrt_ap_uplink_port }}:t'
+
+config bridge-vlan 'vlan70'
+	option device 'br-lan'
+	option vlan '70'
+	list ports '{{ openwrt_ap_uplink_port }}:t'
+
+config interface 'mgmt'
+	option device 'br-lan.10'
+	option proto 'static'
+	list ipaddr '{{ openwrt_ap_mgmt_ip }}/24'
+	option gateway '10.0.10.1'
+	list dns '10.0.10.1'
+	option delegate '0'
+
+config interface 'lan'
+	option device 'br-lan.20'
+	option proto 'none'
+
+config interface 'iot'
+	option device 'br-lan.60'
+	option proto 'none'
+
+config interface 'guest'
+	option device 'br-lan.70'
+	option proto 'none'

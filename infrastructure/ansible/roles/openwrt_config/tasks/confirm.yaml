@@ -1,0 +1,75 @@
+---
+# Verify a device against Git and, only if everything holds, disarm its
+# pending revert. Used at the end of apply.yaml, and on its own after a change
+# that was left unverified or unconfirmed on purpose.
+
+# Without this the next tasks would reuse an SSH connection opened before the
+# change, and a change that breaks new logins would go unnoticed.
+- name: Drop the open connection so verification has to log in again
+  ansible.builtin.meta: reset_connection
+
+- name: Reconnect to the device
+  community.openwrt.wait_for_connection:
+    timeout: 120
+
+# Remember which change is pending. If its flag is gone by the time we want to
+# disarm it, the timer fired during verification and the device has reverted.
+- name: Note the pending change
+  community.openwrt.command:
+    cmd: "sh -c 'ls {{ openwrt_config_rollback_dir }}/armed.* 2>/dev/null || true'"
+  register: openwrt_config_pending
+  changed_when: false
+  check_mode: false
+
+- name: Compare the device with Git
+  ansible.builtin.include_tasks: compare.yaml
+  vars:
+    openwrt_config_fail_on_diff: true
+    openwrt_config_keep_render: false
+
+- name: Health checks on the device
+  community.openwrt.command:
+    cmd: "{{ item }}"
+  loop: "{{ openwrt_config_health_commands }}"
+  changed_when: false
+  register: openwrt_config_health
+  retries: 5
+  delay: 5
+  until: openwrt_config_health.rc == 0
+
+- name: Health checks from the workstation
+  ansible.builtin.command:
+    cmd: "{{ item }}"
+  loop: "{{ openwrt_config_health_local_commands }}"
+  delegate_to: localhost
+  changed_when: false
+  register: openwrt_config_health_local
+  retries: 5
+  delay: 5
+  until: openwrt_config_health_local.rc == 0
+
+- name: Fail if the revert fired while verification was running
+  community.openwrt.command:
+    cmd: "test -f {{ item }}"
+  loop: "{{ openwrt_config_pending.stdout_lines }}"
+  changed_when: false
+  when: openwrt_config_confirm | bool
+
+# Removing every flag turns every pending timer into a no-op.
+- name: Confirm by disarming the revert
+  community.openwrt.command:
+    cmd: "sh -c 'rm -f {{ openwrt_config_rollback_dir }}/armed.*'"
+  changed_when: true
+  when: openwrt_config_confirm | bool
+
+- name: Report a confirmed state
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: matches Git, health checks passed, revert disarmed."
+  when: openwrt_config_confirm | bool
+
+- name: Report a state that is left unconfirmed on purpose
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: verified but left UNCONFIRMED on purpose. The device restores its previous
+      configuration when its timer ends unless the confirm playbook is run.
+  when: not (openwrt_config_confirm | bool)

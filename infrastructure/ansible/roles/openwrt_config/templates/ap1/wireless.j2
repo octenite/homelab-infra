@@ -63,3 +63,12 @@ config wifi-iface 'main_radio1'
 	option ssid '{{ openwrt_wifi_ssid_main }}'
 	option encryption 'sae-mixed'
 	option key '{{ openwrt_wifi_key_main }}'
+
+{# IoT network, 2.4 GHz only. #}
+config wifi-iface 'iot_radio0'
+	option device 'radio0'
+	option network 'iot'
+	option mode 'ap'
+	option ssid '{{ openwrt_wifi_ssid_iot }}'
+	option encryption 'psk2'
+	option key '{{ openwrt_wifi_key_iot }}'

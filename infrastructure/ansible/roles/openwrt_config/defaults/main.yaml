@@ -30,8 +30,12 @@ openwrt_config_rollback_dir: /tmp/homelab-rollback
 # The device restores the snapshot by itself this many seconds after a change
 # unless the change was confirmed.
 openwrt_config_revert_seconds: 300
-# Set to false to leave a change unconfirmed on purpose (revert drill).
+# Set to false to leave a change unconfirmed on purpose (revert drill, or the
+# router half of a two-device change).
 openwrt_config_confirm: true
+# Set to false to stop right after activation, without logging in again
+# (the access-point half of a two-device change). confirm.yaml finishes it.
+openwrt_config_verify: true
 # Commands run on the device after a change. All must succeed before the
 # change is confirmed.
 openwrt_config_health_commands:

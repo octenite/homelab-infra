@@ -5,3 +5,14 @@ openwrt_config_health_commands:
   - "ping -c 2 -W 2 {{ openwrt_wan_gateway }}"
   - "nslookup openwrt.org 127.0.0.1"
   - "fw4 check"
+
+# What is cabled to each LAN port, as measured from the bridge's address table
+# on 2026-10-05 (it differs from the original hardware list).
+#   lan1  Node 1 (hypervisor): management untagged, servers tagged
+#   lan2  access point 1
+#   lan3  access point 2
+#   lan4  operator workstation: trusted
+# Ports listed here are trunks to access points: management untagged;
+# trusted, IoT and guest tagged. A port not listed carries the trusted
+# network untagged.
+openwrt_ap_trunk_ports: [lan2, lan3]

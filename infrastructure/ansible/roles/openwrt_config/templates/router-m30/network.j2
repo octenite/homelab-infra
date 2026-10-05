@@ -18,20 +18,25 @@ config device
 	list ports 'lan3'
 	list ports 'lan4'
 
-{# lan1 = Node 1: management untagged, servers tagged.
-   lan2 = workstation, lan3 and lan4 = access points: trusted untagged.
-   The access-point ports become trunks in Phase 4. #}
+{# Port roles are documented in playbooks/group_vars/openwrt_routers.yaml.
+   lan1 = Node 1: management untagged, servers tagged.
+   A port in openwrt_ap_trunk_ports leads to an access point: management
+   untagged; trusted, IoT and guest tagged.
+   Any other port carries the trusted network untagged. #}
 config bridge-vlan 'vlan10'
 	option device 'br-lan'
 	option vlan '10'
 	list ports 'lan1:u*'
+{% for p in openwrt_ap_trunk_ports %}
+	list ports '{{ p }}:u*'
+{% endfor %}
 
 config bridge-vlan 'vlan20'
 	option device 'br-lan'
 	option vlan '20'
-	list ports 'lan2:u*'
-	list ports 'lan3:u*'
-	list ports 'lan4:u*'
+{% for p in ['lan2', 'lan3', 'lan4'] %}
+	list ports '{{ p }}:{{ 't' if p in openwrt_ap_trunk_ports else 'u*' }}'
+{% endfor %}
 
 config bridge-vlan 'vlan50'
 	option device 'br-lan'
@@ -41,10 +46,16 @@ config bridge-vlan 'vlan50'
 config bridge-vlan 'vlan60'
 	option device 'br-lan'
 	option vlan '60'
+{% for p in openwrt_ap_trunk_ports %}
+	list ports '{{ p }}:t'
+{% endfor %}
 
 config bridge-vlan 'vlan70'
 	option device 'br-lan'
 	option vlan '70'
+{% for p in openwrt_ap_trunk_ports %}
+	list ports '{{ p }}:t'
+{% endfor %}
 
 config interface 'mgmt'
 	option device 'br-lan.10'
