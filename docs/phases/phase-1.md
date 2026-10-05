@@ -1,6 +1,6 @@
 # Phase 1 gate record: repositories, standards, tooling, CI
 
-Status: **open.** The automated part is done and verified. One item needs the owner: the age keys.
+Status: **open.** Everything is in place. Two decryption checks by the owner close the phase.
 
 ## Done and verified (2026-10-05)
 
@@ -33,7 +33,7 @@ Status: **open.** The automated part is done and verified. One item needs the ow
 
 | # | Item | How |
 |---|---|---|
-| 1 | Create the operator and recovery age keys | `docs/runbooks/bootstrap-keys.md`; then `private/.sops.yaml` is written and the recovery-key-only decryption test is run |
+| 1 | Age keys | Created by the owner on 2026-10-05. `private/.sops.yaml` lists both public keys, and `private/selftest/selftest.sops.yaml` is encrypted to both. A scan of the WSL home directory finds no readable age private key. **Still to do, owner only:** the two decryption checks in `docs/runbooks/bootstrap-keys.md` (operator key now; recovery key alone, offline, before the first real secret is stored) |
 | 2 | Install the hosted Renovate app on `octenite/homelab-infra` | Done by the owner on 2026-10-05; the first run is awaited |
 | 3 | GitHub token at rest on the workstation | Decided 2026-10-05: the owner keeps the current storage for now and will move to a fine-grained token later. Until then this is a known gap against exception X23: a stolen laptop yields a token that can push to both repositories. The ruleset on `main` and the ciphertext-only rule limit what that token can reach |
 
@@ -44,4 +44,5 @@ Status: **open.** The automated part is done and verified. One item needs the ow
 | Replace the stored GitHub token with a fine-grained token limited to the two repositories, with an expiry | Owner, later; no longer blocks Phase 2 |
 | Add `mise.lock` and the repository setting that requires actions pinned by SHA | With the first Renovate pull request |
 | Recovery SSH key (private half in the password manager) | With the age keys |
-| X23 verification scan of the WSL home directory for readable key material | After items 1 and 3 |
+| X23 verification scan of the WSL home directory | Done for age keys (none readable) and the lab SSH key (passphrase set). The GitHub CLI token is the one known readable credential, see item 3 |
+| Private repository guard | `private/scripts/check-encrypted.sh` as a pre-commit hook and a CI job there: a plain file named like a SOPS file is rejected (tested) |

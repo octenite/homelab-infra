@@ -30,8 +30,9 @@ mkdir -p ~/.config/sops/age && chmod 700 ~/.config/sops/age
 age-keygen | age -p -a -o ~/.config/sops/age/operator.age
 ```
 
-- `age-keygen` prints one line starting `Public key: age1...`. Copy that line.
-- `age -p` asks twice for a passphrase. Use a long one: six or more random words. It is the only thing between a stolen laptop and every secret.
+- `age-keygen` prints one line starting `Public key: age1...`. Copy that line. It appears on the same line as the passphrase prompt, which looks odd and is harmless.
+- `age -p` asks twice for a passphrase. Type your own: six or more random words. It is the only thing between a stolen laptop and every secret. If you leave it empty, age invents one and prints it once; write it down before doing anything else.
+- Afterwards: `chmod 600 ~/.config/sops/age/operator.age`.
 - The private key goes straight from one program into the other. Only the encrypted file reaches the disk.
 
 ## 2. Recovery key (offline, never on the workstation)
@@ -52,18 +53,34 @@ Public keys are not secret. They go into `private/.sops.yaml` as the recipients 
 
 ## 4. Use
 
-A session loads the operator key on demand and never stores it decrypted:
+The operator key is decrypted into the memory of one command and never stored:
 
 ```sh
-export SOPS_AGE_KEY_CMD='age -d ~/.config/sops/age/operator.age'
-sops private/<file>.sops.yaml      # asks for the passphrase
+SOPS_AGE_KEY="$(age -d ~/.config/sops/age/operator.age)" sops edit private/<file>.sops.yaml
 ```
+
+`age -d` asks for the passphrase. The decrypted key exists only in that one `sops` process. Do not `export` it, and do not redirect it to a file.
 
 ## Verification (Phase 1 gate)
 
-1. `sops` can create and reopen a test file in `private/` with the operator key.
-2. The same file decrypts with the recovery key alone, typed from the paper copy, on a machine that is offline.
-3. `grep -r "AGE-SECRET-KEY" ~ 2>/dev/null` finds nothing on the workstation.
+1. **Operator key.** In a WSL terminal inside the repository:
+
+   ```sh
+   SOPS_AGE_KEY="$(age -d ~/.config/sops/age/operator.age)" sops decrypt private/selftest/selftest.sops.yaml
+   ```
+
+   It must print two lines, `purpose:` and `canary:`. This proves the passphrase is known and the key file is intact.
+
+2. **Recovery key alone, offline.** On a machine with networking off (a live USB is ideal), with `age` and `sops` available and a copy of `selftest.sops.yaml`:
+
+   ```sh
+   read -rs SOPS_AGE_KEY && export SOPS_AGE_KEY     # type the AGE-SECRET-KEY line from the paper copy
+   sops decrypt selftest.sops.yaml
+   ```
+
+   It must print the same two lines. This proves that the paper copy is correct and sufficient. Do it before the first real secret is stored: a recovery key that was written down wrongly is worthless, and it is only discovered when it is needed.
+
+3. **Nothing readable on the workstation.** `grep -rIl "AGE-SECRET-KEY-" ~ 2>/dev/null` finds nothing.
 
 ## Rotation and loss
 
