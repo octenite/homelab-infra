@@ -1,6 +1,6 @@
 # Phase 1 gate record: repositories, standards, tooling, CI
 
-Status: **open.** The automated part is done and verified. Four items need the owner.
+Status: **open.** The automated part is done and verified. Three items need the owner.
 
 ## Done and verified (2026-10-05)
 
@@ -19,6 +19,7 @@ Status: **open.** The automated part is done and verified. Four items need the o
 | Branch ruleset on `main` | Pull request required; `lint` and `scan` required; no deletion; no force push | A direct push was refused |
 | Repository settings | Secret scanning and push protection on; Dependabot alerts on; private vulnerability reporting on; workflow token read-only by default; merge commits off; branches deleted on merge | Applied |
 | Laptop personally owned | Owner statement, 2026-10-05 | Confirmed |
+| Lab SSH key is passphrase-protected | An empty-passphrase read of the private key is refused | Confirmed |
 
 ## Deviations from the design, with reasons
 
@@ -35,7 +36,6 @@ Status: **open.** The automated part is done and verified. Four items need the o
 | 1 | Create the operator and recovery age keys | `docs/runbooks/bootstrap-keys.md`; then `private/.sops.yaml` is written and the recovery-key-only decryption test is run |
 | 2 | Install the hosted Renovate app on `octenite/homelab-infra` | https://github.com/apps/renovate, select only this repository; the configuration is already in `renovate.json5` |
 | 3 | GitHub token at rest on the workstation | The GitHub CLI in WSL2 keeps its token in a readable file. On an unencrypted disk that conflicts with exception X23. Options are recorded in the follow-ups |
-| 4 | Confirm the lab SSH key has a passphrase | It was created by the owner; X23 requires it |
 
 ## Follow-ups
 
@@ -44,4 +44,4 @@ Status: **open.** The automated part is done and verified. Four items need the o
 | Decide how the GitHub token is stored: Windows Git Credential Manager from WSL2, or a fine-grained token limited to the two repositories with a short expiry | Before Phase 2 |
 | Add `mise.lock` and the repository setting that requires actions pinned by SHA | With the first Renovate pull request |
 | Recovery SSH key (private half in the password manager) | With the age keys |
-| X23 verification scan of the WSL home directory for readable key material | After items 1, 3 and 4 |
+| X23 verification scan of the WSL home directory for readable key material | After items 1 and 3 |
