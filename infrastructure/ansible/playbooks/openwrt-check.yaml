@@ -1,0 +1,17 @@
+---
+# Read-only. Renders every managed configuration file from Git and compares it
+# with the live device. Changes nothing on the device except files in its RAM
+# disk, which are removed again.
+- name: Compare OpenWrt devices with the configuration in Git
+  hosts: "{{ target | default('openwrt_routers') }}"
+  gather_facts: false
+  vars:
+    # The collection's init role would otherwise install packages.
+    openwrt_install_recommended_packages: false
+  roles:
+    - role: community.openwrt.init
+  tasks:
+    - name: Compare rendered and live configuration
+      ansible.builtin.import_role:
+        name: openwrt_config
+        tasks_from: compare

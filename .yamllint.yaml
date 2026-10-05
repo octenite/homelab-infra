@@ -3,6 +3,7 @@ extends: default
 ignore: |
   private/
   .git/
+  infrastructure/ansible/collections/
 
 rules:
   line-length:

@@ -1,0 +1,7 @@
+---
+profile: production
+offline: true
+# Third-party collections are installed here by `just ansible-deps`; their
+# code is not ours to lint.
+exclude_paths:
+  - collections/

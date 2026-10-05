@@ -1,0 +1,7 @@
+# Pinned Ansible collections. Install with `just ansible-deps`.
+# Renovate's ansible-galaxy manager maintains the versions.
+collections:
+  - name: community.openwrt
+    version: 1.8.0
+  - name: community.sops
+    version: 2.5.0
