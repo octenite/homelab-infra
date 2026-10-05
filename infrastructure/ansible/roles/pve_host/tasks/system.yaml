@@ -12,12 +12,16 @@
     state: stopped
   failed_when: false
 
+- name: Read the KSM run flag
+  ansible.builtin.slurp:
+    src: /sys/kernel/mm/ksm/run
+  register: pve_host_ksm_run
+
 - name: KSM run flag off now
-  ansible.builtin.copy:
-    dest: /sys/kernel/mm/ksm/run
-    content: "0"
-    unsafe_writes: true
-  changed_when: false
+  ansible.builtin.shell:
+    cmd: echo 0 > /sys/kernel/mm/ksm/run
+  when: (pve_host_ksm_run.content | b64decode | trim) != '0'
+  changed_when: true
 
 - name: Persistent, capped journal
   ansible.builtin.copy:

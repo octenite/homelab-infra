@@ -32,7 +32,7 @@
       IN ACCEPT -source {{ pve_workstation }} -p icmp -log nolog # workstation may ping
   notify: Reload pve-firewall
 
-- name: pve-firewall service enabled and running
+- name: Firewall service enabled and running
   ansible.builtin.service:
     name: pve-firewall
     enabled: true
