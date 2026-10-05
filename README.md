@@ -9,8 +9,9 @@ Nothing here is physically highly available. There is one host, one disk and one
 | Phase | Scope | State |
 |---|---|---|
 | 0 | Discovery, design, owner decisions, device inventories | Complete |
-| 1 | Repositories, standards, pinned tooling, secret handling, CI | In progress |
-| 2 to 15 | Network, hypervisor, cluster, platform, applications, recovery drill | Not started |
+| 1 | Repositories, standards, pinned tooling, secret handling, CI | Complete |
+| 2 | Router segmentation: VLANs, firewall matrix, DNS, DHCP, NTP | Planned, see [the plan](docs/phases/phase-2-plan.md) |
+| 3 to 15 | Hypervisor, access points, cluster, platform, applications, recovery drill | Not started |
 
 Gate records are in [docs/phases/](docs/phases/). No phase starts before the previous gate is recorded.
 
