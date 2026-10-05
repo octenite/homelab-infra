@@ -1,0 +1,36 @@
+# Answer file for the Proxmox VE unattended installer.
+# Rendered by scripts/pve/build-install-media.sh; the placeholder values come
+# from the private inventory and are never committed rendered.
+# Format: https://pve.proxmox.com/wiki/Automated_Installation
+
+[global]
+keyboard = "en-us"
+country = "in"
+fqdn = "pve1.112511.xyz"
+mailto = "${MAILTO}"
+timezone = "Asia/Kolkata"
+root-password-hashed = "${ROOT_PASSWORD_HASH}"
+root-ssh-keys = [
+${SSH_KEYS}
+]
+# A failed install stays on the console, where the error can be read.
+reboot-on-error = false
+
+[network]
+source = "from-answer"
+cidr = "10.0.10.10/24"
+gateway = "10.0.10.1"
+dns = "10.0.10.1"
+# The onboard port is a Realtek RTL8168 (PCI device 0x8168); the 2.5 GbE card
+# is an RTL8125. Matching the chip, not the address, survives a board swap.
+filter.ID_MODEL_ID = "0x8168"
+
+[disk-setup]
+filesystem = "ext4"
+# The install disk is selected by serial number so a second disk can never be
+# picked by accident.
+filter.ID_SERIAL = "${DISK_SERIAL}"
+# About 20 GiB root, 4 GiB swap, 4 GiB kept free; the rest is the thin pool.
+lvm.maxroot = 20
+lvm.swapsize = 4
+lvm.minfree = 4

@@ -1,0 +1,53 @@
+---
+# First contact with a freshly installed Proxmox VE host. Runs once as root
+# with the key the installer authorised, creates the operator account, and
+# closes root login. Every later play connects as that account.
+- name: Bootstrap a freshly installed Proxmox VE host
+  hosts: "{{ target | default('proxmox') }}"
+  gather_facts: true
+  become: false
+  vars:
+    ansible_user: root
+  tasks:
+    - name: Create the operator account
+      ansible.builtin.user:
+        name: "{{ pve_ops_user }}"
+        shell: /bin/bash
+        groups: [sudo]
+        append: true
+        create_home: true
+
+    - name: Authorise the same keys for the operator account
+      ansible.posix.authorized_key:
+        user: "{{ pve_ops_user }}"
+        key: "{{ pve_ssh_authorized_keys | join('\n') }}"
+        exclusive: true
+
+    - name: Let the operator account administer without a password (it has none)
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/90-ops
+        content: "{{ pve_ops_user }} ALL=(ALL) NOPASSWD: ALL\n"
+        mode: "0440"
+        validate: /usr/sbin/visudo -cf %s
+
+    - name: Prove the operator account works before root is closed
+      ansible.builtin.command:
+        cmd: ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new {{ pve_ops_user }}@{{ ansible_host }} sudo -n true
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Close root login over SSH
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/10-homelab-bootstrap.conf
+        content: |
+          PermitRootLogin no
+          PasswordAuthentication no
+        mode: "0644"
+        validate: /usr/sbin/sshd -t -f %s
+      notify: Restart sshd
+
+  handlers:
+    - name: Restart sshd
+      ansible.builtin.service:
+        name: ssh
+        state: restarted

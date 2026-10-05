@@ -1,0 +1,38 @@
+---
+- name: Swap is a safety net only
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: "{{ pve_host_swappiness }}"
+    sysctl_file: /etc/sysctl.d/90-homelab.conf
+
+- name: KSM off (cross-VM side channel; hides memory pressure)
+  ansible.builtin.service:
+    name: ksmtuned
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: KSM run flag off now
+  ansible.builtin.copy:
+    dest: /sys/kernel/mm/ksm/run
+    content: "0"
+    unsafe_writes: true
+  changed_when: false
+
+- name: Persistent, capped journal
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/homelab.conf
+    mode: "0644"
+    content: |
+      [Journal]
+      Storage=persistent
+      SystemMaxUse={{ pve_host_journal_max_use }}
+  notify: Restart journald
+
+- name: Journal directory exists for persistent storage
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    mode: "2755"
+    owner: root
+    group: systemd-journal

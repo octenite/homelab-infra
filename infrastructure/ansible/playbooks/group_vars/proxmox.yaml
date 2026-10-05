@@ -1,0 +1,17 @@
+---
+# Proxmox VE hosts. Addresses and the authorised keys come from the private
+# inventory; everything here is policy.
+ansible_user: ops
+ansible_become: true
+pve_ops_user: ops
+
+# The keys authorised for root by the installer and for the operator account.
+pve_ssh_authorized_keys: "{{ openwrt_ssh_authorized_keys }}"
+
+# Management address and the networks that may reach host services.
+pve_mgmt_address: 10.0.10.10
+pve_workstation: 192.168.1.196
+pve_router: 10.0.10.1
+pve_talos_nodes: [10.0.50.11, 10.0.50.21]
+pve_talos_workers: [10.0.50.21, 10.0.50.22]
+pve_servers_network: 10.0.50.0/24

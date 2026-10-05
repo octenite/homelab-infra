@@ -1,0 +1,39 @@
+---
+# pve-firewall: the cluster-wide file sets the policy, the host file adds the
+# rules. Both live on the cluster filesystem under /etc/pve.
+- name: Cluster firewall policy (default DROP inbound)
+  ansible.builtin.copy:
+    dest: /etc/pve/firewall/cluster.fw
+    mode: "0640"
+    content: |
+      [OPTIONS]
+      enable: 1
+      policy_in: DROP
+      policy_out: ACCEPT
+      log_level_in: nolog
+  notify: Reload pve-firewall
+
+- name: Host firewall rules
+  ansible.builtin.copy:
+    dest: "/etc/pve/nodes/{{ inventory_hostname_short }}/host.fw"
+    mode: "0640"
+    content: |
+      [OPTIONS]
+      enable: 1
+      log_level_in: nolog
+      ndp: 0
+      nf_conntrack_allow_invalid: 0
+
+      [RULES]
+      {% for r in pve_host_fw_rules %}
+      IN ACCEPT -source {{ r.source }} -p {{ r.proto }} -dport {{ r.dport }} -log nolog # {{ r.comment }}
+      {% endfor %}
+      IN ACCEPT -source {{ pve_router }} -p icmp -log nolog # router may ping
+      IN ACCEPT -source {{ pve_workstation }} -p icmp -log nolog # workstation may ping
+  notify: Reload pve-firewall
+
+- name: pve-firewall service enabled and running
+  ansible.builtin.service:
+    name: pve-firewall
+    enabled: true
+    state: started

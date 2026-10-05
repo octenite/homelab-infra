@@ -1,0 +1,15 @@
+---
+- name: Packages and repositories
+  ansible.builtin.import_tasks: apt.yaml
+
+- name: SSH
+  ansible.builtin.import_tasks: ssh.yaml
+
+- name: Time
+  ansible.builtin.import_tasks: time.yaml
+
+- name: Kernel, memory and logs
+  ansible.builtin.import_tasks: system.yaml
+
+- name: Firewall
+  ansible.builtin.import_tasks: firewall.yaml
