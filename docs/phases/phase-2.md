@@ -63,11 +63,11 @@ Not yet tested, because no client exists in those networks: the IoT rules and th
 
 | # | Item | Who |
 |---|---|---|
-| 1 | Join a phone to the IoT network and confirm: it gets an address in 10.0.60.x, the internet works, and it cannot open the router or a trusted device | Owner, then recorded here |
+| 1 | Join a phone to the IoT network and confirm: it gets an address in 10.0.60.x, the internet works, and it cannot open the router or a trusted device | **Closed 2026-10-05:** the owner ran the three checks and all passed. The router listed one lease in 10.0.60.x at that time |
 | 2 | Move trusted devices to the new main network at leisure | Owner |
-| 3 | How the phone talks to the ESP32, to decide whether an mDNS reflector is needed | Owner |
+| 3 | How the phone talks to the ESP32, to decide whether an mDNS reflector is needed | **Closed 2026-10-05:** the ESP32 runs ESPHome and is driven by HTTP shortcuts that use its address. No reflector is needed. It gets a fixed address in the IoT network in Phase 4 (backlog B4) |
 | 4 | The access points still accept SSH passwords and serve LuCI on the LAN | Phase 4, which the owner agreed to run next, before the hypervisor reinstall |
-| 5 | The Wi-Fi country code is visible in one file of one commit in the public history | Owner decides whether the history is rewritten |
+| 5 | The router's radio settings are visible in one file of one commit in the public history | Parked by the owner; backlog B1 has the exact content and the options |
 | 6 | Guest and IoT matrix tests from a real client | Item 1 for IoT; Phase 4 for guest |
 
 ## How to operate what this phase built
