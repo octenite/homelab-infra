@@ -77,6 +77,13 @@ config host 'esp32'
 	list mac '{{ openwrt_esp32_mac }}'
 	option ip '10.0.60.10'
 
+{# The printer keeps the address it first received in the IoT network, so the
+   PCs that already print to it need no change. #}
+config host 'printer'
+	option name '{{ openwrt_printer_name }}'
+	list mac '{{ openwrt_printer_mac }}'
+	option ip '10.0.60.182'
+
 config odhcpd 'odhcpd'
 	option maindhcp '0'
 	option leasefile '/tmp/odhcpd.leases'

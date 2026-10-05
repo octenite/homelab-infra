@@ -64,6 +64,9 @@ Proof, on access point 1 with a harmless setting: a confirmed change left its ti
 | # | Item | Who |
 |---|---|---|
 | 1 | Move the remaining trusted devices to the new main network. Until then they are guests: internet only | Owner |
-| 2 | Join the printer to the IoT network (owner's decision). Its address is then fixed by the operator | Owner, then operator; backlog B17 |
-| 3 | Move the ESP32 to the IoT network. Until then it is a guest and the phone shortcuts cannot reach it | Owner; backlog B4 |
+| 2 | Printer in the IoT network, pinned to 10.0.60.182 | **Closed 2026-10-06** (backlog B17) |
+| 3 | ESP32 in the IoT network at 10.0.60.10 | **Closed 2026-10-06** (backlog B4) |
 | 4 | Phone checks: two guests cannot reach each other; roaming between the three devices on each network | Owner with operator; backlog B19 |
+| 5 | One unnamed device holds an IoT lease besides the printer and the ESP32 | Owner to identify; it may be a phone used during the setup |
+
+On 2026-10-06 the owner switched the 2.4 GHz guest network off through LuCI to force the ESP32 onto its fallback hotspot, then switched it back on. A comparison afterwards showed all three devices identical to Git, so the manual change left no drift.
