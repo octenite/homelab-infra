@@ -11,7 +11,10 @@ config system
 	option conloglevel '8'
 	option cronloglevel '7'
 
+{# The router is the time source for every internal network; the firewall
+   decides which zones may ask. #}
 config timeserver 'ntp'
+	option enable_server '1'
 	list server '0.openwrt.pool.ntp.org'
 	list server '1.openwrt.pool.ntp.org'
 	list server '2.openwrt.pool.ntp.org'

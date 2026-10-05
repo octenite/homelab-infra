@@ -1,0 +1,151 @@
+---
+# Apply the configuration in Git to a device, guarded by an automatic revert.
+#
+#   1. render and compare; stop when nothing differs
+#   2. snapshot the current files in the device's RAM disk
+#   3. arm a delayed revert on the device
+#   4. install the new files and reload the affected services
+#   5. reconnect, compare again, run health checks from the device and from
+#      the workstation
+#   6. only then disarm the revert
+#
+# If any step after 3 fails, or the workstation cannot reach the device any
+# more, nothing disarms the revert and the device restores its previous
+# configuration by itself.
+
+- name: Render and compare
+  ansible.builtin.include_tasks: compare.yaml
+  vars:
+    openwrt_config_fail_on_diff: false
+    openwrt_config_keep_render: true
+
+- name: Determine the files that change
+  ansible.builtin.set_fact:
+    openwrt_config_changed: >-
+      {{ openwrt_config_report | rejectattr('identical_including_secrets') | map(attribute='file') | list }}
+
+- name: Remove the render directory from the device when nothing changes
+  community.openwrt.file:
+    path: "{{ openwrt_config_render_remote }}"
+    state: absent
+  changed_when: false
+  when: openwrt_config_changed | length == 0
+
+- name: Report that nothing changes
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }} already matches Git. Nothing was changed."
+  when: openwrt_config_changed | length == 0
+
+- name: Apply with automatic revert
+  when: openwrt_config_changed | length > 0
+  block:
+    - name: Snapshot the current configuration in the device's RAM disk
+      community.openwrt.command:
+        cmd: >-
+          sh -c 'rm -rf {{ openwrt_config_rollback_dir }} &&
+          mkdir -p {{ openwrt_config_rollback_dir }}/config &&
+          cd /etc/config &&
+          cp -p {{ openwrt_config_managed | join(" ") }} {{ openwrt_config_rollback_dir }}/config/ &&
+          chmod 700 {{ openwrt_config_rollback_dir }}'
+      changed_when: true
+
+    - name: Copy the activation and revert scripts
+      community.openwrt.copy:
+        src: "{{ item }}"
+        dest: "{{ openwrt_config_rollback_dir }}/{{ item }}"
+        mode: "0700"
+      loop:
+        - activate.sh
+        - revert.sh
+
+    - name: Arm the revert
+      community.openwrt.command:
+        cmd: "touch {{ openwrt_config_rollback_dir }}/armed"
+      changed_when: true
+
+    - name: Start the revert timer on the device
+      community.openwrt.nohup:
+        command: "sh {{ openwrt_config_rollback_dir }}/revert.sh"
+        delay: "{{ openwrt_config_revert_seconds }}"
+
+    - name: Install the changed files
+      community.openwrt.command:
+        cmd: >-
+          sh -c 'cd {{ openwrt_config_render_remote }} &&
+          cp {{ openwrt_config_changed | join(" ") }} /etc/config/'
+      changed_when: true
+
+    - name: Reload the affected services, detached from this session
+      community.openwrt.nohup:
+        command: "sh {{ openwrt_config_rollback_dir }}/activate.sh {{ openwrt_config_changed | join(' ') }}"
+        delay: 2
+
+    - name: Wait for the services to settle
+      ansible.builtin.pause:
+        seconds: "{{ 25 if ('network' in openwrt_config_changed) else 10 }}"
+
+    # Without this the next tasks would reuse the SSH connection opened
+    # before the change, and a change that breaks new logins would go unnoticed.
+    - name: Drop the open connection so verification has to log in again
+      ansible.builtin.meta: reset_connection
+
+    - name: Reconnect to the device
+      community.openwrt.wait_for_connection:
+        timeout: 120
+
+    - name: Compare the device with Git again
+      ansible.builtin.include_tasks: compare.yaml
+      vars:
+        openwrt_config_fail_on_diff: true
+        openwrt_config_keep_render: false
+
+    - name: Health checks on the device
+      community.openwrt.command:
+        cmd: "{{ item }}"
+      loop: "{{ openwrt_config_health_commands }}"
+      changed_when: false
+      register: openwrt_config_health
+      retries: 5
+      delay: 5
+      until: openwrt_config_health.rc == 0
+
+    - name: Health checks from the workstation
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      loop: "{{ openwrt_config_health_local_commands }}"
+      delegate_to: localhost
+      changed_when: false
+      register: openwrt_config_health_local
+      retries: 5
+      delay: 5
+      until: openwrt_config_health_local.rc == 0
+
+    - name: Confirm the change by disarming the revert
+      community.openwrt.command:
+        cmd: "rm -f {{ openwrt_config_rollback_dir }}/armed"
+      changed_when: true
+      when: openwrt_config_confirm | bool
+
+    - name: Report a confirmed change
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ openwrt_config_changed | join(', ') }} changed, verified and confirmed."
+      when: openwrt_config_confirm | bool
+
+    - name: Report an unconfirmed change
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: change left UNCONFIRMED on purpose. The device restores its previous
+          configuration {{ openwrt_config_revert_seconds }} seconds after the change.
+      when: not (openwrt_config_confirm | bool)
+
+  rescue:
+    # Nothing here touches the device: the revert timer is still armed, and
+    # leaving it alone is the recovery.
+    - name: Stop and let the device restore itself
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: the change was NOT confirmed
+          (failed task: {{ ansible_failed_task.name | default('unknown') }}).
+          If the revert was already armed, the device restores its previous configuration by itself
+          within {{ openwrt_config_revert_seconds }} seconds of the change. Wait for that, then run
+          the check playbook before trying again.

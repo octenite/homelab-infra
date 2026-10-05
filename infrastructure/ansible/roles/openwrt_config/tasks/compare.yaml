@@ -67,6 +67,7 @@
     state: absent
   check_mode: false
   changed_when: false
+  when: not openwrt_config_keep_render
 
 - name: Save both exports locally in memory
   ansible.builtin.copy:
@@ -117,10 +118,14 @@
   check_mode: false
   changed_when: false
 
+- name: Reset the report
+  ansible.builtin.set_fact:
+    openwrt_config_report: []
+
 - name: Collect the result per file
   ansible.builtin.set_fact:
     openwrt_config_report: >-
-      {{ openwrt_config_report | default([]) + [{
+      {{ openwrt_config_report + [{
            'file': item.0.item,
            'visible_difference': item.0.rc != 0,
            'identical_including_secrets': item.1.rc == 0,
@@ -154,3 +159,4 @@
       - openwrt_config_report | selectattr('visible_difference') | list | length == 0
     fail_msg: "The device does not match Git. See the differences above."
     success_msg: "The device matches Git in every managed file."
+  when: openwrt_config_fail_on_diff
