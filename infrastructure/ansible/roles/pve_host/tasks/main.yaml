@@ -1,0 +1,20 @@
+---
+- name: Packages and repositories
+  ansible.builtin.import_tasks: apt.yaml
+
+- name: SSH
+  ansible.builtin.import_tasks: ssh.yaml
+
+- name: Time
+  ansible.builtin.import_tasks: time.yaml
+
+- name: Kernel, memory and logs
+  ansible.builtin.import_tasks: system.yaml
+
+- name: Firewall
+  ansible.builtin.import_tasks: firewall.yaml
+
+# Restarts that a change requested are applied before the play ends, so a
+# failure in a later task cannot leave a service on its old configuration.
+- name: Apply pending service restarts
+  ansible.builtin.meta: flush_handlers

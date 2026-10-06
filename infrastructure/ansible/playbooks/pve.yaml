@@ -1,0 +1,8 @@
+---
+# Configure a Proxmox VE host. Idempotent; connects as the operator account.
+- name: Configure Proxmox VE hosts
+  hosts: "{{ target | default('proxmox') }}"
+  gather_facts: true
+  become: true
+  roles:
+    - role: pve_host

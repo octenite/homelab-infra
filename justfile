@@ -38,6 +38,14 @@ session-start:
     age -d -o /dev/shm/homelab-session/age.key "$HOME/.config/sops/age/operator.age"
     echo "Session open. The decrypted key is in RAM only. Close it with: just session-end"
 
+# Show one value from an encrypted file, using the open session. Example: just reveal private/proxmox/pve1.sops.yaml pve_root_password
+reveal file key="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
+    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
+    if [ -n "{{key}}" ]; then sops decrypt --extract '["{{key}}"]' "{{file}}"; echo; else sops decrypt "{{file}}"; fi
+
 # Close the operator session and remove every decrypted artefact from memory.
 session-end:
     rm -rf /dev/shm/homelab-session /dev/shm/homelab-render

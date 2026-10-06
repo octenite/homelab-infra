@@ -1,0 +1,55 @@
+---
+- name: Remove the subscription-only repositories
+  ansible.builtin.file:
+    path: "/etc/apt/sources.list.d/{{ item }}"
+    state: absent
+  loop:
+    - pve-enterprise.sources
+    - ceph.sources
+  when: pve_host_remove_enterprise_repos
+  notify: Update apt cache
+
+- name: Add the free Proxmox repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/pve-no-subscription.sources
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: http://download.proxmox.com/debian/pve
+      Suites: {{ ansible_distribution_release }}
+      Components: pve-no-subscription
+      Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+  notify: Update apt cache
+
+- name: Flush handlers so the cache is current before installing
+  ansible.builtin.meta: flush_handlers
+
+- name: Install host packages
+  ansible.builtin.apt:
+    name:
+      - intel-microcode
+      - chrony
+      - unattended-upgrades
+      - smartmontools
+      - ethtool
+      - jq
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Unattended upgrades, Debian security origins only
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52-homelab-unattended.conf
+    mode: "0644"
+    content: |
+      Unattended-Upgrade::Origins-Pattern {
+          "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+      };
+      Unattended-Upgrade::Automatic-Reboot "{{ 'true' if pve_host_unattended_reboot else 'false' }}";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+- name: No subscription nag in the web interface log (informational only)
+  ansible.builtin.debug:
+    msg: "Proxmox packages are upgraded in the monthly window, not unattended (docs/runbooks/upgrade-pve.md)."

@@ -1,0 +1,35 @@
+---
+- name: Chrony configuration
+  ansible.builtin.copy:
+    dest: /etc/chrony/chrony.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/pve_host).
+      {% for s in pve_host_ntp_servers %}
+      server {{ s }} iburst prefer
+      {% endfor %}
+      {% for s in pve_host_ntp_fallback %}
+      pool {{ s }} iburst
+      {% endfor %}
+      driftfile /var/lib/chrony/chrony.drift
+      makestep 1 3
+      rtcsync
+      # The host is the second time source of the Talos nodes (E13); it keeps
+      # serving its own clock when every upstream is unreachable.
+      {% for n in pve_host_ntp_allow %}
+      allow {{ n }}
+      {% endfor %}
+      local stratum 10
+      leapsectz right/UTC
+      logdir /var/log/chrony
+  notify: Restart chrony
+
+- name: Chrony enabled
+  ansible.builtin.service:
+    name: chrony
+    enabled: true
+    state: started
+
+- name: Time zone
+  community.general.timezone:
+    name: Asia/Kolkata

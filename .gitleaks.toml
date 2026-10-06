@@ -4,3 +4,7 @@ title = "homelab-infra"
 
 [extend]
 useDefault = true
+
+[allowlist]
+description = "Third-party Ansible collections installed into the tree by `just ansible-deps`; their test fixtures contain example keys. The directory is ignored by Git."
+paths = ['''^infrastructure/ansible/collections/''']

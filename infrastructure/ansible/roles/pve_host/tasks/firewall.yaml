@@ -1,0 +1,64 @@
+---
+# pve-firewall: the cluster-wide file sets the policy, the host file adds the
+# rules. Both live on the cluster filesystem under /etc/pve, which refuses
+# permission changes and atomic replacement, so files are compared and, only
+# when they differ, written in place.
+- name: Firewall directory on the cluster filesystem # noqa: risky-file-permissions
+  ansible.builtin.file:
+    path: /etc/pve/firewall
+    state: directory
+
+- name: Wanted firewall files
+  ansible.builtin.set_fact:
+    pve_host_fw_files:
+      /etc/pve/firewall/cluster.fw: |
+        [OPTIONS]
+        enable: 1
+        policy_in: DROP
+        policy_out: ACCEPT
+      "/etc/pve/nodes/{{ inventory_hostname_short }}/host.fw": |
+        [OPTIONS]
+        enable: 1
+        log_level_in: nolog
+        ndp: 0
+        nf_conntrack_allow_invalid: 0
+
+        [RULES]
+        {% for r in pve_host_fw_rules %}
+        IN ACCEPT -source {{ r.source }} -p {{ r.proto }} -dport {{ r.dport }} -log nolog # {{ r.comment }}
+        {% endfor %}
+        IN ACCEPT -source {{ pve_router }} -p icmp -log nolog # router may ping
+        IN ACCEPT -source {{ pve_workstation }} -p icmp -log nolog # workstation may ping
+        IN ACCEPT -source {{ pve_workstation }} -p tcp -dport 3128,5900:5999 -log nolog # E2 workstation: console ports
+        # pve-firewall appends built-in rules that admit the host's own subnet
+        # (the "management" set, always extended with the local network) to SSH,
+        # the web interface, the console ports and migration. Host rules run
+        # first, so the rest of the management VLAN is dropped here (X10).
+        IN DROP -source {{ pve_mgmt_network }} -p tcp -dport 22,8006,3128,5900:5999,60000:60050 -log nolog # X10 no rights by VLAN membership
+
+- name: Read the current firewall files
+  ansible.builtin.slurp:
+    src: "{{ item.key }}"
+  loop: "{{ pve_host_fw_files | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: pve_host_fw_current
+  failed_when: false
+
+- name: Write firewall files that differ
+  ansible.builtin.shell:
+    cmd: "cat > {{ item.item.key }}"
+    stdin: "{{ item.item.value }}"
+    stdin_add_newline: false
+  loop: "{{ pve_host_fw_current.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when: (item.content | default('') | b64decode) != item.item.value
+  changed_when: true
+  notify: Reload pve-firewall
+
+- name: Firewall service enabled and running
+  ansible.builtin.service:
+    name: pve-firewall
+    enabled: true
+    state: started

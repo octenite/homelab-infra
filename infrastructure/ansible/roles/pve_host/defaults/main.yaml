@@ -1,0 +1,46 @@
+---
+# Package repositories: the free Proxmox repository replaces the enterprise
+# ones, which need a subscription (exception X12).
+pve_host_remove_enterprise_repos: true
+
+# Time: the router only. The firewall lets no NTP leave the management
+# network, so public pools would never answer. The host serves the Talos
+# nodes as their second source (E13) from its own clock when the router has
+# no time.
+pve_host_ntp_servers:
+  - "{{ pve_router }}"
+pve_host_ntp_fallback: []
+pve_host_ntp_allow:
+  - "{{ pve_servers_network }}"
+
+# Memory: swap only as a safety net; KSM off (side channel, hidden pressure).
+pve_host_swappiness: 10
+
+# Logs: persistent, capped.
+pve_host_journal_max_use: 1G
+
+# Unattended upgrades: Debian security only, no automatic reboot.
+pve_host_unattended_reboot: false
+
+# Firewall (pve-firewall): default DROP, these exceptions only.
+pve_host_fw_rules:
+  - comment: "E2 workstation: SSH and web interface"
+    source: "{{ pve_workstation }}"
+    proto: tcp
+    dport: "22,8006"
+  - comment: "E6 workers: API"
+    source: "{{ pve_talos_workers | join(',') }}"
+    proto: tcp
+    dport: "8006"
+  - comment: "E7 workers: exporters"
+    source: "{{ pve_talos_workers | join(',') }}"
+    proto: tcp
+    dport: "9100,9633"
+  - comment: "E13 Talos nodes: time"
+    source: "{{ pve_talos_nodes | join(',') }}"
+    proto: udp
+    dport: "123"
+
+# Exporters, bound to the management address only.
+pve_host_node_exporter_version: 1.12.1
+pve_host_smartctl_exporter_version: 0.14.0

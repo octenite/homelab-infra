@@ -1,0 +1,28 @@
+---
+- name: SSH is key-only, operator account only, on the management address only
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/20-homelab.conf
+    mode: "0644"
+    content: |
+      ListenAddress {{ pve_mgmt_address }}
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      AllowUsers {{ pve_ops_user }}
+      X11Forwarding no
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Restart sshd
+
+- name: Remove the bootstrap drop-in, superseded by the one above
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/10-homelab-bootstrap.conf
+    state: absent
+  notify: Restart sshd
+
+- name: Root keeps the recovery key only, for the console-equivalent path
+  ansible.posix.authorized_key:
+    user: root
+    key: "{{ pve_ssh_authorized_keys | select('search', 'homelab-recovery') | join('\n') }}"
+    exclusive: true
