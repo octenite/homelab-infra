@@ -12,6 +12,18 @@
   mise: {
     managerFilePatterns: ["/(^|/)mise\\.ci\\.toml$/"],
   },
+  // Versions pinned in Ansible variables, marked with a "# renovate:" comment
+  // on the line above (exporters on the hypervisor).
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^infrastructure/ansible/playbooks/group_vars/.*\\.yaml$/"],
+      matchStrings: [
+        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>[^\\s]+)\\n[a-z_]+_version: (?<currentValue>[0-9.]+)\\n",
+      ],
+      extractVersionTemplate: "^v?(?<version>.+)$",
+    },
+  ],
   packageRules: [
     {
       description: "Tooling that cannot reach a host or the cluster may merge itself after green CI",

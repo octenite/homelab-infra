@@ -5,6 +5,17 @@
     value: "{{ pve_host_swappiness }}"
     sysctl_file: /etc/sysctl.d/90-homelab.conf
 
+# The host bridges guests at layer 2 only; it must never route between the
+# direct link and the management VLAN.
+- name: No IP forwarding
+  ansible.posix.sysctl:
+    name: "{{ item }}"
+    value: "0"
+    sysctl_file: /etc/sysctl.d/90-homelab.conf
+  loop:
+    - net.ipv4.ip_forward
+    - net.ipv6.conf.all.forwarding
+
 - name: KSM off (cross-VM side channel; hides memory pressure)
   ansible.builtin.service:
     name: ksmtuned

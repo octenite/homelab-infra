@@ -7,9 +7,11 @@ Node 1 runs Proxmox VE and hosts the Talos VMs. It is the single physical host o
 ## Architecture
 
 - One host, `pve1`, in the management network at 10.0.10.10, on the onboard gigabit port.
+- Bridges: `vmbr0` on the onboard port, VLAN-aware, host address untagged and the servers VLAN tagged for guests; `vmbr1` on the 2.5 GbE port with 10.0.99.1/29, the direct link to the workstation for backups, no guests. The host does not route between them.
 - Storage: ext4 root, swap as a safety net, and an LVM thin pool for VM disks and, later, Kubernetes volumes.
 - Firewall: pve-firewall with policy DROP and the exceptions E2, E6, E7 and E13 from [ARCHITECTURE.md](../ARCHITECTURE.md) section 6.
 - Time: the router is the only source; the host serves the servers network with a local fallback.
+- Metrics: `node_exporter` (9100) and `smartctl_exporter` (9633) from the upstream Ansible collection, bound to the management address; a timer adds thin-pool usage through the textfile collector. Only the Talos workers may scrape them (E7).
 
 ## Dependencies
 
@@ -33,11 +35,14 @@ Both plays run from the workstation with a session open.
 | What | Where |
 |---|---|
 | Install layout, address, keys | `infrastructure/proxmox/answer.toml.tmpl` |
-| Host policy: repositories, SSH, time, memory, logs, firewall | `infrastructure/ansible/roles/pve_host/` |
+| Host policy: repositories, SSH, time, memory, logs, bridges, firewall, thin-pool metrics | `infrastructure/ansible/roles/pve_host/` |
+| Exporter versions and listen addresses | `infrastructure/ansible/playbooks/group_vars/proxmox.yaml`; the roles come from the `prometheus.prometheus` collection pinned in `requirements.yml` |
 | Addresses the rules refer to | `infrastructure/ansible/playbooks/group_vars/proxmox.yaml` |
 | Root password, disk and stick serial numbers, notification address | private repository, `proxmox/` |
 
-Quirks worth knowing: `/etc/pve` is a cluster filesystem that refuses permission changes and atomic replacement, so the role compares and writes firewall files in place. pve-firewall always admits the host's own subnet to its management ports through a built-in set; the role drops the rest of that subnet explicitly.
+Quirks worth knowing: `/etc/pve` is a cluster filesystem that refuses permission changes and atomic replacement, so the role compares and writes firewall files in place. pve-firewall always admits the host's own subnets to its management ports through a built-in set; the role drops the rest of those subnets explicitly.
+
+A change to the bridges is guarded: the role parses the new interfaces file first, arms a transient systemd timer that restores the previous file, applies the change detached from the SSH session with `ifreload`, and disarms the timer only after the host answers again on its management address with the expected VLANs and bridges. A change that is not confirmed within three minutes is undone by the host itself.
 
 ## Security considerations
 
@@ -62,6 +67,8 @@ Reinstall from the answer file, then run the two plays. Tokens are re-issued. Se
 | A device in the management network reaches a host port | It must not: the host rules drop the subnet on the management ports; `iptables -S PVEFW-HOST-IN` |
 | Time wrong | `chronyc sources`; the router is the only source |
 | The play fails on `/etc/pve` | Permission or replace errors: the file must be written in place, not copied |
+| The play failed in the bridge change | Wait three minutes; the host restores its previous file (`journalctl -t homelab`). Then `ifquery --check -a` and run the play again |
+| The 2.5 GbE link is down | `ethtool enp2s0` for link and speed; the bridge `vmbr1` stays up without a link, nothing else depends on it |
 
 ## Removal
 

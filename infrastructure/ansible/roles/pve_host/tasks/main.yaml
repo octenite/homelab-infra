@@ -11,8 +11,14 @@
 - name: Kernel, memory and logs
   ansible.builtin.import_tasks: system.yaml
 
+- name: Bridges
+  ansible.builtin.import_tasks: network.yaml
+
 - name: Firewall
   ansible.builtin.import_tasks: firewall.yaml
+
+- name: Host metrics
+  ansible.builtin.import_tasks: metrics.yaml
 
 # Restarts that a change requested are applied before the play ends, so a
 # failure in a later task cannot leave a service on its old configuration.

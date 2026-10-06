@@ -1,0 +1,31 @@
+# Managed by Ansible (roles/pve_host). Changes made by hand are overwritten.
+# No bridge-fd: with STP off the forward delay is unused, and ifupdown2 3.3
+# rejects the installer's "bridge-fd 0" in its syntax check.
+auto lo
+iface lo inet loopback
+
+iface {{ pve_nic_lan }} inet manual
+
+# Onboard port: host address untagged (router port PVID 10), guest VLANs
+# tagged. A guest NIC without a tag would land in the management VLAN, which
+# the VM module, CI and the drift job guard against (ARCHITECTURE.md, 4).
+auto vmbr0
+iface vmbr0 inet static
+	address {{ pve_mgmt_address }}/{{ pve_mgmt_network | regex_replace('^.*/', '') }}
+	gateway {{ pve_router }}
+	bridge-ports {{ pve_nic_lan }}
+	bridge-stp off
+	bridge-vlan-aware yes
+	bridge-vids {{ pve_guest_vlans | join(' ') }}
+
+iface {{ pve_nic_p2p }} inet manual
+
+# 2.5 GbE port: direct link to the workstation for backups (E10). No gateway,
+# no guests, nothing inbound (host firewall).
+auto vmbr1
+iface vmbr1 inet static
+	address {{ pve_p2p_address }}
+	bridge-ports {{ pve_nic_p2p }}
+	bridge-stp off
+
+source /etc/network/interfaces.d/*
