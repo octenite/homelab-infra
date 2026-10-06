@@ -43,14 +43,16 @@ start)
 		rm -f "$SOCK"
 		ssh-agent -a "$SOCK" >/dev/null
 	fi
+	mkdir -p "$DIR"
+	# Decrypt beside the live key and swap only when both passphrases were
+	# right: a mistyped one must leave a running session, its key lifetime
+	# and its timer as they were.
+	rm -f "$DIR/age.key.new"
+	trap 'rm -f "$DIR/age.key.new"' EXIT
+	age -d -o "$DIR/age.key.new" "$HOME/.config/sops/age/operator.age"
 	# Added on every start: adding a loaded key again replaces its lifetime,
 	# so both halves of the session share one deadline.
 	SSH_AUTH_SOCK="$SOCK" ssh-add -t "${HOURS}h" "$HOME/.ssh/homelab_ed25519"
-	mkdir -p "$DIR"
-	# Decrypt beside the live key and swap only on success: a mistyped
-	# passphrase must leave a running session, and its timer, as they were.
-	rm -f "$DIR/age.key.new"
-	age -d -o "$DIR/age.key.new" "$HOME/.config/sops/age/operator.age"
 	mv -f "$DIR/age.key.new" "$DIR/age.key"
 	# The session ends by itself: a forgotten session must not stay open
 	# for days on a machine that travels. The deadline is a wall-clock time,
