@@ -60,8 +60,8 @@
           PBS_FALLBACKS="{{ pve_backup_fallbacks | join(' ') }}"
           PBS_KEYFILE=/etc/pve/priv/storage/{{ pve_backup_storage }}.enc
           PBS_KEEPALIVE_SECONDS={{ pve_backup_keepalive_seconds }}
-      notify: Restart pbs-keepalive
           PING_URL={{ pve_backup_ping_url }}
+      notify: Restart pbs-keepalive
 
     - name: Backup client credentials, root only
       ansible.builtin.copy:
