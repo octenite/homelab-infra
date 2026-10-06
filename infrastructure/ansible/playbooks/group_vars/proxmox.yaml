@@ -26,6 +26,74 @@ pve_guest_vlans: [50]
 pve_p2p_address: 10.0.99.1/29
 pve_p2p_network: 10.0.99.0/29
 
+# Access (ARCHITECTURE.md section 6, management plane). Custom roles hold
+# only what each automation needs: never Administrator, never VM.Monitor.
+# The owner's account is the only holder of Administrator; root@pam is
+# break-glass. Its password comes from the private inventory.
+pve_admin_user: octenite-admin@pve
+pve_pool: talos
+pve_roles:
+  TerraformProvisioner: >-
+    VM.Allocate VM.Clone VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit
+    VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network
+    VM.Config.Options VM.PowerMgmt VM.Audit VM.GuestAgent.Audit
+    Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit
+    SDN.Use Pool.Allocate Pool.Audit Sys.Audit Sys.Modify
+  KubernetesCSI: >-
+    VM.Audit VM.Config.Disk Datastore.Allocate Datastore.AllocateSpace
+    Datastore.Audit
+pve_users:
+  - userid: terraform@pve
+    comment: OpenTofu; token held on the workstation only
+  - userid: kubernetes-csi@pve
+    comment: Proxmox CSI plugin in the cluster
+  - userid: prometheus@pve
+    comment: pve-exporter in the cluster, read-only
+  - userid: drift@pve
+    comment: weekly read-only drift job
+# One token per user, privilege-separated, 12-month lifetime; issued by
+# playbooks/pve-tokens.yaml. Each token receives the ACLs of its user.
+pve_tokens:
+  - userid: terraform@pve
+    tokenid: tofu
+  - userid: kubernetes-csi@pve
+    tokenid: csi
+  - userid: prometheus@pve
+    tokenid: exporter
+  - userid: drift@pve
+    tokenid: weekly
+pve_token_lifetime_days: 365
+# ACLs: scoped paths wherever the API accepts them. The CSI entries on the
+# worker VMs are added in Phase 7, when their IDs exist.
+pve_acls:
+  - path: /
+    role: Administrator
+    user: "{{ pve_admin_user }}"
+  - path: "/pool/{{ pve_pool }}"
+    role: TerraformProvisioner
+    user: terraform@pve
+  - path: /storage/local
+    role: TerraformProvisioner
+    user: terraform@pve
+  - path: /storage/local-lvm
+    role: TerraformProvisioner
+    user: terraform@pve
+  - path: "/nodes/{{ inventory_hostname_short }}"
+    role: TerraformProvisioner
+    user: terraform@pve
+  - path: /sdn/zones/localnetwork/vmbr0
+    role: TerraformProvisioner
+    user: terraform@pve
+  - path: /storage/local-lvm
+    role: KubernetesCSI
+    user: kubernetes-csi@pve
+  - path: /
+    role: PVEAuditor
+    user: prometheus@pve
+  - path: /
+    role: PVEAuditor
+    user: drift@pve
+
 # Exporters (prometheus.prometheus roles), management address only.
 # renovate: datasource=github-releases depName=prometheus/node_exporter
 node_exporter_version: 1.12.1

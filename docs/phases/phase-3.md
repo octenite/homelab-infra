@@ -11,6 +11,7 @@ Status: **in progress.** Steps 3.1 to 3.4 of `phase-3-plan.md` are done, includi
 | 3.3 Measurements | Below |
 | 3.4 Ansible | Bootstrap play: operator account with both keys, root login over SSH closed, root keeps the recovery key only. Host play, idempotent on the second run: free Proxmox repository, Intel microcode, SSH key-only on the management address for the operator only, chrony with the router as the only source and serving the servers network, swap as a safety net, KSM off, persistent capped journal, host firewall with policy DROP and the exceptions below |
 | 3.4 Bridges and metrics (second pull request) | `vmbr0` made VLAN-aware with the servers VLAN tagged for guests, `vmbr1` created on the 2.5 GbE port with the point-to-point address, IP forwarding off. Applied through the guarded path: parse first, revert timer armed, reload detached, confirmed only after the host answered with the expected VLANs and bridges; the SSH session did not even drop. `node_exporter` 1.12.1 and `smartctl_exporter` 0.14.0 from the `prometheus.prometheus` collection on the management address, a timer feeding thin-pool usage to the textfile collector. The play is idempotent (`changed=0` on the following run) |
+| 3.4 Access (third pull request) | Custom roles `TerraformProvisioner` and `KubernetesCSI` from the design's privilege lists (every name exists on 9.2), pool `talos`, the owner's `octenite-admin@pve` as the only Administrator (password generated into the private inventory), four automation users with scoped entries, and four privilege-separated tokens with a 12-month expiry whose secrets went straight into `private/proxmox/tokens.sops.yaml` without being displayed. Token scope proven from the workstation: see below |
 
 ## Measurements
 
@@ -39,7 +40,19 @@ The probe from OpenWrt devices uses their SSH client against each port: a timeou
 | Workstation | exporters (9100, 9633) | drop | pass: the connection fails from the pinned address, which is not in E7 |
 | Workstation | SSH after the bridge change | allow | pass |
 
-During the first probe the workstation's dock adapter disappeared and its traffic moved to Wi-Fi with another address, which every firewall rejected. That confirmed exception E2 from the wrong side: nothing in the lab answers a workstation that is not on its pinned address. The owner then asked to work from Wi-Fi as well and chose, from three options, to bind the pinned address to the laptop's Wi-Fi adapter too (MAC randomisation is off for the trusted network); the two adapters are never up at the same time, which is the case dnsmasq documents for a host entry with several hardware addresses. No firewall rule changed anywhere. The alternative, a key-bound WireGuard tunnel on the router, is recorded in the backlog for when remote access is designed.
+During the first probe the workstation's dock adapter disappeared and its traffic moved to Wi-Fi with another address, which every firewall rejected. That confirmed exception E2 from the wrong side: nothing in the lab answers a workstation that is not on its pinned address. The owner then asked to work from Wi-Fi as well and chose, from three options, to bind the pinned address to the laptop's Wi-Fi adapter too (MAC randomisation is off for the trusted network); the two adapters are never up at the same time, which is the case dnsmasq documents for a host entry with several hardware addresses. No firewall rule changed anywhere. The alternative, a key-bound WireGuard tunnel on the router, is recorded in the backlog for when remote access is designed. Verified the same day with the dock unplugged: the Wi-Fi adapter holds the pinned address, SSH to the router, an access point and the hypervisor works, the exporter port stays closed. One-time step: a client that already holds another lease keeps it on reconnect (the server only applies the reservation to a fresh request), so the lease was released and renewed once from an elevated prompt.
+
+## Token scope tests
+
+Run from the workstation against the API with the stored tokens; the expected answer is 200 for a call inside the scope and 403 outside it.
+
+| Token | Inside scope | Outside scope |
+|---|---|---|
+| `drift@pve!weekly` (auditor) | version, user list: 200 | create a pool: 403 |
+| `prometheus@pve!exporter` (auditor) | node status: 200 | - |
+| `terraform@pve!tofu` | pool `talos`, storage list, next VM id: 200 (the pool answered 403 until `Pool.Audit` was added) | - |
+| `kubernetes-csi@pve!csi` | storage content: 200 | node status: 403 |
+| no token | - | version: 401 |
 
 ## Defects found and fixed
 
@@ -59,9 +72,9 @@ During the first probe the workstation's dock adapter disappeared and its traffi
 
 | # | Item | Who |
 |---|---|---|
-| 1 | Users and API tokens for OpenTofu, the storage driver and the exporter, with the secrets captured into the private repository | Operator, attended |
-| 2 | Backup server VM on the workstation, first host backup, restore test | Owner (elevated PowerShell) and operator |
-| 3 | OpenTofu state backend | Owner creates the storage account; operator |
-| 4 | 2.5 GbE link: `enp2s0` still reports no carrier on the new install | Operator, with the owner at the cable |
-| 5 | Copy the root password to the password manager | Owner |
-| 6 | Wi-Fi check: with the dock unplugged, the laptop's Wi-Fi must receive the pinned address and reach the router and the hypervisor | Owner unplugs, operator verifies |
+| 1 | Backup server VM on the workstation, first host backup, restore test | Owner (elevated PowerShell) and operator |
+| 2 | OpenTofu state backend | Owner creates the storage account; operator |
+| 3 | 2.5 GbE link: `enp2s0` still reports no carrier on the new install | Operator, with the owner at the cable |
+| 4 | Copy the `root@pam` and `octenite-admin@pve` passwords to the password manager (`just reveal private/proxmox/pve1.sops.yaml pve_root_password`, `just reveal private/ansible/inventory/host_vars/pve1/secrets.sops.yaml pve_admin_password`) | Owner |
+| 5 | Enrol TOTP for `octenite-admin@pve` and for `root@pam` in the web interface (Datacenter, Permissions, Two Factor); then the operator sets the realm to require it | Owner, then operator |
+| 6 | CSI entries on the worker VMs, once their IDs exist | Operator, Phase 7 |
