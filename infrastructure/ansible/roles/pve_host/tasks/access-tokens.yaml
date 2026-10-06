@@ -1,0 +1,44 @@
+---
+# A privilege-separated token holds only the ACLs granted to the token
+# itself, so every token of a user receives that user's entries. Shared by
+# the host play (for tokens that exist) and the token play (right after it
+# issued one).
+- name: Read the tokens of each automation user
+  ansible.builtin.command:
+    cmd: pvesh get /access/users/{{ item }}/token --output-format json
+  loop: "{{ pve_tokens | map(attribute='userid') | unique | list }}"
+  register: pve_host_token_read
+  changed_when: false
+  failed_when: pve_host_token_read.rc != 0 and 'no such user' not in pve_host_token_read.stderr
+
+- name: Read access control entries
+  ansible.builtin.command:
+    cmd: pvesh get /access/acl --output-format json
+  register: pve_host_token_acl_read
+  changed_when: false
+
+- name: Token entries wanted
+  ansible.builtin.set_fact:
+    pve_host_token_acls: >-
+      {%- set out = [] -%}
+      {%- for r in pve_host_token_read.results if r.rc == 0 -%}
+        {%- for t in r.stdout | from_json -%}
+          {%- for a in pve_acls if a.user == r.item -%}
+            {%- set _ = out.append({'path': a.path, 'role': a.role, 'token': r.item ~ '!' ~ t.tokenid}) -%}
+          {%- endfor -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Access control entries for tokens
+  ansible.builtin.command:
+    cmd: pveum acl modify {{ item.path }} --roles {{ item.role }} --tokens '{{ item.token }}'
+  loop: "{{ pve_host_token_acls }}"
+  loop_control:
+    label: "{{ item.token }} {{ item.role }} on {{ item.path }}"
+  when: >-
+    pve_host_token_acl_read.stdout | from_json
+    | selectattr('type', 'eq', 'token') | selectattr('ugid', 'eq', item.token)
+    | selectattr('path', 'eq', item.path) | selectattr('roleid', 'eq', item.role)
+    | list | length == 0
+  changed_when: true

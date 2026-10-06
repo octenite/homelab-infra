@@ -1,0 +1,103 @@
+---
+# Issue the hypervisor API tokens that do not exist yet. Attended: a token's
+# secret is shown once, so this play captures it straight into the private
+# repository (SOPS) and never prints it. Rotation: delete the token on the
+# host (`pveum user token remove`), run this play again, then update the
+# consumer. Idempotent: existing tokens are left alone.
+- name: Issue missing hypervisor API tokens
+  hosts: "{{ target | default('proxmox') }}"
+  gather_facts: true
+  become: true
+  vars:
+    pve_tokens_file: "{{ playbook_dir }}/../../../private/proxmox/tokens.sops.yaml"
+    pve_tokens_expire_epoch: "{{ (ansible_date_time.epoch | int) + pve_token_lifetime_days * 86400 }}"
+  tasks:
+    - name: Read the tokens of each automation user
+      ansible.builtin.command:
+        cmd: pvesh get /access/users/{{ item }}/token --output-format json
+      loop: "{{ pve_tokens | map(attribute='userid') | unique | list }}"
+      register: pve_tokens_read
+      changed_when: false
+
+    - name: Tokens that exist
+      ansible.builtin.set_fact:
+        pve_tokens_now: >-
+          {%- set out = [] -%}
+          {%- for r in pve_tokens_read.results -%}
+            {%- for t in r.stdout | from_json -%}
+              {%- set _ = out.append(r.item ~ '!' ~ t.tokenid) -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Tokens to issue
+      ansible.builtin.set_fact:
+        pve_tokens_missing: >-
+          {%- set out = [] -%}
+          {%- for t in pve_tokens if (t.userid ~ '!' ~ t.tokenid) not in pve_tokens_now -%}
+            {%- set _ = out.append(t) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Nothing to issue
+      ansible.builtin.debug:
+        msg: "Every token in Git exists on {{ inventory_hostname }}. Nothing was changed."
+      when: pve_tokens_missing | length == 0
+
+    - name: Issue and store
+      when: pve_tokens_missing | length > 0
+      block:
+        - name: Issue the missing tokens
+          ansible.builtin.command:
+            cmd: >-
+              pveum user token add {{ item.userid }} {{ item.tokenid }} --privsep 1
+              --expire {{ pve_tokens_expire_epoch }}
+              --comment "issued {{ ansible_date_time.date }} by Ansible; expires {{ '%Y-%m-%d' | strftime(pve_tokens_expire_epoch | int) }}"
+              --output-format json
+          loop: "{{ pve_tokens_missing }}"
+          loop_control:
+            label: "{{ item.userid }}!{{ item.tokenid }}"
+          register: pve_tokens_issued
+          changed_when: true
+          no_log: true
+
+        - name: Grant the tokens their user's entries
+          ansible.builtin.include_role:
+            name: pve_host
+            tasks_from: access-tokens
+
+        - name: Existing secrets file
+          ansible.builtin.stat:
+            path: "{{ pve_tokens_file }}"
+          delegate_to: localhost
+          become: false
+          register: pve_tokens_file_stat
+
+        - name: Secrets to store
+          ansible.builtin.set_fact:
+            pve_tokens_store: >-
+              {%- set out = (lookup('community.sops.sops', pve_tokens_file) | from_yaml) if pve_tokens_file_stat.stat.exists else {} -%}
+              {%- for r in pve_tokens_issued.results -%}
+                {%- set j = r.stdout | from_json -%}
+                {%- set _ = out.update({j['full-tokenid']: {'secret': j.value,
+                     'issued': ansible_date_time.date,
+                     'expires': '%Y-%m-%d' | strftime(pve_tokens_expire_epoch | int)}}) -%}
+              {%- endfor -%}
+              {{ out }}
+          no_log: true
+
+        - name: Token secrets into the private repository
+          community.sops.sops_encrypt:
+            path: "{{ pve_tokens_file }}"
+            content_yaml: "{{ pve_tokens_store }}"
+            force: true
+          delegate_to: localhost
+          become: false
+          no_log: true
+
+        - name: Report
+          ansible.builtin.debug:
+            msg: >-
+              Issued {{ pve_tokens_missing | map(attribute='userid') | zip(pve_tokens_missing | map(attribute='tokenid'))
+              | map('join', '!') | join(', ') }}; secrets stored in private/proxmox/tokens.sops.yaml,
+              expiring {{ '%Y-%m-%d' | strftime(pve_tokens_expire_epoch | int) }}. Commit the private repository.

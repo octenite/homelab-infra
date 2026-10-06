@@ -26,7 +26,8 @@ The host is installed unattended and configured by Ansible. Nothing is configure
 |---|---|
 | Install | `scripts/pve/build-install-media.sh prepare`, then `reboot`. The answer file is `infrastructure/proxmox/answer.toml.tmpl`; the secrets and identifiers it needs are in the private repository under `proxmox/` |
 | First contact | `ansible-playbook playbooks/pve-bootstrap.yaml`, as root with the key the installer authorised |
-| Configuration | `ansible-playbook playbooks/pve.yaml`, as the operator account; idempotent |
+| Configuration | `just pve-apply` (`playbooks/pve.yaml`), as the operator account; idempotent |
+| API tokens | `just pve-tokens` (`playbooks/pve-tokens.yaml`), attended; issues what is missing and stores the secrets in the private repository |
 
 Both plays run from the workstation with a session open.
 
@@ -36,6 +37,7 @@ Both plays run from the workstation with a session open.
 |---|---|
 | Install layout, address, keys | `infrastructure/proxmox/answer.toml.tmpl` |
 | Host policy: repositories, SSH, time, memory, logs, bridges, firewall, thin-pool metrics | `infrastructure/ansible/roles/pve_host/` |
+| Roles, users, pool, ACLs, token list | `infrastructure/ansible/playbooks/group_vars/proxmox.yaml` |
 | Exporter versions and listen addresses | `infrastructure/ansible/playbooks/group_vars/proxmox.yaml`; the roles come from the `prometheus.prometheus` collection pinned in `requirements.yml` |
 | Addresses the rules refer to | `infrastructure/ansible/playbooks/group_vars/proxmox.yaml` |
 | Root password, disk and stick serial numbers, notification address | private repository, `proxmox/` |
@@ -48,6 +50,7 @@ A change to the bridges is guarded: the role parses the new interfaces file firs
 
 - SSH is key-only, for the operator account only, on the management address only. Root keeps the recovery key for the console-equivalent path.
 - `root@pam` with its password is break-glass for the console and the web interface. The password lives in the private repository and the password manager.
+- The owner's `octenite-admin@pve` is the only account holding `Administrator`; its password is in the private inventory and the owner enrols TOTP in the web interface. Automation uses privilege-separated API tokens of dedicated users with custom roles (`TerraformProvisioner`, `KubernetesCSI`) or `PVEAuditor`, scoped to the `talos` pool, the two storages, the node and the bridge where the API accepts a path. Tokens live 12 months; their secrets are issued by `just pve-tokens` straight into `private/proxmox/tokens.sops.yaml`. Rotation: remove the token on the host, run `just pve-tokens`, update the consumer.
 - Only the workstation reaches SSH, the web interface and the console ports. Future Talos workers reach the API and the exporters.
 - The CPU receives no microcode updates any more; one vulnerability stays open (X13).
 

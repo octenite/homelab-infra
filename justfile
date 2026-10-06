@@ -97,6 +97,28 @@ openwrt-ssh-keys target="openwrt":
     export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
     ansible-playbook playbooks/openwrt-ssh-keys.yaml -e "target={{target}}"
 
+# Configure the hypervisor from Git (idempotent). Example: just pve-apply
+pve-apply:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
+    cd infrastructure/ansible
+    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
+    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
+    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
+    ansible-playbook playbooks/pve.yaml
+
+# Issue the hypervisor API tokens missing on the host; their secrets go straight into the private repository (attended).
+pve-tokens:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
+    cd infrastructure/ansible
+    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
+    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
+    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
+    ansible-playbook playbooks/pve-tokens.yaml
+
 # Open the router's LuCI through an SSH tunnel: https://localhost:8443 (Ctrl+C closes it).
 luci host="192.168.1.53":
     SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}" ssh -N -L 8443:127.0.0.1:443 root@{{host}}
