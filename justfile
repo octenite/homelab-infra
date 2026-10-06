@@ -20,7 +20,7 @@ setup:
 private-status:
     bash scripts/ops/private-status.sh
 
-# All fast checks. The pre-commit hook and the CI lint job run this.
+# All fast checks. The CI lint job runs this; the pre-commit hook runs the per-file subset in .pre-commit-config.yaml.
 lint: yaml shell actions policy templates ansible-lint tofu-lint
 
 # OpenTofu: formatting and validation of every root, without a backend.
@@ -93,9 +93,10 @@ openwrt-ssh-keys target="openwrt":
 pve-bootstrap:
     bash scripts/ops/play.sh pve-bootstrap
 
-# Configure the hypervisor from Git (idempotent).
-pve-apply:
-    bash scripts/ops/play.sh pve
+# Configure the hypervisor from Git (idempotent). Extra arguments go to ansible-playbook. Dry run: just pve-apply --check --diff
+[positional-arguments]
+pve-apply *args:
+    bash scripts/ops/play.sh pve "$@"
 
 # Issue the hypervisor API tokens missing on the host; their secrets go straight into the private repository (attended).
 pve-tokens:
@@ -115,8 +116,9 @@ pbs-bootstrap:
     bash scripts/ops/play.sh pbs-bootstrap
 
 # Configure the backup server VM from Git (idempotent). Needs the management window (pbs-vm.ps1 -Manage).
-pbs-apply:
-    bash scripts/ops/play.sh pbs
+[positional-arguments]
+pbs-apply *args:
+    bash scripts/ops/play.sh pbs "$@"
 
 # Build the unattended install image for the backup server VM and copy it to the workstation.
 pbs-media:

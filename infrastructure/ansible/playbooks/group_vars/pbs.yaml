@@ -25,7 +25,7 @@ pbs_ssh_sources: ["{{ pbs_nat_gateway }}"]
 # whether or not the adapter exists yet.
 pbs_p2p_address: 10.0.99.3/29
 
-# Retention and maintenance (ARCHITECTURE.md section 8): prune daily, garbage
+# Retention and maintenance (ARCHITECTURE.md section 12): prune daily, garbage
 # collection weekly, verification monthly.
 pbs_keep:
   daily: 7

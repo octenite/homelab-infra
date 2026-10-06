@@ -1,6 +1,6 @@
 ---
 # Access: custom roles, the resource pool, users and their ACLs
-# (ARCHITECTURE.md section 6). Reads first and changes only what differs.
+# (ARCHITECTURE.md section 3). Reads first and changes only what differs.
 # Tokens are issued by playbooks/pve-tokens.yaml, which captures their
 # secrets; their ACLs are kept in access-tokens.yaml, shared with that play.
 #

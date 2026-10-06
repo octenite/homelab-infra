@@ -27,7 +27,7 @@ pve_guest_vlans: [50]
 pve_p2p_address: 10.0.99.1/29
 pve_p2p_network: 10.0.99.0/29
 
-# Access (ARCHITECTURE.md section 6, management plane). Custom roles hold
+# Access (ARCHITECTURE.md section 3, management plane). Custom roles hold
 # only what each automation needs: never Administrator, never VM.Monitor.
 # The owner's account is the only holder of Administrator; root@pam is
 # break-glass. Its password comes from the private inventory.
@@ -106,7 +106,7 @@ pve_acls:
     user: drift@pve
 
 # Backups to the backup server VM on the workstation (ARCHITECTURE.md
-# sections 4 and 8). The storage entry is created once by
+# sections 4 and 12). The storage entry is created once by
 # playbooks/pve-backup-init.yaml (token and encryption key go to the private
 # repository); the host role keeps the client credentials, the path failover
 # and the nightly host-configuration backup in place.
