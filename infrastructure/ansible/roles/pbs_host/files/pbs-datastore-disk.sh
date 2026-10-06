@@ -1,12 +1,19 @@
 #!/bin/sh
 # Prints the block device that holds, or shall hold, the datastore. Disk
-# names on this VM swap between boots, so the disk is found by the label of
-# its partition and, before that exists, as the one disk with nothing on it.
+# names on this VM swap between boots, so the disk is found by what is on
+# it, in this order: the label of its filesystem; the name of its GPT
+# partition (a first run that was interrupted between partitioning and
+# formatting leaves exactly that); and, before either exists, the one disk
+# with nothing on it. The role's guard then decides whether the disk found
+# may be used.
 # Usage: pbs-datastore-disk.sh <label>
 set -eu
 label=$1
 
 dev=$(lsblk -rno PKNAME,LABEL | awk -v l="$label" '$2 == l { print $1; exit }')
+if [ -z "$dev" ]; then
+	dev=$(lsblk -rno PKNAME,PARTLABEL | awk -v l="$label" '$2 == l { print $1; exit }')
+fi
 if [ -n "$dev" ]; then
 	echo "/dev/$dev"
 	exit 0

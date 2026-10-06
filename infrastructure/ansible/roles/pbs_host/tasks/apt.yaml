@@ -32,11 +32,15 @@
     update_cache: true
     cache_valid_time: 3600
 
+# A list in a later apt.conf file is appended to the list of an earlier one.
+# Debian's own 50unattended-upgrades names the main archive as well, so the
+# list is cleared first.
 - name: Unattended upgrades, Debian security origins only
   ansible.builtin.copy:
     dest: /etc/apt/apt.conf.d/52-homelab-unattended.conf
     mode: "0644"
     content: |
+      #clear Unattended-Upgrade::Origins-Pattern;
       Unattended-Upgrade::Origins-Pattern {
           "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
       };

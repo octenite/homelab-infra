@@ -4,6 +4,11 @@
   hosts: "{{ target | default('proxmox') }}"
   gather_facts: true
   become: true
+  # The role stops on purpose in several places (an unmanaged user, a key
+  # list that would lock the operator out, backups not armed). A restart
+  # that an earlier task requested must still happen then: on the next run
+  # the file is already in place and nothing would ask for it again.
+  force_handlers: true
   roles:
     - role: pve_host
     # Exporters from the upstream collection, bound to the management address
@@ -11,3 +16,10 @@
     # and only the binaries reach the host.
     - role: prometheus.prometheus.node_exporter
     - role: prometheus.prometheus.smartctl_exporter
+  post_tasks:
+    # Last on purpose: everything else is applied before a rebuilt host is
+    # told that its backups still have to be brought back.
+    - name: The backups are armed
+      ansible.builtin.include_role:
+        name: pve_host
+        tasks_from: backup-check

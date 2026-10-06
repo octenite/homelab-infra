@@ -3,19 +3,43 @@
 # itself, so every token of a user receives that user's entries. Shared by
 # the host play (for tokens that exist) and the token play (right after it
 # issued one).
-- name: Read the tokens of each automation user
+- name: Read the tokens of every user named in Git
   ansible.builtin.command:
     cmd: pvesh get /access/users/{{ item }}/token --output-format json
-  loop: "{{ pve_tokens | map(attribute='userid') | unique | list }}"
+  loop: "{{ ((pve_users | map(attribute='userid') | list) + [pve_admin_user]) | unique }}"
   register: pve_host_token_read
   changed_when: false
+  check_mode: false
   failed_when: pve_host_token_read.rc != 0 and 'no such user' not in pve_host_token_read.stderr
+
+# A token on the host that Git does not know is drift. Removing it would
+# break whoever uses it, so the play names it and stops instead of deleting.
+- name: Tokens that Git does not know
+  ansible.builtin.assert:
+    that: pve_host_unmanaged_tokens | length == 0
+    fail_msg: >-
+      Unmanaged token(s): {{ pve_host_unmanaged_tokens | join(', ') }}. Add them to pve_tokens or remove them on the
+      host (pveum user token remove <user> <token>).
+    quiet: true
+  vars:
+    pve_host_unmanaged_tokens: >-
+      {%- set out = [] -%}
+      {%- set known = pve_tokens | map(attribute='userid') | zip(pve_tokens | map(attribute='tokenid')) | map('join', '!') | list -%}
+      {%- for r in pve_host_token_read.results if r.rc == 0 -%}
+        {%- for t in r.stdout | from_json -%}
+          {%- if (r.item ~ '!' ~ t.tokenid) not in known -%}
+            {%- set _ = out.append(r.item ~ '!' ~ t.tokenid) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
 
 - name: Read access control entries
   ansible.builtin.command:
     cmd: pvesh get /access/acl --output-format json
   register: pve_host_token_acl_read
   changed_when: false
+  check_mode: false
 
 - name: Token entries wanted
   ansible.builtin.set_fact:

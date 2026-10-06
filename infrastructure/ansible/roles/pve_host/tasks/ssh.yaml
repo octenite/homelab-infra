@@ -21,8 +21,56 @@
     state: absent
   notify: Restart sshd
 
-- name: Root keeps the recovery key only, for the console-equivalent path
+# The operator account's keys follow the inventory on every run, so a
+# rotated or revoked key takes effect with this play and not only at
+# bootstrap. Guarded like the network devices: the list must hold at least
+# two keys, one of them loaded in the operator's agent, so that a bad edit
+# cannot lock the operator out.
+- name: Read the public keys held by the operator's agent
+  ansible.builtin.command:
+    cmd: ssh-add -L
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+  register: pve_host_agent_keys
+
+- name: Refuse a key list that would lock the operator out
+  ansible.builtin.assert:
+    that:
+      - pve_ssh_authorized_keys | length >= 2
+      - >-
+        (pve_host_agent_keys.stdout_lines | map('split') | map(attribute=1) | list)
+        | intersect(pve_ssh_authorized_keys | map('split') | map(attribute=1) | list)
+        | length > 0
+    fail_msg: "The key list must hold at least two keys, one of them loaded in the agent."
+    quiet: true
+
+- name: Operator account's authorised keys follow the inventory
   ansible.posix.authorized_key:
-    user: root
-    key: "{{ pve_ssh_authorized_keys | select('search', 'homelab-recovery') | join('\n') }}"
+    user: "{{ pve_ops_user }}"
+    key: "{{ pve_ssh_authorized_keys | join('\n') }}"
     exclusive: true
+
+# Root has no SSH path at all (PermitRootLogin no, AllowUsers above); its way
+# in is the console with the password. Proxmox keeps root's key file as a
+# link into the cluster filesystem for its own node-to-node use; the
+# operator's keys, which the installer put there, are taken out so that they
+# could never become a root login if the drop-in above were lost.
+- name: Root's key file is the cluster's own
+  ansible.builtin.file:
+    src: /etc/pve/priv/authorized_keys
+    dest: /root/.ssh/authorized_keys
+    state: link
+    force: true
+
+- name: No operator key is authorised for root
+  ansible.builtin.lineinfile:
+    path: /etc/pve/priv/authorized_keys
+    regexp: "{{ (item | split)[1] | regex_escape }}"
+    state: absent
+    unsafe_writes: true
+  diff: false
+  loop: "{{ pve_ssh_authorized_keys }}"
+  loop_control:
+    label: "{{ (item | split)[2] | default('key') }}"

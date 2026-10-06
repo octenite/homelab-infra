@@ -29,12 +29,13 @@
         {% endfor %}
         IN ACCEPT -source {{ pve_router }} -p icmp -log nolog # router may ping
         IN ACCEPT -source {{ pve_workstations | join(',') }} -p icmp -log nolog # workstation may ping
-        IN ACCEPT -source {{ pve_workstations | join(',') }} -p tcp -dport 3128,5900:5999 -log nolog # E2 workstation: console ports
         # pve-firewall appends built-in rules that admit the host's own subnets
         # (the "management" set, always extended with every local network) to
         # SSH, the web interface, the console ports and migration. Host rules
         # run first, so the rest of the management VLAN and the whole direct
-        # link are dropped here (X10).
+        # link are dropped here (X10). The console ports stay in this list
+        # although nothing admits them: the web console runs over 8006, and
+        # the built-in rules would otherwise open them to the subnet.
         {% for n in [pve_mgmt_network, pve_p2p_network] %}
         IN DROP -source {{ n }} -p tcp -dport 22,8006,3128,5900:5999,60000:60050 -log nolog # X10 no rights by subnet membership
         {% endfor %}

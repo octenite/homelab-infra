@@ -1,38 +1,42 @@
 ---
 # Native PBS notifications to Telegram through a webhook target: failed
 # garbage collection, verification and prune jobs, and package update notices.
-# Same shape as the hypervisor's files; PBS keeps the token in its private
-# notification file.
-- name: Notification files
+# Same shape as the hypervisor's files. Owners and modes are the product's
+# own (checked on 4.2 by letting it rewrite the files): the public file is
+# readable by the service group, the private one, which holds the bot token,
+# by root only.
+- name: Notification targets and matchers
   ansible.builtin.copy:
-    dest: "{{ item.dest }}"
-    content: "{{ item.content }}"
+    dest: /etc/proxmox-backup/notifications.cfg
     owner: root
     group: backup
     mode: "0640"
-  loop:
-    - dest: /etc/proxmox-backup/notifications.cfg
-      content: |
-        webhook: telegram
-                url https://api.telegram.org/bot{{ '{{' }} secrets.token {{ '}}' }}/sendMessage
-                method post
-                header name=Content-Type,value={{ 'application/json' | b64encode }}
-                body {{ pbs_host_notify_body | b64encode }}
-                comment Telegram, the owner's phone
+    content: |
+      webhook: telegram
+              url https://api.telegram.org/bot{{ '{{' }} secrets.token {{ '}}' }}/sendMessage
+              method post
+              header name=Content-Type,value={{ 'application/json' | b64encode }}
+              body {{ pbs_host_notify_body | b64encode }}
+              comment Telegram, the owner's phone
 
-        matcher: default-matcher
-                target telegram
-                comment Everything, until the alerting design narrows it
+      matcher: default-matcher
+              target telegram
+              comment Everything, until the alerting design narrows it
 
-    - dest: /etc/proxmox-backup/notifications-priv.cfg
-      content: |
-        webhook: telegram
-                secret name=token,value={{ telegram_bot_token | b64encode }}
-  loop_control:
-    label: "{{ item.dest }}"
   vars:
     pbs_host_notify_body: >-
       {"chat_id": "{{ telegram_chat_id }}",
       "text": "{{ '{{' }} escape title {{ '}}' }}\n\n{{ '{{' }} escape message {{ '}}' }}",
       "disable_web_page_preview": true}
+  no_log: true
+
+- name: Notification secrets, root only
+  ansible.builtin.copy:
+    dest: /etc/proxmox-backup/notifications-priv.cfg
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      webhook: telegram
+              secret name=token,value={{ telegram_bot_token | b64encode }}
   no_log: true

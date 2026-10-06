@@ -2,6 +2,11 @@
 # Unattended upgrades: Debian security only, no automatic reboot.
 pbs_host_unattended_reboot: false
 
+# Set for one run only (-e pbs_host_datastore_recreate=true) when the datastore
+# disk was replaced or wiped on purpose: the server then forgets the old
+# datastore and an empty one is created. Every backup is gone in that case.
+pbs_host_datastore_recreate: false
+
 # Garbage collection and verification schedules (systemd calendar syntax).
 pbs_host_gc_schedule: "sun 03:00"
 pbs_host_prune_schedule: "daily"

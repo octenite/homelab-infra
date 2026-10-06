@@ -1,0 +1,94 @@
+---
+# Leftover install media. `just pve-media prepare` writes an unattended
+# installer to the USB stick that stays in this machine and adds a one-time
+# boot entry for it. Once the host is installed, that stick is a loaded
+# reinstall: booted by a firmware fallback or a wrong key at the boot menu, it
+# erases the system disk without asking, and it carries the root password
+# hash. So the first thing the role does is make it inert: the image is
+# overwritten with zeros and any boot entry for it is removed.
+#
+# Only the stick whose serial the private repository records is touched, and
+# only while it still carries the installer (USB transport, ISO 9660, label
+# PVE). Nothing else on it can be lost: `prepare` overwrote the whole stick.
+- name: Identifiers file of this host in the private repository
+  ansible.builtin.stat:
+    path: "{{ pve_host_ids_file }}"
+  delegate_to: localhost
+  become: false
+  register: pve_host_ids_stat
+
+- name: Recorded serial of the install stick
+  ansible.builtin.set_fact:
+    pve_host_media_serial: >-
+      {{ ((lookup('ansible.builtin.file', pve_host_ids_file) | from_yaml).pve_usb_stick_serial | default(''))
+         if pve_host_ids_stat.stat.exists else '' }}
+
+- name: Is the recorded stick attached
+  ansible.builtin.stat:
+    path: "/dev/disk/by-id/usb-{{ pve_host_media_serial }}"
+  register: pve_host_media_link
+  when: pve_host_media_serial | length > 0
+
+- name: What the stick carries
+  ansible.builtin.command:
+    cmd: lsblk --json --bytes --output NAME,TYPE,TRAN,FSTYPE,LABEL,START,SIZE,MOUNTPOINTS {{ pve_host_media_link.stat.lnk_source }}
+  register: pve_host_media_lsblk
+  changed_when: false
+  check_mode: false
+  when:
+    - pve_host_media_link.stat is defined
+    - pve_host_media_link.stat.exists
+    - pve_host_media_link.stat.islnk
+
+- name: Installer still on the stick
+  ansible.builtin.set_fact:
+    pve_host_media_dev: "{{ pve_host_media_link.stat.lnk_source }}"
+    # Up to the end of the last partition (lsblk gives START in 512-byte
+    # sectors and, with --bytes, SIZE in bytes), in MiB, rounded up: the
+    # whole image.
+    pve_host_media_mib: >-
+      {%- set ns = namespace(end=0) -%}
+      {%- for part in pve_host_media_disk.children -%}
+      {%- set ns.end = [ns.end, (part.start | int) * 512 + (part.size | int)] | max -%}
+      {%- endfor -%}
+      {{ ((ns.end / 1048576) | round(0, 'ceil') | int) + 1 }}
+  vars:
+    pve_host_media_disk: "{{ (pve_host_media_lsblk.stdout | from_json).blockdevices | first }}"
+  when:
+    - pve_host_media_lsblk.stdout | default('') | length > 0
+    - pve_host_media_disk.type == 'disk'
+    - pve_host_media_disk.tran == 'usb'
+    - pve_host_media_disk.fstype == 'iso9660'
+    - pve_host_media_disk.label == 'PVE'
+    - pve_host_media_disk.children | default([]) | length > 0
+    - (pve_host_media_disk.mountpoints | default([]) | select | list | length) == 0
+    - (pve_host_media_disk.children | map(attribute='mountpoints') | flatten | select | list | length) == 0
+
+- name: Overwrite the installer image on the stick
+  ansible.builtin.command:
+    cmd: dd if=/dev/zero of={{ pve_host_media_dev }} bs=1M count={{ pve_host_media_mib }} conv=fsync status=none
+  changed_when: true
+  when:
+    - pve_host_media_dev is defined
+    - pve_host_media_mib | int > 1
+
+- name: Let the kernel forget the stick's partitions
+  ansible.builtin.command:
+    cmd: partprobe {{ pve_host_media_dev }}
+  changed_when: false
+  failed_when: false
+  when: pve_host_media_dev is defined
+
+- name: Read firmware boot entries
+  ansible.builtin.command:
+    cmd: efibootmgr
+  register: pve_host_media_efi
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Remove boot entries for the installer
+  ansible.builtin.command:
+    cmd: efibootmgr --quiet --delete-bootnum --bootnum {{ item }}
+  loop: "{{ pve_host_media_efi.stdout | default('') | regex_findall('(?m)^Boot([0-9A-Fa-f]{4})\\*? pve-install') }}"
+  changed_when: true

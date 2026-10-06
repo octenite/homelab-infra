@@ -1,13 +1,25 @@
 ---
-# Connect the hypervisor to the backup server, once. Attended: the backup
-# server's API token and the storage's client-side encryption key are shown
-# only at creation, so this play captures both straight into the private
-# repository and never prints them. Idempotent: what exists is left alone.
+# Connect the hypervisor to the backup server, or repair that connection.
+# Attended: the backup server's API token is shown only when it is issued and
+# the storage's client-side encryption key only when it is generated, so this
+# play captures both straight into the private repository and never prints
+# them. Idempotent, and safe to run again after any rebuild:
 #
-# Rotation of the token: remove it on the backup server, run this play
-# again, then `pvesm set <storage> --password` from the stored value.
-# The encryption key is never rotated (old backups need it); it is restored
-# from the private repository on a rebuild.
+#   first setup                 user, token, storage entry, a NEW key, stored
+#   hypervisor rebuilt          storage entry created with the STORED key
+#   backup server rebuilt       new token; the existing entry gets the new
+#                               token and the new certificate fingerprint
+#
+# The encryption key is never rotated here (every existing backup needs it)
+# and a recorded key is never overwritten: if the host holds a different key
+# than the private repository, the play stops.
+#
+# Rotation of the token: remove it on the backup server
+# (`proxmox-backup-manager user delete-token <user> <name>`), then run this
+# play; it issues, stores and applies the new one.
+#
+# Residue: `pvesm` takes the token secret as an argument, so it is visible in
+# the hypervisor's process list for the second the command runs.
 - name: Initialise the backup path from the hypervisor to the backup server
   hosts: "{{ target | default('proxmox') }}"
   gather_facts: true
@@ -17,9 +29,29 @@
     pve_backup_tokens_file: "{{ playbook_dir }}/../../../private/proxmox/tokens.sops.yaml"
     pve_backup_keys_file: "{{ playbook_dir }}/../../../private/proxmox/backup-keys.sops.yaml"
     pve_backup_pbs_host: "{{ groups['pbs'] | first }}"
+    pve_backup_key_tmp: "/root/.{{ pve_backup_storage }}.enc.tmp"
   tasks:
+    # ---- what the private repository already records -------------------------
+    - name: Recorded secret files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ pve_backup_tokens_file }}"
+        - "{{ pve_backup_keys_file }}"
+      delegate_to: localhost
+      become: false
+      register: pve_backup_files
+
+    - name: Recorded token secret and encryption key
+      ansible.builtin.set_fact:
+        pve_backup_tokens_recorded: >-
+          {{ (lookup('community.sops.sops', pve_backup_tokens_file) | from_yaml) if pve_backup_files.results[0].stat.exists else {} }}
+        pve_backup_keys_recorded: >-
+          {{ (lookup('community.sops.sops', pve_backup_keys_file) | from_yaml) if pve_backup_files.results[1].stat.exists else {} }}
+      no_log: true
+
     # ---- backup server: user, token, access --------------------------------
-    - name: Read users, tokens and access entries on the backup server
+    - name: Read users and access entries on the backup server
       ansible.builtin.command:
         cmd: proxmox-backup-manager {{ item }} --output-format json
       loop:
@@ -43,13 +75,69 @@
       register: pve_backup_pbs_tokens
       changed_when: false
 
-    - name: Issue the token
-      ansible.builtin.command:
-        cmd: proxmox-backup-manager user generate-token {{ pve_backup_user }} {{ pve_backup_token }}
-      delegate_to: "{{ pve_backup_pbs_host }}"
-      when: pve_backup_pbs_tokens.stdout | from_json | selectattr('tokenid', 'eq', pve_backup_auth_id) | list | length == 0
-      register: pve_backup_token_new
-      changed_when: true
+    - name: Token present on the backup server
+      ansible.builtin.set_fact:
+        pve_backup_token_exists: "{{ pve_backup_pbs_tokens.stdout | from_json | selectattr('tokenid', 'eq', pve_backup_auth_id) | list | length > 0 }}"
+
+    # A token whose secret was lost (an earlier run died between issuing and
+    # storing) cannot be recovered, only replaced.
+    - name: A token without a recorded secret cannot be used
+      ansible.builtin.assert:
+        that: not pve_backup_token_exists or pve_backup_auth_id in pve_backup_tokens_recorded
+        fail_msg: >-
+          The token {{ pve_backup_auth_id }} exists on the backup server but private/proxmox/tokens.sops.yaml holds no
+          secret for it. Remove it there (proxmox-backup-manager user delete-token {{ pve_backup_user }} {{ pve_backup_token }})
+          and run this play again.
+        quiet: true
+
+    # Issued and stored in one step: on any failure in between, the token is
+    # removed again, so the next run starts clean.
+    - name: Issue and store the token
+      when: not pve_backup_token_exists
+      block:
+        - name: Issue the token
+          ansible.builtin.command:
+            cmd: proxmox-backup-manager user generate-token {{ pve_backup_user }} {{ pve_backup_token }}
+          delegate_to: "{{ pve_backup_pbs_host }}"
+          register: pve_backup_token_new
+          changed_when: true
+          no_log: true
+
+        - name: Token secrets to store
+          ansible.builtin.set_fact:
+            pve_backup_tokens_recorded: >-
+              {%- set out = pve_backup_tokens_recorded -%}
+              {%- set j = pve_backup_token_new.stdout | regex_search('\{[\s\S]*\}') | from_json -%}
+              {%- set _ = out.update({j.tokenid: {'secret': j.value, 'issued': ansible_date_time.date, 'expires': 'none'}}) -%}
+              {{ out }}
+          no_log: true
+
+        - name: Token secrets into the private repository
+          community.sops.sops_encrypt:
+            path: "{{ pve_backup_tokens_file }}"
+            content_yaml: "{{ pve_backup_tokens_recorded }}"
+            force: true
+          delegate_to: localhost
+          become: false
+          no_log: true
+
+      rescue:
+        - name: Remove the token issued by this run
+          ansible.builtin.command:
+            cmd: proxmox-backup-manager user delete-token {{ pve_backup_user }} {{ pve_backup_token }}
+          delegate_to: "{{ pve_backup_pbs_host }}"
+          changed_when: true
+          failed_when: false
+
+        - name: Stop
+          ansible.builtin.fail:
+            msg: >-
+              Issuing or storing the token failed at "{{ ansible_failed_task.name | default('unknown') }}";
+              the token was removed. Fix the cause and run again.
+
+    - name: Token secret
+      ansible.builtin.set_fact:
+        pve_backup_secret: "{{ pve_backup_tokens_recorded[pve_backup_auth_id].secret }}"
       no_log: true
 
     # A token holds the intersection of its own entries and its user's, so
@@ -76,50 +164,7 @@
       changed_when: false
       failed_when: pve_backup_fingerprint.stdout | length < 95
 
-    # ---- secrets: token into the private repository --------------------------
-    - name: Store a newly issued token
-      when: pve_backup_token_new is not skipped
-      block:
-        - name: Existing token file
-          ansible.builtin.stat:
-            path: "{{ pve_backup_tokens_file }}"
-          delegate_to: localhost
-          become: false
-          register: pve_backup_tokens_stat
-
-        - name: Token secrets to store
-          ansible.builtin.set_fact:
-            pve_backup_tokens_store: >-
-              {%- set out = (lookup('community.sops.sops', pve_backup_tokens_file) | from_yaml) if pve_backup_tokens_stat.stat.exists else {} -%}
-              {%- set j = pve_backup_token_new.stdout | regex_search('\{[\s\S]*\}') | from_json -%}
-              {%- set _ = out.update({j.tokenid: {'secret': j.value, 'issued': ansible_date_time.date, 'expires': 'none'}}) -%}
-              {{ out }}
-          no_log: true
-
-        - name: Token secrets into the private repository
-          community.sops.sops_encrypt:
-            path: "{{ pve_backup_tokens_file }}"
-            content_yaml: "{{ pve_backup_tokens_store }}"
-            force: true
-          delegate_to: localhost
-          become: false
-          no_log: true
-
-      rescue:
-        # A token whose secret was not stored is useless: remove it so the
-        # next run issues it again.
-        - name: Remove the token issued by this run
-          ansible.builtin.command:
-            cmd: proxmox-backup-manager user delete-token {{ pve_backup_user }} {{ pve_backup_token }}
-          delegate_to: "{{ pve_backup_pbs_host }}"
-          changed_when: true
-          failed_when: false
-
-        - name: Stop
-          ansible.builtin.fail:
-            msg: "Storing the token failed at \"{{ ansible_failed_task.name | default('unknown') }}\"; the token was removed. Fix the cause and run again."
-
-    # ---- hypervisor: storage entry with its own encryption key ---------------
+    # ---- hypervisor: the storage entry -----------------------------------------
     - name: Read storage entries
       ansible.builtin.command:
         cmd: pvesh get /storage --output-format json
@@ -129,47 +174,137 @@
     - name: Existing storage entry, if any
       ansible.builtin.set_fact:
         pve_backup_existing: "{{ pve_backup_storages.stdout | from_json | selectattr('storage', 'eq', pve_backup_storage) | list | first | default({}) }}"
+        pve_backup_key_was_recorded: "{{ pve_backup_storage in pve_backup_keys_recorded }}"
 
+    # A copy of the key from a run that was cut off must not outlive it.
+    - name: No key copy left over from an earlier run
+      ansible.builtin.command:
+        cmd: shred -u {{ pve_backup_key_tmp }}
+        removes: "{{ pve_backup_key_tmp }}"
+
+    # ---- the key of an existing entry: checked and recorded before anything ---
+    # ---- is touched; recorded once, never overwritten --------------------------
+    - name: Read the key of the existing entry
+      ansible.builtin.slurp:
+        src: /etc/pve/priv/storage/{{ pve_backup_storage }}.enc
+      register: pve_backup_key_host
+      when: pve_backup_existing | length > 0
+      no_log: true
+
+    - name: Compare the host's key with the recorded key
+      ansible.builtin.set_fact:
+        pve_backup_key_matches: >-
+          {{ (pve_backup_keys_recorded[pve_backup_storage].key | from_json) == (pve_backup_key_host.content | b64decode | from_json) }}
+      when: pve_backup_existing | length > 0 and pve_backup_key_was_recorded
+      no_log: true
+
+    # Not hidden: the message is the instruction, and the result of an
+    # assertion holds only the name of the fact above, never a key.
+    - name: The host's key is the recorded key
+      ansible.builtin.assert:
+        that: pve_backup_key_matches | bool
+        fail_msg: >-
+          The encryption key of {{ pve_backup_storage }} on {{ inventory_hostname }} differs from the one recorded in
+          private/proxmox/backup-keys.sops.yaml. Nothing was overwritten. Backups made with the recorded key need the
+          recorded key: remove the storage entry (pvesm remove {{ pve_backup_storage }}) and run this play again to
+          create it with the recorded key, or, if the key on the host is the right one, remove the recorded entry by hand.
+        quiet: true
+      when: pve_backup_existing | length > 0 and pve_backup_key_was_recorded
+
+    - name: Record the key of an entry the private repository does not know yet
+      community.sops.sops_encrypt:
+        path: "{{ pve_backup_keys_file }}"
+        content_yaml: >-
+          {{ pve_backup_keys_recorded | combine({pve_backup_storage: {'key': pve_backup_key_host.content | b64decode, 'host': inventory_hostname}}) }}
+        force: true
+      delegate_to: localhost
+      become: false
+      when: pve_backup_existing | length > 0 and not pve_backup_key_was_recorded
+      no_log: true
+
+    - name: The key is recorded from here on
+      ansible.builtin.set_fact:
+        pve_backup_keys_recorded: >-
+          {{ pve_backup_keys_recorded | combine({pve_backup_storage: {'key': pve_backup_key_host.content | b64decode, 'host': inventory_hostname}}) }}
+      when: pve_backup_existing | length > 0 and not pve_backup_key_was_recorded
+      no_log: true
+
+    # ---- the name the entry uses ---------------------------------------------------
     # The entry names the server by a hosts-file name, which the failover
-    # timer points at the path that is up (PVE forbids changing a storage's
-    # server afterwards). The line must exist before the entry is created.
+    # script points at the path that is up (PVE forbids changing a storage's
+    # server afterwards). Only a missing line is added, with the first address
+    # that answers now: creating the entry contacts the server, and the
+    # failover script is installed only further down. The address of an
+    # existing line belongs to the failover script.
+    - name: Read the hosts file
+      ansible.builtin.slurp:
+        src: /etc/hosts
+      register: pve_backup_hosts
+
+    - name: Is the backup server's name in the hosts file
+      ansible.builtin.set_fact:
+        pve_backup_name_known: "{{ (pve_backup_hosts.content | b64decode) is search('(?m)^\\S+\\s+' ~ (pve_backup_name | regex_escape) ~ '\\s*$') }}"
+
+    - name: Which address of the backup server accepts a connection
+      ansible.builtin.wait_for:
+        host: "{{ item }}"
+        port: 8007
+        timeout: 3
+      loop: "{{ [pve_backup_primary] + pve_backup_fallbacks }}"
+      register: pve_backup_probe
+      failed_when: false
+      when: not pve_backup_name_known
+
+    # A probe that timed out carries a message; one that connected does not.
+    - name: First address that answered
+      ansible.builtin.set_fact:
+        pve_backup_first_address: >-
+          {{ pve_backup_probe.results | rejectattr('msg', 'defined') | rejectattr('skipped', 'defined')
+             | map(attribute='item') | list | first | default('') }}
+      when: not pve_backup_name_known
+
+    - name: The backup server must be reachable before the entry is created
+      ansible.builtin.assert:
+        that: pve_backup_first_address | length > 0
+        fail_msg: >-
+          The backup server accepts no connection on port 8007 at any of
+          {{ ([pve_backup_primary] + pve_backup_fallbacks) | join(', ') }}. Start the VM (scripts/node2/pbs-vm.ps1 on
+          the workstation), check with `just test-fences`, then run this play again. Nothing was changed.
+        quiet: true
+      when: not pve_backup_name_known
+
     - name: Backup server name resolves
       ansible.builtin.lineinfile:
         path: /etc/hosts
-        regexp: '\s{{ pve_backup_name | regex_escape }}\s*$'
-        line: "{{ pve_backup_fallbacks | first }} {{ pve_backup_name }}"
+        line: "{{ pve_backup_first_address }} {{ pve_backup_name }}"
         state: present
-      when: pve_backup_existing | length == 0 or pve_backup_existing.server != pve_backup_name
+      when: not pve_backup_name_known
 
-    - name: Token secret
-      ansible.builtin.set_fact:
-        pve_backup_secret: >-
-          {{ (pve_backup_token_new.stdout | regex_search('\{[\s\S]*\}') | from_json).value if pve_backup_token_new is not skipped
-             else (lookup('community.sops.sops', pve_backup_tokens_file) | from_yaml)[pve_backup_auth_id].secret }}
-      no_log: true
+    # pvesm reads an encryption key from a file whose path it is given (a
+    # key passed as a value is echoed back in its error message). The copy
+    # lives in a root-only file for the duration of the command. An entry
+    # that still names an address is removed and created again; its key was
+    # checked or recorded above, so the recorded key is the one written back.
+    - name: Create or move the storage entry
       when: pve_backup_existing | length == 0 or pve_backup_existing.server != pve_backup_name
-
-    - name: Move an entry that still names an address onto the name, keeping its key
-      when: pve_backup_existing | length > 0 and pve_backup_existing.server != pve_backup_name
       block:
-        # pvesm takes the key as a file path on the command line; the copy
-        # lives in a root-only file for the duration of the command.
-        - name: Keep the key aside
+        - name: Recorded key, to be used again
           ansible.builtin.copy:
-            remote_src: true
-            src: /etc/pve/priv/storage/{{ pve_backup_storage }}.enc
-            dest: /root/.{{ pve_backup_storage }}.enc.keep
+            content: "{{ pve_backup_keys_recorded[pve_backup_storage].key }}"
+            dest: "{{ pve_backup_key_tmp }}"
             mode: "0600"
             owner: root
             group: root
+          when: pve_backup_storage in pve_backup_keys_recorded
           no_log: true
 
-        - name: Remove the entry (this deletes its key and password files)
+        - name: Remove the entry that names an address (this deletes its key and password files)
           ansible.builtin.command:
             cmd: pvesm remove {{ pve_backup_storage }}
+          when: pve_backup_existing | length > 0
           changed_when: true
 
-        - name: Entry again, on the name, with the same key
+        - name: Storage entry on the name
           ansible.builtin.command:
             argv:
               - pvesm
@@ -187,41 +322,9 @@
               - --fingerprint
               - "{{ pve_backup_fingerprint.stdout }}"
               - --encryption-key
-              - /root/.{{ pve_backup_storage }}.enc.keep
+              - "{{ pve_backup_key_tmp if pve_backup_storage in pve_backup_keys_recorded else 'autogen' }}"
               - --content
               - backup
-          changed_when: true
-          no_log: true
-
-        - name: Key copy removed
-          ansible.builtin.command:
-            cmd: shred -u /root/.{{ pve_backup_storage }}.enc.keep
-          changed_when: true
-
-      rescue:
-        - name: Key copy removed even on failure
-          ansible.builtin.command:
-            cmd: shred -u /root/.{{ pve_backup_storage }}.enc.keep
-          changed_when: true
-          failed_when: false
-
-        - name: Stop
-          ansible.builtin.fail:
-            msg: >-
-              Moving the storage entry failed at "{{ ansible_failed_task.name | default('unknown') }}".
-              The key is in private/proxmox/backup-keys.sops.yaml; recreate the entry by hand with it
-              (pvesm add pbs {{ pve_backup_storage }} --server {{ pve_backup_name }} ... --encryption-key "<key json>").
-
-    - name: Create the storage entry
-      when: pve_backup_existing | length == 0
-      block:
-        - name: Storage entry on the name, encryption key generated
-          ansible.builtin.command:
-            cmd: >-
-              pvesm add pbs {{ pve_backup_storage }} --server {{ pve_backup_name }}
-              --datastore {{ pve_backup_datastore }} --username '{{ pve_backup_auth_id }}'
-              --password '{{ pve_backup_secret }}' --fingerprint '{{ pve_backup_fingerprint.stdout }}'
-              --encryption-key autogen --content backup
           changed_when: true
           no_log: true
 
@@ -230,45 +333,103 @@
           ansible.builtin.fail:
             msg: >-
               Creating the storage entry failed at "{{ ansible_failed_task.name | default('unknown') }}".
-              Nothing was stored for it. Check that the backup server answers on {{ pve_backup_fallbacks | first }}:8007
-              and that user and token hold DatastoreBackup on /datastore/{{ pve_backup_datastore }}.
+              Check that the backup server answers on port 8007 at the address /etc/hosts gives for {{ pve_backup_name }}
+              (one of {{ ([pve_backup_primary] + pve_backup_fallbacks) | join(', ') }}) and that user and token hold
+              DatastoreBackup on /datastore/{{ pve_backup_datastore }}; then run this play again. A failed creation
+              leaves no entry behind.
+              {{ 'The encryption key is safe in private/proxmox/backup-keys.sops.yaml and the next run uses it.'
+                 if pve_backup_storage in pve_backup_keys_recorded else
+                 'No key existed before this run, so none is lost.' }}
 
-    # ---- secrets: encryption key into the private repository -----------------
-    - name: Read the storage's encryption key
+      always:
+        - name: Key copy removed
+          ansible.builtin.command:
+            cmd: shred -u {{ pve_backup_key_tmp }}
+            removes: "{{ pve_backup_key_tmp }}"
+
+    # After a rebuild of the backup server the entry is still there, with the
+    # old certificate fingerprint and the old token. Both follow what is true
+    # now, not what an earlier run of this play happened to do: a run that
+    # issued a token and was cut off before this point is repaired by the next.
+    - name: Repair an existing storage entry
+      when: pve_backup_existing | length > 0 and pve_backup_existing.server == pve_backup_name
+      block:
+        - name: Fingerprint of the backup server's current certificate
+          ansible.builtin.command:
+            argv: [pvesm, set, "{{ pve_backup_storage }}", --fingerprint, "{{ pve_backup_fingerprint.stdout }}"]
+          when: (pve_backup_existing.fingerprint | default('') | lower) != (pve_backup_fingerprint.stdout | lower)
+          changed_when: true
+
+        - name: Read the token secret the entry holds
+          ansible.builtin.slurp:
+            src: /etc/pve/priv/storage/{{ pve_backup_storage }}.pw
+          register: pve_backup_pw
+          failed_when: false
+          no_log: true
+
+        - name: The entry holds the recorded token secret
+          ansible.builtin.command:
+            argv: [pvesm, set, "{{ pve_backup_storage }}", --password, "{{ pve_backup_secret }}"]
+          when: (pve_backup_pw.content | default('') | b64decode | trim) != pve_backup_secret
+          changed_when: true
+          no_log: true
+
+      rescue:
+        - name: Stop
+          ansible.builtin.fail:
+            msg: >-
+              Repairing the storage entry failed at "{{ ansible_failed_task.name | default('unknown') }}".
+              The entry is unchanged or half updated; run the play again.
+
+    # ---- a key generated by this run is recorded at once ----------------------------
+    - name: Read the key generated for the new entry
       ansible.builtin.slurp:
         src: /etc/pve/priv/storage/{{ pve_backup_storage }}.enc
-      register: pve_backup_key
+      register: pve_backup_key_new
+      when: pve_backup_storage not in pve_backup_keys_recorded
       no_log: true
 
-    - name: Existing key file
-      ansible.builtin.stat:
-        path: "{{ pve_backup_keys_file }}"
-      delegate_to: localhost
-      become: false
-      register: pve_backup_keys_stat
-
-    - name: Keys to store
-      ansible.builtin.set_fact:
-        pve_backup_keys_store: >-
-          {%- set out = (lookup('community.sops.sops', pve_backup_keys_file) | from_yaml) if pve_backup_keys_stat.stat.exists else {} -%}
-          {%- set _ = out.update({pve_backup_storage: {'key': pve_backup_key.content | b64decode, 'host': inventory_hostname}}) -%}
-          {{ out }}
-      no_log: true
-
-    - name: Encryption key into the private repository
+    - name: Record the new key in the private repository
       community.sops.sops_encrypt:
         path: "{{ pve_backup_keys_file }}"
-        content_yaml: "{{ pve_backup_keys_store }}"
+        content_yaml: >-
+          {{ pve_backup_keys_recorded | combine({pve_backup_storage: {'key': pve_backup_key_new.content | b64decode, 'host': inventory_hostname}}) }}
         force: true
       delegate_to: localhost
       become: false
+      when: pve_backup_storage not in pve_backup_keys_recorded
       no_log: true
+
+    # ---- arm the backups and prove the path ---------------------------------------
+    - name: Backup client, failover and timers
+      ansible.builtin.include_role:
+        name: pve_host
+        tasks_from: backup
+
+    - name: Point the name at the path that answers
+      ansible.builtin.command:
+        cmd: /usr/local/bin/pbs-target
+      register: pve_backup_target
       changed_when: false
+
+    - name: The storage answers
+      ansible.builtin.command:
+        cmd: pvesm status --storage {{ pve_backup_storage }}
+      register: pve_backup_status
+      changed_when: false
+      failed_when: pve_backup_status.rc != 0 or pve_backup_status.stdout is not search('(?m)^' ~ pve_backup_storage ~ '\s+pbs\s+active')
 
     - name: Report
       ansible.builtin.debug:
         msg: >-
-          Backup path ready: storage {{ pve_backup_storage }} on {{ inventory_hostname }}, token {{ pve_backup_auth_id }}
-          (secret in private/proxmox/tokens.sops.yaml), encryption key in private/proxmox/backup-keys.sops.yaml.
-          Copy the key to the password manager: just reveal private/proxmox/backup-keys.sops.yaml {{ pve_backup_storage }}.
-          Commit the private repository, then run the host play.
+          Backup path ready and checked: storage {{ pve_backup_storage }} on {{ inventory_hostname }} is active through
+          {{ pve_backup_target.stdout | trim }}, token {{ pve_backup_auth_id }}, nightly backup armed.
+          {{ pve_backup_report_key }} {{ pve_backup_report_token }}
+      vars:
+        pve_backup_report_key: >-
+          {{ 'The recorded encryption key is in use.' if pve_backup_key_was_recorded else
+             'The encryption key was recorded in this run: copy it to the password manager now (just reveal
+             private/proxmox/backup-keys.sops.yaml ' ~ pve_backup_storage ~ ' key) and commit the private repository.' }}
+        pve_backup_report_token: >-
+          {{ 'A new token was issued and recorded: commit the private repository.'
+             if (pve_backup_token_new is defined and pve_backup_token_new is not skipped) else '' }}

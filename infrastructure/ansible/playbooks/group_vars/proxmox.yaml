@@ -36,13 +36,17 @@ pve_admin_user: octenite-admin@pve
 # Automation users hold no password and log in with tokens only.
 pve_tfa_realms: [pve, pam]
 pve_pool: talos
+# The provisioning role carries no Sys.Modify: on a node path that privilege
+# covers the host firewall, the bridges, DNS and the hosts file, far beyond
+# creating VMs. If the image download of Phase 5 needs a network privilege,
+# it gets Sys.AccessNetwork on the node, with a test, when that is proven.
 pve_roles:
   TerraformProvisioner: >-
     VM.Allocate VM.Clone VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit
     VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network
     VM.Config.Options VM.PowerMgmt VM.Audit VM.GuestAgent.Audit
     Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit
-    SDN.Use Pool.Allocate Pool.Audit Sys.Audit Sys.Modify
+    SDN.Use Pool.Allocate Pool.Audit Sys.Audit
   KubernetesCSI: >-
     VM.Audit VM.Config.Disk Datastore.Allocate Datastore.AllocateSpace
     Datastore.Audit
@@ -68,7 +72,10 @@ pve_tokens:
     tokenid: weekly
 pve_token_lifetime_days: 365
 # ACLs: scoped paths wherever the API accepts them. The CSI entries on the
-# worker VMs are added in Phase 7, when their IDs exist.
+# worker VMs are added in Phase 7, when their IDs exist. An entry removed
+# here is removed on the host by the next run. The bridge is granted per
+# VLAN: an entry on the bridge itself would also permit a guest NIC without a
+# tag, which lands in the management VLAN.
 pve_acls:
   - path: /
     role: Administrator
@@ -85,7 +92,7 @@ pve_acls:
   - path: "/nodes/{{ inventory_hostname_short }}"
     role: TerraformProvisioner
     user: terraform@pve
-  - path: /sdn/zones/localnetwork/vmbr0
+  - path: "/sdn/zones/localnetwork/vmbr0/{{ pve_guest_vlans | first }}"
     role: TerraformProvisioner
     user: terraform@pve
   - path: /storage/local-lvm

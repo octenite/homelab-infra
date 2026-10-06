@@ -58,9 +58,10 @@
     state: started
 
 # The upstream smartctl_exporter unit runs as an unprivileged user and cannot
-# open the disk. Reading SMART data needs the device node (group disk) and
-# raw SCSI commands (CAP_SYS_RAWIO); nothing else is granted. The drop-in is
-# in place before the role creates the unit.
+# open the disk. Reading SMART data of a SATA disk needs the device node
+# (group disk) and raw SCSI commands (CAP_SYS_RAWIO); nothing else is
+# granted. (NVMe admin commands would need CAP_SYS_ADMIN; this host has no
+# NVMe disk.) The drop-in is in place before the role creates the unit.
 - name: Drop-in directory for the SMART exporter
   ansible.builtin.file:
     path: /etc/systemd/system/smartctl_exporter.service.d
@@ -76,8 +77,8 @@
     content: |
       [Service]
       SupplementaryGroups=disk
-      AmbientCapabilities=CAP_SYS_RAWIO CAP_SYS_ADMIN
-      CapabilityBoundingSet=CAP_SYS_RAWIO CAP_SYS_ADMIN
+      AmbientCapabilities=CAP_SYS_RAWIO
+      CapabilityBoundingSet=CAP_SYS_RAWIO
   notify:
     - Reload systemd units
     - Restart smartctl_exporter

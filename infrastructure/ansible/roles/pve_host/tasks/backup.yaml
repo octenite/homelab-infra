@@ -1,16 +1,18 @@
 ---
 # Backups to the backup server: client credentials, path failover and the
 # nightly host-configuration backup. The storage entry itself is created by
-# playbooks/pve-backup-init.yaml; until it exists this file only reports.
+# playbooks/pve-backup-init.yaml (which also runs this file); until it
+# exists nothing here can be set up.
 - name: Read storage entries
   ansible.builtin.command:
     cmd: pvesh get /storage --output-format json
   register: pve_host_storages
   changed_when: false
+  check_mode: false
 
 - name: Backup storage not initialised yet
   ansible.builtin.debug:
-    msg: "Storage {{ pve_backup_storage }} does not exist; run `just pve-backup-init` first. Backup tasks skipped."
+    msg: "Storage {{ pve_backup_storage }} does not exist; `just pve-backup-init` creates it and arms the backups. Backup tasks skipped."
   when: pve_host_storages.stdout | from_json | selectattr('storage', 'eq', pve_backup_storage) | list | length == 0
 
 - name: Backup client, failover and timers
@@ -34,17 +36,29 @@
         owner: root
         group: root
 
-    # The name the storage entry points at; the failover script owns the
-    # address, this only makes sure a line exists.
+    # The name the storage entry points at. Only a missing line is added: the
+    # address of an existing one belongs to the failover script, and
+    # rewriting it here would point the storage at the fallback path after
+    # every run of this play.
+    - name: Read the hosts file
+      ansible.builtin.slurp:
+        src: /etc/hosts
+      register: pve_host_backup_hosts
+
     - name: Backup server name resolves
       ansible.builtin.lineinfile:
         path: /etc/hosts
-        regexp: '\s{{ pve_backup_name | regex_escape }}\s*$'
         line: "{{ pve_backup_fallbacks | first }} {{ pve_backup_name }}"
-        backrefs: false
         state: present
-      register: pve_host_backup_hosts
-      changed_when: pve_host_backup_hosts is changed and pve_host_backup_hosts.msg != 'line replaced'
+      when: (pve_host_backup_hosts.content | b64decode) is not search('(?m)^\S+\s+' ~ (pve_backup_name | regex_escape) ~ '\s*$')
+
+    - name: Staging directory for the consistent copy of the cluster database
+      ansible.builtin.file:
+        path: /var/lib/homelab
+        state: directory
+        mode: "0700"
+        owner: root
+        group: root
 
     - name: Backup settings
       ansible.builtin.copy:
@@ -60,9 +74,10 @@
           PBS_FALLBACKS="{{ pve_backup_fallbacks | join(' ') }}"
           PBS_KEYFILE=/etc/pve/priv/storage/{{ pve_backup_storage }}.enc
           PBS_KEEPALIVE_SECONDS={{ pve_backup_keepalive_seconds }}
-          PING_URL={{ pve_backup_ping_url }}
       notify: Restart pbs-keepalive
 
+    # The dead-man's switch address is a secret of its own kind (whoever has
+    # it can report success), so it lives with the credentials.
     - name: Backup client credentials, root only
       ansible.builtin.copy:
         dest: /etc/homelab/backup.secret
@@ -70,6 +85,7 @@
         content: |
           PBS_PASSWORD={{ pve_host_tokens[pve_backup_user ~ '!' ~ pve_backup_token].secret }}
           PBS_FINGERPRINT={{ pve_host_backup_storage.fingerprint }}
+          PING_URL={{ pve_backup_ping_url | default('') }}
       no_log: true
 
     - name: Failover and backup scripts
