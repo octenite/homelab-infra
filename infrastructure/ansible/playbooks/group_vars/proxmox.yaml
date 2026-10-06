@@ -97,6 +97,21 @@ pve_acls:
     role: PVEAuditor
     user: drift@pve
 
+# Backups to the backup server VM on the workstation (ARCHITECTURE.md
+# sections 4 and 8). The storage entry is created once by
+# playbooks/pve-backup-init.yaml (token and encryption key go to the private
+# repository); the host role keeps the client credentials, the path failover
+# and the nightly host-configuration backup in place.
+pve_backup_storage: pbs-node2
+pve_backup_datastore: pbs1
+pve_backup_user: pve1@pbs
+pve_backup_token: backup
+pve_backup_primary: 10.0.99.3
+pve_backup_fallback: "{{ pve_workstation }}"
+pve_backup_schedule: "*-*-* 02:30:00"
+# healthchecks.io ping on success; empty until the owner creates the account.
+pve_backup_ping_url: ""
+
 # Exporters (prometheus.prometheus roles), management address only.
 # renovate: datasource=github-releases depName=prometheus/node_exporter
 node_exporter_version: 1.12.1
