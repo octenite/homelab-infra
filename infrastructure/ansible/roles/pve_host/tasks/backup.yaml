@@ -59,6 +59,8 @@
           PBS_PRIMARY={{ pve_backup_primary }}
           PBS_FALLBACKS="{{ pve_backup_fallbacks | join(' ') }}"
           PBS_KEYFILE=/etc/pve/priv/storage/{{ pve_backup_storage }}.enc
+          PBS_KEEPALIVE_SECONDS={{ pve_backup_keepalive_seconds }}
+      notify: Restart pbs-keepalive
           PING_URL={{ pve_backup_ping_url }}
 
     - name: Backup client credentials, root only
@@ -84,6 +86,8 @@
           dest: pbs-host-backup
         - src: pbs-host-restore.sh
           dest: pbs-host-restore
+        - src: pbs-keepalive.sh
+          dest: pbs-keepalive
       loop_control:
         label: "{{ item.dest }}"
 
@@ -135,6 +139,21 @@
 
             [Install]
             WantedBy=timers.target
+        - name: pbs-keepalive.service
+          content: |
+            [Unit]
+            Description=Keep the direct link to the backup server from idling down
+            After=network-online.target
+            Wants=network-online.target
+
+            [Service]
+            Type=simple
+            ExecStart=/usr/local/bin/pbs-keepalive
+            Restart=always
+            RestartSec=5
+
+            [Install]
+            WantedBy=multi-user.target
       loop_control:
         label: "{{ item.name }}"
       notify: Reload systemd units
@@ -142,7 +161,7 @@
     - name: Units reloaded before the timers start
       ansible.builtin.meta: flush_handlers
 
-    - name: Timers enabled
+    - name: Timers and the keep-alive enabled
       ansible.builtin.systemd_service:
         name: "{{ item }}"
         enabled: true
@@ -150,6 +169,7 @@
       loop:
         - pbs-failover.timer
         - pbs-host-backup.timer
+        - pbs-keepalive.service
 
   rescue:
     - name: Stop

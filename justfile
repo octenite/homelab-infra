@@ -46,6 +46,27 @@ reveal file key="":
     export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
     if [ -n "{{key}}" ]; then sops decrypt --extract '["{{key}}"]' "{{file}}"; echo; else sops decrypt "{{file}}"; fi
 
+# Store one secret value in an encrypted file, typed at a hidden prompt (never on a command line). Creates the file if needed. Example: just secret-set private/ansible/inventory/host_vars/pve1/secrets.sops.yaml pve_backup_ping_url
+secret-set file key:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    umask 077
+    case "{{file}}" in private/*.sops.yaml) ;; *) echo "the file must be private/....sops.yaml"; exit 1 ;; esac
+    read -rsp "value for {{key}}: " value; echo
+    [ -n "$value" ] || { echo "empty value, nothing stored"; exit 1; }
+    rel="${{file}}"; rel="${rel#private/}"
+    if [ -f "{{file}}" ]; then
+        [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
+        SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key sops set "{{file}}" "[\"{{key}}\"]" "$(printf '%s' "$value" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
+    else
+        mkdir -p "$(dirname "{{file}}")" /dev/shm/homelab-render
+        printf '%s: %s\n' "{{key}}" "$(printf '%s' "$value" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > /dev/shm/homelab-render/new.yaml
+        ( cd private && sops encrypt --filename-override "$rel" /dev/shm/homelab-render/new.yaml > "$rel" )
+        rm -f /dev/shm/homelab-render/new.yaml
+    fi
+    unset value
+    echo "stored {{key}} in {{file}}; commit the private repository"
+
 # Close the operator session and remove every decrypted artefact from memory.
 session-end:
     rm -rf /dev/shm/homelab-session /dev/shm/homelab-render
