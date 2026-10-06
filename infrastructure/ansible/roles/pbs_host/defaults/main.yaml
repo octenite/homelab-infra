@@ -1,0 +1,9 @@
+---
+# Unattended upgrades: Debian security only, no automatic reboot.
+pbs_host_unattended_reboot: false
+
+# Garbage collection and verification schedules (systemd calendar syntax).
+pbs_host_gc_schedule: "sun 03:00"
+pbs_host_prune_schedule: "daily"
+pbs_host_verify_schedule: "monthly"
+pbs_host_verify_outdated_days: 30

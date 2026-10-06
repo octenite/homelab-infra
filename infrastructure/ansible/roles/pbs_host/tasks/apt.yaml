@@ -1,0 +1,55 @@
+---
+- name: Remove the subscription-only repository
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/pbs-enterprise.sources
+    state: absent
+  notify: Update apt cache
+
+- name: Add the free Proxmox Backup Server repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/pbs-no-subscription.sources
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: http://download.proxmox.com/debian/pbs
+      Suites: {{ ansible_distribution_release }}
+      Components: pbs-no-subscription
+      Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+  notify: Update apt cache
+
+- name: Flush handlers so the cache is current before installing
+  ansible.builtin.meta: flush_handlers
+
+- name: Install host packages
+  ansible.builtin.apt:
+    name:
+      - nftables
+      - chrony
+      - unattended-upgrades
+      - hyperv-daemons
+      - parted
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Unattended upgrades, Debian security origins only
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52-homelab-unattended.conf
+    mode: "0644"
+    content: |
+      Unattended-Upgrade::Origins-Pattern {
+          "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+      };
+      Unattended-Upgrade::Automatic-Reboot "{{ 'true' if pbs_host_unattended_reboot else 'false' }}";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+- name: Hyper-V integration services enabled
+  ansible.builtin.service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - hv-kvp-daemon
+    - hv-vss-daemon

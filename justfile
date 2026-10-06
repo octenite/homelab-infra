@@ -127,9 +127,9 @@ luci host="192.168.1.53":
 yaml:
     yamllint --strict .
 
-# Shell scripts: static analysis and formatting.
+# Shell scripts: static analysis and formatting. Untracked scripts count too.
 shell:
-    files="$(git ls-files '*.sh')"; if [ -n "$files" ]; then shellcheck $files; shfmt -d $files; fi
+    files="$(git ls-files -co --exclude-standard '*.sh')"; if [ -n "$files" ]; then shellcheck $files; shfmt -d $files; fi
 
 # GitHub Actions workflow syntax.
 actions:
@@ -155,4 +155,4 @@ ci: lint secrets scan
 
 # Format shell scripts in place.
 fmt:
-    files="$(git ls-files '*.sh')"; if [ -n "$files" ]; then shfmt -w $files; fi
+    files="$(git ls-files -co --exclude-standard '*.sh')"; if [ -n "$files" ]; then shfmt -w $files; fi

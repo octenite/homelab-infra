@@ -36,7 +36,7 @@ $report += Section 'bitlocker'
 $report += (Get-BitLockerVolume -ErrorAction SilentlyContinue | Select-Object MountPoint, ProtectionStatus, VolumeStatus | Format-Table -AutoSize | Out-String).Trim()
 
 $report += Section 'hyper-v feature'
-$report += (Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All, Microsoft-Hyper-V, Microsoft-Hyper-V-Management-PowerShell, VirtualMachinePlatform, Microsoft-Windows-Subsystem-Linux -ErrorAction SilentlyContinue | Select-Object FeatureName, State | Format-Table -AutoSize | Out-String).Trim()
+$report += (@('Microsoft-Hyper-V-All', 'Microsoft-Hyper-V', 'Microsoft-Hyper-V-Management-PowerShell', 'VirtualMachinePlatform', 'Microsoft-Windows-Subsystem-Linux') | ForEach-Object { Get-WindowsOptionalFeature -Online -FeatureName $_ -ErrorAction SilentlyContinue } | Select-Object FeatureName, State | Format-Table -AutoSize | Out-String).Trim()
 $report += "vmms service: $((Get-Service vmms -ErrorAction SilentlyContinue).Status)"
 
 $report += Section 'hyper-v vms'

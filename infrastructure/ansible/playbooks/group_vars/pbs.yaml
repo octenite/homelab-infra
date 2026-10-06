@@ -1,0 +1,33 @@
+---
+# Proxmox Backup Server VM on the workstation. Addresses come from the
+# private inventory; everything here is policy.
+ansible_user: ops
+ansible_become: true
+pbs_ops_user: ops
+pbs_ssh_authorized_keys: "{{ openwrt_ssh_authorized_keys }}"
+
+# Datastore: the second disk of the VM (fixed 128 GiB), ext4 with atime
+# (garbage collection relies on it), one datastore.
+pbs_datastore: pbs1
+pbs_datastore_disk: /dev/sdb
+pbs_datastore_path: /mnt/datastore/pbs1
+
+# Who may reach the VM (E10 and E14). The workstation proxies the fallback
+# API path and the SSH path, so both arrive from its NAT address; the
+# hypervisor arrives directly over the 2.5 GbE link.
+pbs_nat_gateway: 10.0.98.1
+pbs_p2p_peer: 10.0.99.1
+pbs_api_sources: ["{{ pbs_nat_gateway }}", "{{ pbs_p2p_peer }}"]
+pbs_ssh_sources: ["{{ pbs_nat_gateway }}"]
+
+# Direct link leg: static address on the adapter whose MAC the private
+# inventory names (pbs_p2p_mac, set by scripts/node2/pbs-vm.ps1); configured
+# whether or not the adapter exists yet.
+pbs_p2p_address: 10.0.99.3/29
+
+# Retention and maintenance (ARCHITECTURE.md section 8): prune daily, garbage
+# collection weekly, verification monthly.
+pbs_keep:
+  daily: 7
+  weekly: 4
+  monthly: 3

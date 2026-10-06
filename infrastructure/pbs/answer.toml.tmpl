@@ -1,0 +1,35 @@
+# Answer file for the Proxmox Backup Server unattended installer (the VM on
+# the workstation). Rendered by scripts/pbs/build-install-iso.sh; the
+# placeholder values come from the private inventory and are never committed
+# rendered. Format: https://pve.proxmox.com/wiki/Automated_Installation
+
+[global]
+keyboard = "en-us"
+country = "in"
+fqdn = "pbs1.112511.xyz"
+mailto = "${MAILTO}"
+timezone = "Asia/Kolkata"
+root-password-hashed = "${ROOT_PASSWORD_HASH}"
+root-ssh-keys = [
+${SSH_KEYS}
+]
+reboot-on-error = false
+
+[network]
+source = "from-answer"
+# The NAT leg of the VM: its gateway is the workstation. Public resolvers are
+# named because the port ACL denies the VM every private address except the
+# workstation; the router's forced-DNS redirect answers them anyway.
+cidr = "10.0.98.3/29"
+gateway = "10.0.98.1"
+dns = "9.9.9.9"
+# The VM's adapters carry static MAC addresses set by scripts/node2/pbs-vm.ps1.
+filter.ID_NET_NAME_MAC = "*00155d980003"
+
+[disk-setup]
+filesystem = "ext4"
+# The only disk present during the install: the 32 GiB system disk. The
+# datastore disk is attached afterwards (scripts/node2/pbs-vm.ps1), because
+# with two disks the installer's names are not stable, and is formatted by
+# Ansible, not by the installer.
+disk-list = ["sda"]
