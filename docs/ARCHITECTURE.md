@@ -748,12 +748,12 @@ Port forwards: 8007 to 10.0.98.3:8007 always; 2222 to 10.0.98.3:22 only while th
 
 No phase starts until the previous gate is recorded in `docs/phases/`. Standing gates from Phase 5: host headroom >= 1.5 GiB, worker free >= 10 %, host CPU idle >= 30 % over 24 h, etcd fsync p99 < 25 ms. Every component is done only when the CLAUDE.md section 27 checklist is met (in Git, automated, secrets protected, CI, monitoring, backup, docs, recovery, pinned) and, from Phase 6, when its network policies are enforced with no unexpected drops.
 
-**Status, 2026-10-07.** Phases 0, 1, 2 and 4 are closed; Phase 4 ran before Phase 3 by the owner's decision. Phase 3 is built and reviewed, and its gate is not closed. The record is `docs/phases/phase-3.md`.
+**Status, 2026-10-07.** Phases 0 to 4 are closed; Phase 4 ran before Phase 3 by the owner's decision. Phase 3 closed on 2026-10-07. Its record is `docs/phases/phase-3.md`. The next phase is 5.
 
 | Phase 3 gate item | State |
 |---|---|
 | NIC speeds | recorded: 1 Gbit/s onboard, 2.5 Gbit/s on the direct link |
-| 24 h direct-link soak | running until 2026-10-07 21:10; result open |
+| 24 h direct-link soak | closed early by the owner's decision on 2026-10-07 after 5 h 35 min without an unexplained drop; a link-change alert follows in Phase 9 (B34) |
 | Synchronous-write benchmark on the thin pool | passed (fsync p99 2.2 ms against the 25 ms gate); the SSD stays |
 | Memory recorded; host without guests <= 1.5 GiB | missed: 1.55 to 1.9 GiB, so the worker is planned at 8.5 GiB (section 4); measured again on the finished host on 2026-10-07: 1.85 GiB |
 | Microcode and vulnerability files | recorded |
