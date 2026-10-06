@@ -13,7 +13,20 @@ setup:
     git submodule update --init
 
 # All fast checks. The pre-commit hook and the CI lint job run this.
-lint: yaml shell actions policy ansible-lint
+lint: yaml shell actions policy ansible-lint tofu-lint
+
+# OpenTofu: formatting and validation of every root, without a backend.
+tofu-lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tofu fmt -check -recursive infrastructure/opentofu
+    for root in infrastructure/opentofu/roots/*/; do
+        ( cd "$root" && tofu init -backend=false -input=false >/dev/null && tofu validate )
+    done
+
+# Run OpenTofu for one root with credentials from the private repository. Example: just tofu pve plan
+tofu root *args:
+    bash scripts/tofu/run.sh {{root}} {{args}}
 
 # Install the pinned Ansible collections into infrastructure/ansible/collections.
 ansible-deps:

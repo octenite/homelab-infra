@@ -33,3 +33,8 @@ repos:
         entry: mise exec -- actionlint
         language: system
         files: ^\.github/workflows/.*\.ya?ml$
+      - id: tofu-fmt
+        name: tofu fmt
+        entry: mise exec -- tofu fmt -check
+        language: system
+        files: \.tf$
