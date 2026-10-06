@@ -1,0 +1,37 @@
+---
+# nftables, input policy drop (E10, E14). The workstation proxies both the
+# fallback API path and SSH, so they arrive from its NAT address; the
+# hypervisor arrives directly over the 2.5 GbE link.
+- name: Firewall rules
+  ansible.builtin.copy:
+    dest: /etc/nftables.conf
+    mode: "0755"
+    content: |
+      #!/usr/sbin/nft -f
+      # Managed by Ansible (roles/pbs_host).
+      flush ruleset
+      table inet homelab {
+        chain input {
+          type filter hook input priority 0; policy drop;
+          iif lo accept
+          ct state established,related accept
+          ct state invalid drop
+          ip saddr { {{ pbs_api_sources | join(', ') }} } icmp type echo-request accept
+          ip saddr { {{ pbs_api_sources | join(', ') }} } tcp dport 8007 accept
+          ip saddr { {{ pbs_ssh_sources | join(', ') }} } tcp dport 22 accept
+        }
+        chain forward {
+          type filter hook forward priority 0; policy drop;
+        }
+        chain output {
+          type filter hook output priority 0; policy accept;
+        }
+      }
+    validate: /usr/sbin/nft -c -f %s
+  notify: Reload nftables
+
+- name: Firewall enabled
+  ansible.builtin.service:
+    name: nftables
+    enabled: true
+    state: started

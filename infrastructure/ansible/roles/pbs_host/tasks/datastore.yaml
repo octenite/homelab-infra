@@ -1,0 +1,90 @@
+---
+# The datastore disk gets one GPT partition and is formatted once (the
+# filesystem module never touches a partition that already carries one),
+# mounted by label with atime kept, and registered; prune, garbage
+# collection and verification run on schedules.
+#
+# Guard first: the disk must be empty or carry exactly the datastore
+# partition. Disk names are not stable on this VM (the installer once put
+# the system on this disk), so nothing here may run against a disk that
+# holds anything else.
+- name: Read the datastore disk layout
+  ansible.builtin.command:
+    cmd: lsblk -nro NAME,TYPE,FSTYPE,LABEL,MOUNTPOINT {{ pbs_datastore_disk }}
+  register: pbs_host_disk_layout
+  changed_when: false
+
+- name: Datastore disk is empty or carries only the datastore
+  ansible.builtin.assert:
+    that:
+      - pbs_host_disk_layout.stdout_lines | length <= 2
+      - pbs_host_disk_layout.stdout_lines | select('match', '^[a-z0-9]+ part') | reject('search', ' (ext4 ' ~ pbs_datastore ~ '|part *$)') | list | length == 0
+    fail_msg: "{{ pbs_datastore_disk }} holds something that is not the datastore; refusing: {{ pbs_host_disk_layout.stdout_lines }}"
+    quiet: true
+
+- name: Datastore partition
+  community.general.parted:
+    device: "{{ pbs_datastore_disk }}"
+    label: gpt
+    number: 1
+    name: "{{ pbs_datastore }}"
+    part_start: 1MiB
+    part_end: 100%
+    state: present
+
+- name: Datastore filesystem
+  community.general.filesystem:
+    dev: "{{ pbs_datastore_disk }}1"
+    fstype: ext4
+    opts: "-L {{ pbs_datastore }}"
+
+- name: Datastore mounted
+  ansible.posix.mount:
+    src: "LABEL={{ pbs_datastore }}"
+    path: "{{ pbs_datastore_path }}"
+    fstype: ext4
+    opts: defaults
+    state: mounted
+
+- name: Datastore owned by the backup service
+  ansible.builtin.file:
+    path: "{{ pbs_datastore_path }}"
+    state: directory
+    owner: backup
+    group: backup
+    mode: "0755"
+
+- name: Read datastores and jobs
+  ansible.builtin.command:
+    cmd: proxmox-backup-manager {{ item }} list --output-format json
+  loop:
+    - datastore
+    - prune-job
+    - verify-job
+  register: pbs_host_lists
+  changed_when: false
+
+- name: Datastore registered
+  ansible.builtin.command:
+    cmd: >-
+      proxmox-backup-manager datastore create {{ pbs_datastore }} {{ pbs_datastore_path }}
+      --comment "local copy; off-site is separate" --gc-schedule "{{ pbs_host_gc_schedule }}"
+  when: pbs_host_lists.results[0].stdout | from_json | selectattr('name', 'eq', pbs_datastore) | list | length == 0
+  changed_when: true
+
+- name: Prune job
+  ansible.builtin.command:
+    cmd: >-
+      proxmox-backup-manager prune-job create {{ pbs_datastore }}-prune --store {{ pbs_datastore }}
+      --schedule "{{ pbs_host_prune_schedule }}"
+      --keep-daily {{ pbs_keep.daily }} --keep-weekly {{ pbs_keep.weekly }} --keep-monthly {{ pbs_keep.monthly }}
+  when: pbs_host_lists.results[1].stdout | from_json | selectattr('id', 'eq', pbs_datastore ~ '-prune') | list | length == 0
+  changed_when: true
+
+- name: Verification job
+  ansible.builtin.command:
+    cmd: >-
+      proxmox-backup-manager verify-job create {{ pbs_datastore }}-verify --store {{ pbs_datastore }}
+      --schedule "{{ pbs_host_verify_schedule }}" --ignore-verified true --outdated-after {{ pbs_host_verify_outdated_days }}
+  when: pbs_host_lists.results[2].stdout | from_json | selectattr('id', 'eq', pbs_datastore ~ '-verify') | list | length == 0
+  changed_when: true

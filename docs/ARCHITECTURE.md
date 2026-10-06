@@ -345,6 +345,7 @@ Each exception is one commented rule in Git carrying its ID:
 - **E11** pve1 and the two AP addresses -> WAN tcp 80, 443 (package updates, notification webhooks).
 - **E12** pve1 -> 10.0.50.200 tcp 443 (the read-only OIDC realm, from Phase 11). This replaces the earlier blanket "mgmt -> servers" rule.
 - **E13** Talos node addresses 10.0.50.11 and .21 -> pve1 udp 123 (second time source).
+- **E14** pve1 -> workstation address tcp 8007 (owner decision 2026-10-06): the fallback path to the backup server when the direct link is down. The workstation forwards the port to the VM's NAT leg and its firewall admits only pve1; the hypervisor switches between the direct address and this one by itself. This is the former fallback F2 in a form that puts no virtual switch on the workstation's uplink and works over the dock and over Wi-Fi alike.
 
 E6 and E7 are written for the worker address, but with `bpf.masquerade` every pod's traffic leaves the cluster with that address, so at the router and at `pve-firewall` "the worker" means "any pod". The discriminating control is Cilium egress policy, which is why it is enforced (Phase 6) before the CSI token is installed (Phase 7), and why the tokens themselves are scoped (X16).
 
@@ -638,7 +639,7 @@ homelab-infra/                         PUBLIC: code and manifests, no ciphertext
 | X4 | OpenBao static seal key in a Kubernetes Secret; an on-demand Kubernetes-auth admin role | unattended recovery after power loss; administration must not depend on Authentik | RBAC, yearly rotation, audit device, alert when the admin ServiceAccount exists; evaluate TPM or YubiKey later |
 | X5 | Local break-glass accounts outside Authentik; the Grafana and Argo CD local admins are password-only | Authentik runs on the platform it protects | Bitwarden; reachable only from the workstation on the admin listener; tested in drills; `akadmin` deactivated |
 | X6 | OpenWrt and Talos have no OIDC; LuCI stays enabled with a self-signed certificate | not supported by the products; LuCI kept for operability | LuCI bound to the VLAN 10 address and reached only inside the key-only SSH session |
-| X7 | PBS on a laptop under Hyper-V, Secure Boot possibly off | only second device available | client-side encryption; guest firewall and port ACL; off-site independent of PBS |
+| X7 | PBS on a laptop under Hyper-V; Secure Boot off, because the VM is Generation 1 (the Proxmox installer cannot use a Generation 2 VM's synthetic-only devices; found 2026-10-06) | only second device available | client-side encryption; guest firewall and port ACL; off-site independent of PBS |
 | X8 | etcd metrics over plain HTTP; scheduler and controller-manager on 0.0.0.0 | required for scraping on Talos | Talos firewall restricts them to VLAN 50 node addresses and the pod CIDR; Cilium policy admits only Prometheus |
 | X8b | Logs and metrics are not backed up | cost outweighs value | retention only; revisit if audit needs grow |
 | X9 | Admin access from Node 2 is IP-based (E1-E3), and the address covers WSL2 and its containers | LAN administration must not depend on a third party | MAC-bound lease; key, certificate or second factor on every target; the PBS VM is fenced off the admin targets |

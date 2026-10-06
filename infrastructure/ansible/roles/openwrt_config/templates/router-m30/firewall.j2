@@ -115,6 +115,18 @@ config rule
 	option dest_port '22 8006'
 	option target 'ACCEPT'
 
+{# E14 (owner decision 2026-10-06): the hypervisor reaches the backup server
+   through the workstation's port forward when the direct link is down. #}
+config rule
+	option name 'E14-pve1-to-backup-server'
+	option src 'mgmt'
+	option src_ip '{{ pve1 }}'
+	option dest 'lan'
+	option dest_ip '{{ workstation }}'
+	option proto 'tcp'
+	option dest_port '8007'
+	option target 'ACCEPT'
+
 config rule
 	option name 'E2-workstation-to-access-points'
 	option src 'lan'

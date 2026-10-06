@@ -1,0 +1,23 @@
+---
+# The direct-link adapter is named by its MAC and gets its static address
+# whenever it exists; while the workstation's USB adapter is unplugged the
+# adapter is absent and nothing here is active.
+- name: Direct link adapter named p2p
+  ansible.builtin.copy:
+    dest: /etc/systemd/network/10-p2p.link
+    mode: "0644"
+    content: |
+      [Match]
+      MACAddress={{ pbs_p2p_mac }}
+      [Link]
+      Name=p2p
+
+- name: Direct link address
+  ansible.builtin.copy:
+    dest: /etc/network/interfaces.d/p2p
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/pbs_host): direct link to the hypervisor, no gateway.
+      allow-hotplug p2p
+      iface p2p inet static
+          address {{ pbs_p2p_address }}

@@ -1,0 +1,18 @@
+---
+- name: Packages and repositories
+  ansible.builtin.import_tasks: apt.yaml
+
+- name: SSH
+  ansible.builtin.import_tasks: ssh.yaml
+
+- name: Direct link leg
+  ansible.builtin.import_tasks: network.yaml
+
+- name: Firewall
+  ansible.builtin.import_tasks: firewall.yaml
+
+- name: Datastore and maintenance jobs
+  ansible.builtin.import_tasks: datastore.yaml
+
+- name: Apply pending service restarts
+  ansible.builtin.meta: flush_handlers
