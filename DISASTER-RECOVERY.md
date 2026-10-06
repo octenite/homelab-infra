@@ -29,7 +29,7 @@ The questions this document answers:
 | Router and access point configuration | Git; encrypted exports in the private repository under `openwrt/backups/` | Nothing in these scenarios |
 | Install images | Not kept. Built on demand from Git and the private repository. The stock image names and checksums are pinned in `scripts/pve/build-install-media.sh` and `scripts/pbs/build-install-iso.sh` | Nothing |
 | Account logins: GitHub, the object storage provider, the dead-man's-switch service, the notification bot | With the owner. Where each account's second factor and recovery codes are kept is not recorded yet ([secrets register](docs/security/secrets-register.md), Open) | Nothing in these scenarios |
-| OpenTofu state | Not initialised yet (open, see below) | - |
+| OpenTofu state | Encrypted in the object-storage bucket; the same ciphertext is kept in the private repository under `opentofu/state-copies/`. The passphrase and the bucket keys are in the private repository | Nothing in these scenarios |
 
 Recovery always uses the private repository's `main` branch, not the commit the public repository pins. `just setup` switches to it. `just private-status` confirms it before a recovery starts.
 
@@ -117,7 +117,7 @@ Nothing below exists today. The design is in [docs/ARCHITECTURE.md](docs/ARCHITE
 
 | Step after the hypervisor is back | State |
 |---|---|
-| Talos VMs created by OpenTofu (`just tofu pve apply`) | The root `pve` and the recipe exist. The state backend is not initialised: `private/opentofu/backend.hcl` is missing until the owner names the bucket and endpoint. No VM is defined |
+| Talos VMs created by OpenTofu (`just tofu pve apply`) | The root `pve`, the recipe and the state backend exist (round trip passed 2026-10-07). The root holds only a marker: no VM is defined |
 | Kubernetes bootstrap, Cilium, Argo CD | Not built |
 | Secrets store, identity, applications | Not built |
 | Data restore in a dedicated recovery mode, so restored data is never overwritten by freshly started workloads | Designed, not built |
@@ -144,8 +144,8 @@ Targets of the design for the later phases, until measured: platform back in one
 | Opening a session from the recovery keys on a new workstation has no recipe | A recipe or a rehearsed runbook step |
 | [operator-key-compromised.md](docs/runbooks/operator-key-compromised.md), the runbook for a stolen workstation, is written but has never been drilled | A drill, recorded in the phase record |
 | The whole-database restore has only been checked in a scratch directory, never put in place on a host | A drill once the first guest exists (Phase 5) |
-| The deny test of the backup path's fences has not passed on the present workstation | `just test-fences` ending with `fences hold`, recorded in [docs/phases/phase-3.md](docs/phases/phase-3.md) |
-| OpenTofu state backend not initialised | The owner's bucket name and endpoint, then the state round trip |
+| The deny test of the backup path's fences passed with the management window open (2026-10-07), not yet with it closed | `just test-fences` ending with `fences hold` after a plain run of `pbs-vm.ps1`, recorded in [docs/phases/phase-3.md](docs/phases/phase-3.md) |
+| Recovery of the OpenTofu state from the kept copy has not been rehearsed | A rehearsal of [docs/runbooks/tofu-offline.md](docs/runbooks/tofu-offline.md) while the root holds only its marker |
 
 ## Drill log
 

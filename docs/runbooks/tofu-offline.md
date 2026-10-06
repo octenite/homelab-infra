@@ -2,7 +2,7 @@
 
 Use this when `just tofu <root> plan` cannot reach the Backblaze B2 bucket (internet outage, provider outage, key revoked) and a change cannot wait, or when the bucket or its state object is gone.
 
-Status: not rehearsed. The backend is not initialised yet (Phase 3.6 is open), so no state copy exists today. The steps below follow the wrapper scripts and the backend block of `infrastructure/opentofu/roots/pve/versions.tf`. They count as verified once the first rehearsal is recorded. The right moment is directly after the first `just tofu pve apply`, while the root holds only its marker.
+Status: not rehearsed. The backend was initialised on 2026-10-07 and the first state copy exists (`private/opentofu/state-copies/pve.state.json`). The steps below follow the wrapper scripts and the backend block of `infrastructure/opentofu/roots/pve/versions.tf`. They count as verified once the first rehearsal is recorded. The right moment is now, while the root holds only its marker.
 
 ## What exists
 

@@ -17,16 +17,12 @@ On 2026-10-07: Phases 0, 1, 2 and 4 are closed. Phase 3 is built and reviewed, a
 | 3 | Hypervisor: unattended reinstall, hardening, exporters, access roles and tokens, backup server VM, nightly host backup, OpenTofu root | Built and reviewed; gate open, see [the record](docs/phases/phase-3.md) |
 | 5 to 15 | Cluster, platform, applications, recovery drill | Not started |
 
-What keeps the Phase 3 gate open (items G1 to G6 of the record):
+What keeps the Phase 3 gate open (items G1 and G3 of the record; G2, G4, G5 and G6 closed on 2026-10-07):
 
 | Item | Closed by |
 |---|---|
-| Deny test of the backup path's fences | the owner runs `scripts\node2\pbs-vm.ps1 -Manage` in an elevated PowerShell; then `just test-fences` passes, with the management window open and again with it closed |
-| OpenTofu state backend | the owner supplies the bucket name, region and endpoint; then init, the first apply and the state round trip |
+| Deny test of the backup path's fences | passed with the management window open (51 of 51 probes). Still owed: the owner runs `scripts\node2\workstation.ps1` in an elevated PowerShell and restarts Windows, then closes the window with a plain run of `scripts\node2\pbs-vm.ps1`; `just test-fences` must pass again |
 | 24-hour soak of the direct 2.5 GbE link | the result after 2026-10-07 21:10 |
-| Memory baseline of the host | measured again with everything of Phase 3 running |
-| Dead-man's switch for the nightly backup | a new ping URL, stored with `just secret-set` and deployed with `just pve-apply`; then the owner confirms that the check received a ping |
-| Telegram notifications | the owner confirms that the test messages arrived |
 
 Open in Phase 3 without gating it:
 
