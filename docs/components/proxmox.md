@@ -228,7 +228,7 @@ The host configuration is reproducible from Git. What is not (the cluster filesy
 Files named `*.iso` are left out of every archive.
 
 - Path: the storage entry `pbs-node2` names the server `pbs1.internal`, a line in `/etc/hosts`. Proxmox forbids changing a storage's server, so `pbs-target` rewrites that one line: 10.0.99.3 first, else 192.168.1.196, else 192.168.1.197. A path counts as up when an HTTPS request to port 8007 gets through. A bare connect is not enough: the workstation's port forward accepts connections while the VM is off. With nothing answering, the last choice stays.
-- Keep-alive: the workstation's USB 2.5 GbE adapter powers its link down after about ten idle seconds and does not bring it back. One packet a second has kept it up since 2026-10-06. The 24-hour soak that confirms it is still open ([phase-3.md](../phases/phase-3.md)).
+- Keep-alive: the workstation's USB 2.5 GbE adapter powers its link down after about ten idle seconds and does not bring it back. One packet a second has kept it up since 2026-10-06. The soak was closed after 5 h 35 min by the owner's decision, and the link came back by itself after a restart of the workstation ([phase-3.md](../phases/phase-3.md)).
 - Dead-man's switch: a successful backup pings a healthchecks.io check. Any failure exits before the ping. The ping URL is a secret in `/etc/homelab/backup.secret`, root only.
 - Encryption key: `/etc/pve/priv/storage/pbs-node2.enc` on the host, and recorded in the private repository (`proxmox/backup-keys.sops.yaml`, key `pbs-node2`). A copy belongs in the owner's password manager.
 

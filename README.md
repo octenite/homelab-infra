@@ -6,7 +6,7 @@ Nothing here is physically highly available. There is one host, one disk and one
 
 ## Status
 
-On 2026-10-07: Phases 0, 1, 2 and 4 are closed. Phase 3 is built and reviewed, and its gate is open. The cluster (Phase 5 onwards) is not started.
+On 2026-10-07: Phases 0 to 4 are closed. The next phase is 5, the cluster. It is not started.
 
 | Phase | Scope | State |
 |---|---|---|
@@ -14,21 +14,15 @@ On 2026-10-07: Phases 0, 1, 2 and 4 are closed. Phase 3 is built and reviewed, a
 | 1 | Repositories, standards, pinned tooling, secret handling, CI | Closed |
 | 2 | Router segmentation: VLANs, firewall matrix, DNS, DHCP, NTP | Closed, see [the record](docs/phases/phase-2.md) |
 | 4 | Access points: trunks, guest and IoT networks, hardening (ran before Phase 3 by the owner's decision) | Closed, see [the record](docs/phases/phase-4.md) |
-| 3 | Hypervisor: unattended reinstall, hardening, exporters, access roles and tokens, backup server VM, nightly host backup, OpenTofu root | Built and reviewed; gate open, see [the record](docs/phases/phase-3.md) |
+| 3 | Hypervisor: unattended reinstall, hardening, exporters, access roles and tokens, backup server VM, nightly host backup, OpenTofu root | Closed 2026-10-07, see [the record](docs/phases/phase-3.md) |
 | 5 to 15 | Cluster, platform, applications, recovery drill | Not started |
 
-What keeps the Phase 3 gate open (item G3 of the record; the other five closed on 2026-10-07):
-
-| Item | Closed by |
-|---|---|
-| 24-hour soak of the direct 2.5 GbE link | the result after 2026-10-07 21:10 |
-
-Open in Phase 3 without gating it:
+Left open by Phase 3 without gating it:
 
 | Item | Closed by |
 |---|---|
 | Second factor for `root@pam` on the backup server | the owner enrols it, before Phase 5 puts guest backups on the server |
-| Owner decisions | the svchost split threshold on the workstation; swap, pagefile and hibernation hardening (exception X23) |
+| An alert on link changes of the direct 2.5 GbE link, whose soak the owner closed early | the monitoring phase (backlog B34) |
 
 Deferred to Phase 5: the deny test from the servers network, which has no guest yet.
 
@@ -88,7 +82,7 @@ Every recipe that touches a host needs an operator session. A session holds the 
 | Apply Git to a network device, guarded by a revert | `just openwrt-apply <target>` |
 | Configure the hypervisor | `just pve-apply` |
 | Configure the backup server (needs the management window: `pbs-vm.ps1 -Manage`) | `just pbs-apply` |
-| OpenTofu for one root (works once the state backend is initialised) | `just tofu pve plan` |
+| OpenTofu for one root | `just tofu pve plan` |
 | Read one secret value; store one at a hidden prompt | `just reveal <file> <key>`, `just secret-set <file> <key>` |
 
 Rebuilding the hypervisor is in [docs/runbooks/restore-pve-host.md](docs/runbooks/restore-pve-host.md).

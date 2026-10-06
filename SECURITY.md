@@ -2,7 +2,7 @@
 
 This file is the entry point. The full model, with its reasoning, is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) section 15.
 
-Checked against the code on 2026-10-07. Phases 0, 1, 2 and 4 are closed. Phase 3 (hypervisor and backup server) is built, and its gate is open. The cluster and everything on it are not built.
+Checked against the code on 2026-10-07. Phases 0 to 4 are closed; Phase 3 (hypervisor and backup server) closed on 2026-10-07. The cluster and everything on it are not built.
 
 ## Model in brief
 
