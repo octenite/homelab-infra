@@ -13,3 +13,8 @@
 
 - name: Firewall
   ansible.builtin.import_tasks: firewall.yaml
+
+# Restarts that a change requested are applied before the play ends, so a
+# failure in a later task cannot leave a service on its old configuration.
+- name: Apply pending service restarts
+  ansible.builtin.meta: flush_handlers

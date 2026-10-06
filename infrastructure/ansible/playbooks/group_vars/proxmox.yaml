@@ -10,6 +10,7 @@ pve_ssh_authorized_keys: "{{ openwrt_ssh_authorized_keys }}"
 
 # Management address and the networks that may reach host services.
 pve_mgmt_address: 10.0.10.10
+pve_mgmt_network: 10.0.10.0/24
 pve_workstation: 192.168.1.196
 pve_router: 10.0.10.1
 pve_talos_nodes: [10.0.50.11, 10.0.50.21]

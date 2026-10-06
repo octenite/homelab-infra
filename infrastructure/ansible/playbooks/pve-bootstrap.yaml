@@ -9,6 +9,34 @@
   vars:
     ansible_user: root
   tasks:
+    # A fresh Proxmox host has no sudo and only the subscription repository,
+    # whose index cannot be fetched. Fix the repositories first, then install
+    # sudo; the host role manages the same files afterwards.
+    - name: Remove the subscription-only repositories
+      ansible.builtin.file:
+        path: "/etc/apt/sources.list.d/{{ item }}"
+        state: absent
+      loop:
+        - pve-enterprise.sources
+        - ceph.sources
+
+    - name: Add the free Proxmox repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/pve-no-subscription.sources
+        mode: "0644"
+        content: |
+          Types: deb
+          URIs: http://download.proxmox.com/debian/pve
+          Suites: {{ ansible_distribution_release }}
+          Components: pve-no-subscription
+          Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+
+    - name: Install sudo
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+        update_cache: true
+
     - name: Create the operator account
       ansible.builtin.user:
         name: "{{ pve_ops_user }}"

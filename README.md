@@ -12,7 +12,8 @@ Nothing here is physically highly available. There is one host, one disk and one
 | 1 | Repositories, standards, pinned tooling, secret handling, CI | Complete |
 | 2 | Router segmentation: VLANs, firewall matrix, DNS, DHCP, NTP | Done, see [the record](docs/phases/phase-2.md) |
 | 4 | Access points: trunks, guest and IoT networks, hardening | Done, see [the record](docs/phases/phase-4.md) |
-| 3, 5 to 15 | Hypervisor, cluster, platform, applications, recovery drill | Not started |
+| 3 | Hypervisor: unattended reinstall, hardening, backups | In progress, see [the record](docs/phases/phase-3.md) |
+| 5 to 15 | Cluster, platform, applications, recovery drill | Not started |
 
 Gate records are in [docs/phases/](docs/phases/). No phase starts before the previous gate is recorded.
 

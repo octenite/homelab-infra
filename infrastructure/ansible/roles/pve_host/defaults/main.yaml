@@ -3,13 +3,13 @@
 # ones, which need a subscription (exception X12).
 pve_host_remove_enterprise_repos: true
 
-# Time: the router first, public pools as fallback; the host serves the
-# Talos nodes as their second source (E13).
+# Time: the router only. The firewall lets no NTP leave the management
+# network, so public pools would never answer. The host serves the Talos
+# nodes as their second source (E13) from its own clock when the router has
+# no time.
 pve_host_ntp_servers:
   - "{{ pve_router }}"
-pve_host_ntp_fallback:
-  - 0.debian.pool.ntp.org
-  - 1.debian.pool.ntp.org
+pve_host_ntp_fallback: []
 pve_host_ntp_allow:
   - "{{ pve_servers_network }}"
 

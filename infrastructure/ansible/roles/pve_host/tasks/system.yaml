@@ -23,6 +23,21 @@
   when: (pve_host_ksm_run.content | b64decode | trim) != '0'
   changed_when: true
 
+- name: Journal directories exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+    owner: root
+    group: "{{ item.group }}"
+  loop:
+    - path: /etc/systemd/journald.conf.d
+      mode: "0755"
+      group: root
+    - path: /var/log/journal
+      mode: "2755"
+      group: systemd-journal
+
 - name: Persistent, capped journal
   ansible.builtin.copy:
     dest: /etc/systemd/journald.conf.d/homelab.conf
@@ -32,11 +47,3 @@
       Storage=persistent
       SystemMaxUse={{ pve_host_journal_max_use }}
   notify: Restart journald
-
-- name: Journal directory exists for persistent storage
-  ansible.builtin.file:
-    path: /var/log/journal
-    state: directory
-    mode: "2755"
-    owner: root
-    group: systemd-journal

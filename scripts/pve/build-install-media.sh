@@ -16,7 +16,7 @@ HOST=${PVE_HOST:-10.0.10.10}
 ISO_NAME=${PVE_ISO:-proxmox-ve_9.2-1.iso}
 ISO_SHA256=${PVE_ISO_SHA256:-4e88fe416df9b527624a175f24c9aa07c714d3332afb1ee3dbf3879573ef2c6c}
 ISO_URL="https://enterprise.proxmox.com/iso/${ISO_NAME}"
-USB_SERIAL=${PVE_USB_SERIAL:?set PVE_USB_SERIAL to the udev ID_SERIAL of the stick}
+USB_SERIAL=${PVE_USB_SERIAL:-}
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=10 root@${HOST}"
 
@@ -29,7 +29,7 @@ render() {
 	ROOT_PASSWORD_HASH=$(sops decrypt --extract '["pve_root_password"]' "$REPO/private/proxmox/pve1.sops.yaml" | openssl passwd -6 -stdin)
 	MAILTO=$(sed -n "s/^pve_mailto: \"\(.*\)\"$/\1/p" "$REPO/private/proxmox/pve1.yaml")
 	DISK_SERIAL=$(sed -n "s/^pve_disk_serial: \"\(.*\)\"$/\1/p" "$REPO/private/proxmox/pve1.yaml")
-	SSH_KEYS=$(sed -n 's/^  - "\(.*\)"$/  "\1",/p' "$REPO/private/ansible/inventory/group_vars/openwrt/ssh.yaml")
+	SSH_KEYS=$(sed -n 's/^  - "\(.*\)"$/  "\1",/p' "$REPO/private/ansible/inventory/group_vars/all/ssh.yaml")
 	[ -n "$ROOT_PASSWORD_HASH" ] && [ -n "$MAILTO" ] && [ -n "$DISK_SERIAL" ] && [ -n "$SSH_KEYS" ]
 	python3 - "$REPO/infrastructure/proxmox/answer.toml.tmpl" "$work/answer.toml" <<'PY'
 import os, string, sys
@@ -43,6 +43,10 @@ PY
 }
 
 prepare() {
+	[ -n "$USB_SERIAL" ] || {
+		echo "set PVE_USB_SERIAL to the udev ID_SERIAL of the stick" >&2
+		exit 2
+	}
 	render
 	echo "--- host: tools"
 	$SSH "mkdir -p /run/pve-install && chmod 700 /run/pve-install"
