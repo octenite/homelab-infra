@@ -6,7 +6,7 @@ Scope: the nightly host-configuration backup of `pve1` (`/etc` including `/etc/p
 
 - The hypervisor is up with its storage entry `pbs-node2` (created by `just pve-backup-init`) and the host role applied (`just pve-apply`), which installs the credentials and the `pbs-host-restore` command.
 - The backup server VM is running on the workstation (it is started by hand). Either path works: the direct link or the fallback through the workstation's port forward; `pbs-target` picks the one that answers.
-- On a rebuilt hypervisor, the encryption key must be put back first: `just reveal private/proxmox/backup-keys.sops.yaml pbs-node2` gives the key JSON; write it to `/etc/pve/priv/storage/pbs-node2.enc` (mode 0600) before `just pve-backup-init`, or the init play's `--encryption-key autogen` would make a new key that cannot read the old backups.
+- On a rebuilt hypervisor, the encryption key must be put back first: `just reveal private/proxmox/backup-keys.sops.yaml pbs-node2` gives the key JSON; write it to `/etc/pve/priv/storage/pbs-node2.enc` (mode 0600) before `just pve-backup-init`, or the init play's `--encryption-key autogen` would make a new key that cannot read the old backups. If the entry has to be created by hand, `pvesm add ... --encryption-key <path to the key file>`: the option takes a file path, and a value passed instead is echoed back in the error message.
 
 ## Procedure
 
@@ -42,6 +42,7 @@ As the operator on the hypervisor (`ssh ops@10.0.10.10`, then `sudo -i`):
 | Date | What | Result |
 |---|---|---|
 | 2026-10-06 | First backup (30 s, 1.4 GiB before the ISO exclusion), second backup (0.3 s, 6.4 MiB), restore of `etc.pxar` from the latest snapshot to a temporary directory | 768 files restored; `hostname`, `network/interfaces`, `pve/storage.cfg`, `pve/firewall/cluster.fw`, `chrony/chrony.conf` identical to the live files; over the fallback path |
+| 2026-10-06, after the key rotation | Backup with the new key over the direct link (storage on `pbs1.internal`, failover had picked 10.0.99.3), restore of `etc.pxar` | 768 files, the same five files identical |
 
 ## Failure modes
 

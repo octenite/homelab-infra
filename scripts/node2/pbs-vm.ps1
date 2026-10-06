@@ -51,7 +51,9 @@ $NatPrefix = '10.0.98.0/29'
 $NatHost = '10.0.98.1'
 $NatPbs = '10.0.98.3'
 $P2pSwitch = 'p2p'
-$P2pAdapterPattern = 'USB 2.5GbE|UE302'
+# Direct-link adapters in order of preference: the USB 2.5 GbE adapter, else
+# the laptop's own gigabit port (fallback F1). The one with link wins.
+$P2pAdapterPatterns = @('USB 2.5GbE|UE302', 'Realtek PCIe GbE')
 $P2pHost = '10.0.99.2'
 $MacNat = '00155D980003'
 $MacP2p = '00155D990003'
@@ -83,17 +85,25 @@ if (-not (Get-NetNat -Name $NatSwitch -ErrorAction SilentlyContinue)) {
 }
 
 # ---- direct link: only while the 2.5 GbE adapter is plugged in -------------
-$p2pAdapter = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object InterfaceDescription -match $P2pAdapterPattern | Select-Object -First 1
+$p2pCandidates = foreach ($pat in $P2pAdapterPatterns) { Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object InterfaceDescription -match $pat }
+$p2pAdapter = ($p2pCandidates | Where-Object Status -eq 'Up' | Select-Object -First 1)
+if (-not $p2pAdapter) { $p2pAdapter = $p2pCandidates | Select-Object -First 1 }
 if ($p2pAdapter) {
-    if (-not (Get-VMSwitch -Name $P2pSwitch -ErrorAction SilentlyContinue)) {
+    $sw = Get-VMSwitch -Name $P2pSwitch -ErrorAction SilentlyContinue
+    if (-not $sw) {
         New-VMSwitch -Name $P2pSwitch -NetAdapterName $p2pAdapter.Name -AllowManagementOS $true | Out-Null
         Step "switch $P2pSwitch on '$($p2pAdapter.Name)'"
     }
+    elseif ($sw.NetAdapterInterfaceDescription -ne $p2pAdapter.InterfaceDescription -and $p2pAdapter.Status -eq 'Up') {
+        Set-VMSwitch -Name $P2pSwitch -NetAdapterName $p2pAdapter.Name
+        Step "switch $P2pSwitch moved to '$($p2pAdapter.Name)' (the adapter with link)"
+    }
     $p2pIf = Get-NetAdapter -Name "vEthernet ($P2pSwitch)"
-    if (-not (Get-NetIPAddress -InterfaceIndex $p2pIf.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object IPAddress -eq $P2pHost)) {
-        Set-NetIPInterface -InterfaceIndex $p2pIf.ifIndex -AddressFamily IPv4 -Dhcp Disabled
-        Get-NetIPAddress -InterfaceIndex $p2pIf.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false
-        New-NetIPAddress -InterfaceIndex $p2pIf.ifIndex -IPAddress $P2pHost -PrefixLength 29 | Out-Null
+    $p2pPersistent = Get-NetIPAddress -InterfaceIndex $p2pIf.ifIndex -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction SilentlyContinue | Where-Object IPAddress -eq $P2pHost
+    if (-not $p2pPersistent) {
+        # netsh sets the static address and turns DHCP off in both stores in
+        # one step; the PowerShell pair refuses with "inconsistent parameters".
+        netsh interface ipv4 set address name="$($p2pIf.Name)" source=static address=$P2pHost mask=255.255.255.248 | Out-Null
         Step "host address $P2pHost/29 on $P2pSwitch (no gateway)"
     }
     $prof = Get-NetConnectionProfile -InterfaceIndex $p2pIf.ifIndex -ErrorAction SilentlyContinue
@@ -187,8 +197,11 @@ if ($nat.MacAddress -ne $MacNat) {
 }
 if (Get-VMSwitch -Name $P2pSwitch -ErrorAction SilentlyContinue) {
     if (-not (Get-VMNetworkAdapter -VMName $VmName -Name p2p -ErrorAction SilentlyContinue)) {
-        Add-VMNetworkAdapter -VMName $VmName -Name p2p -SwitchName $P2pSwitch -StaticMacAddress $MacP2p
-        Step "adapter 'p2p' on $P2pSwitch, MAC $MacP2p"
+        if ($off) {
+            Add-VMNetworkAdapter -VMName $VmName -Name p2p -SwitchName $P2pSwitch -StaticMacAddress $MacP2p
+            Step "adapter 'p2p' on $P2pSwitch, MAC $MacP2p"
+        }
+        else { Note "adapter 'p2p' is added when the VM is off (Stop-VM $VmName, run again, Start-VM $VmName)" }
     }
 }
 

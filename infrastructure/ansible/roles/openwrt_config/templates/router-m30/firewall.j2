@@ -2,7 +2,10 @@
    Policy: docs/ARCHITECTURE.md section 6. Default deny between all zones and
    towards the router. Every allow below carries the ID of its exception (E1 to E13)
    or the word Router for a service the router itself offers to a zone. #}
-{% set workstation = '192.168.1.196' %}
+{# The operator workstation holds two reserved addresses: its dock port and
+   its Wi-Fi adapter (decision 2026-10-06; one shared address deadlocked
+   Windows). Every workstation rule admits both. #}
+{% set workstations = ['192.168.1.196', '192.168.1.197'] %}
 {% set pve1 = '10.0.10.10' %}
 {% set access_points = ['10.0.10.2', '10.0.10.3'] %}
 {% set k8s_api = '10.0.50.10' %}
@@ -100,7 +103,9 @@ config rule
 config rule
 	option name 'E1-workstation-to-router-ssh'
 	option src 'lan'
-	option src_ip '{{ workstation }}'
+{% for w in workstations %}
+	list src_ip '{{ w }}'
+{% endfor %}
 	option proto 'tcp'
 	option dest_port '22'
 	option target 'ACCEPT'
@@ -108,7 +113,9 @@ config rule
 config rule
 	option name 'E2-workstation-to-pve1'
 	option src 'lan'
-	option src_ip '{{ workstation }}'
+{% for w in workstations %}
+	list src_ip '{{ w }}'
+{% endfor %}
 	option dest 'mgmt'
 	option dest_ip '{{ pve1 }}'
 	option proto 'tcp'
@@ -122,7 +129,9 @@ config rule
 	option src 'mgmt'
 	option src_ip '{{ pve1 }}'
 	option dest 'lan'
-	option dest_ip '{{ workstation }}'
+{% for w in workstations %}
+	list dest_ip '{{ w }}'
+{% endfor %}
 	option proto 'tcp'
 	option dest_port '8007'
 	option target 'ACCEPT'
@@ -130,7 +139,9 @@ config rule
 config rule
 	option name 'E2-workstation-to-access-points'
 	option src 'lan'
-	option src_ip '{{ workstation }}'
+{% for w in workstations %}
+	list src_ip '{{ w }}'
+{% endfor %}
 	option dest 'mgmt'
 {% for a in access_points %}
 	list dest_ip '{{ a }}'
@@ -142,7 +153,9 @@ config rule
 config rule
 	option name 'E2-workstation-to-mgmt-ping'
 	option src 'lan'
-	option src_ip '{{ workstation }}'
+{% for w in workstations %}
+	list src_ip '{{ w }}'
+{% endfor %}
 	option dest 'mgmt'
 	option proto 'icmp'
 	option icmp_type 'echo-request'
@@ -152,7 +165,9 @@ config rule
 config rule
 	option name 'E3-workstation-to-kubernetes-api'
 	option src 'lan'
-	option src_ip '{{ workstation }}'
+{% for w in workstations %}
+	list src_ip '{{ w }}'
+{% endfor %}
 	option dest 'servers'
 	option dest_ip '{{ k8s_api }}'
 	option proto 'tcp'
@@ -162,7 +177,9 @@ config rule
 config rule
 	option name 'E3-workstation-to-talos-api'
 	option src 'lan'
-	option src_ip '{{ workstation }}'
+{% for w in workstations %}
+	list src_ip '{{ w }}'
+{% endfor %}
 	option dest 'servers'
 {% for a in k8s_nodes %}
 	list dest_ip '{{ a }}'
@@ -174,7 +191,9 @@ config rule
 config rule
 	option name 'E3-workstation-to-admin-listener'
 	option src 'lan'
-	option src_ip '{{ workstation }}'
+{% for w in workstations %}
+	list src_ip '{{ w }}'
+{% endfor %}
 	option dest 'servers'
 	option dest_ip '{{ gw_admin }}'
 	option proto 'tcp'

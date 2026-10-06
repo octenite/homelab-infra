@@ -11,7 +11,8 @@ pve_ssh_authorized_keys: "{{ openwrt_ssh_authorized_keys }}"
 # Management address and the networks that may reach host services.
 pve_mgmt_address: 10.0.10.10
 pve_mgmt_network: 10.0.10.0/24
-pve_workstation: 192.168.1.196
+# The workstation's two addresses: dock port first, Wi-Fi adapter second.
+pve_workstations: [192.168.1.196, 192.168.1.197]
 pve_router: 10.0.10.1
 pve_talos_nodes: [10.0.50.11, 10.0.50.21]
 pve_talos_workers: [10.0.50.21, 10.0.50.22]
@@ -107,7 +108,10 @@ pve_backup_datastore: pbs1
 pve_backup_user: pve1@pbs
 pve_backup_token: backup
 pve_backup_primary: 10.0.99.3
-pve_backup_fallback: "{{ pve_workstation }}"
+pve_backup_fallbacks: "{{ pve_workstations }}"
+# The storage entry names the server by this hosts-file name; the failover
+# timer rewrites the line (PVE forbids changing a storage's server).
+pve_backup_name: pbs1.internal
 pve_backup_schedule: "*-*-* 02:30:00"
 # healthchecks.io ping on success; empty until the owner creates the account.
 pve_backup_ping_url: ""
