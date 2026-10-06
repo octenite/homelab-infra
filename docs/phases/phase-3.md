@@ -75,6 +75,7 @@ Run from the workstation against the API with the stored tokens; the expected an
 | 1 | Backup server VM on the workstation, first host backup, restore test | Owner (elevated PowerShell) and operator |
 | 2 | OpenTofu state backend | Owner creates the storage account; operator |
 | 3 | 2.5 GbE link: `enp2s0` still reports no carrier on the new install | Operator, with the owner at the cable |
-| 4 | Copy the `root@pam` and `octenite-admin@pve` passwords to the password manager (`just reveal private/proxmox/pve1.sops.yaml pve_root_password`, `just reveal private/ansible/inventory/host_vars/pve1/secrets.sops.yaml pve_admin_password`) | Owner |
-| 5 | Enrol TOTP for `octenite-admin@pve` and for `root@pam` in the web interface (Datacenter, Permissions, Two Factor); then the operator sets the realm to require it | Owner, then operator |
-| 6 | CSI entries on the worker VMs, once their IDs exist | Operator, Phase 7 |
+| 4 | CSI entries on the worker VMs, once their IDs exist | Operator, Phase 7 |
+| 5 | Recovery keys for both accounts (Two Factor, Add, Recovery Keys), stored in the password manager | Owner |
+
+Closed the same day: both passwords are in the owner's password manager; the owner enrolled TOTP for `octenite-admin@pve` and `root@pam`, after which the host play switched both realms to require a second factor. The role only does that once every password user of a realm has enrolled, so a rebuild cannot lock the owner out. Verified afterwards: the four tokens still answer (a realm requirement never applies to tokens), and password logins still receive a ticket, now flagged for the second step.

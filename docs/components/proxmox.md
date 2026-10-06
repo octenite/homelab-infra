@@ -50,7 +50,7 @@ A change to the bridges is guarded: the role parses the new interfaces file firs
 
 - SSH is key-only, for the operator account only, on the management address only. Root keeps the recovery key for the console-equivalent path.
 - `root@pam` with its password is break-glass for the console and the web interface. The password lives in the private repository and the password manager.
-- The owner's `octenite-admin@pve` is the only account holding `Administrator`; its password is in the private inventory and the owner enrols TOTP in the web interface. Automation uses privilege-separated API tokens of dedicated users with custom roles (`TerraformProvisioner`, `KubernetesCSI`) or `PVEAuditor`, scoped to the `talos` pool, the two storages, the node and the bridge where the API accepts a path. Tokens live 12 months; their secrets are issued by `just pve-tokens` straight into `private/proxmox/tokens.sops.yaml`. Rotation: remove the token on the host, run `just pve-tokens`, update the consumer.
+- The owner's `octenite-admin@pve` is the only account holding `Administrator`; its password is in the private inventory and the owner enrols TOTP in the web interface. Both realms require a second factor; the role switches that on only once every password user of a realm has enrolled, so a rebuilt host first lets the owner enrol. Recovery keys (Two Factor → Add → Recovery Keys) are the owner's fallback for a lost phone. Automation uses privilege-separated API tokens of dedicated users with custom roles (`TerraformProvisioner`, `KubernetesCSI`) or `PVEAuditor`, scoped to the `talos` pool, the two storages, the node and the bridge where the API accepts a path. Tokens live 12 months; their secrets are issued by `just pve-tokens` straight into `private/proxmox/tokens.sops.yaml`. Rotation: remove the token on the host, run `just pve-tokens`, update the consumer.
 - Only the workstation reaches SSH, the web interface and the console ports. Future Talos workers reach the API and the exporters.
 - The CPU receives no microcode updates any more; one vulnerability stays open (X13).
 
@@ -71,6 +71,7 @@ Reinstall from the answer file, then run the two plays. Tokens are re-issued. Se
 | Time wrong | `chronyc sources`; the router is the only source |
 | The play fails on `/etc/pve` | Permission or replace errors: the file must be written in place, not copied |
 | The play failed in the bridge change | Wait three minutes; the host restores its previous file (`journalctl -t homelab`). Then `ifquery --check -a` and run the play again |
+| The second factor is lost and no recovery key exists | Over SSH with the recovery key as root: `pveum user tfa list <user>`, `pveum user tfa delete <user> --id <entry>`; log in with the password, enrol again. The realm requirement stays on |
 | The 2.5 GbE link is down | `ethtool enp2s0` for link and speed; the bridge `vmbr1` stays up without a link, nothing else depends on it |
 
 ## Removal

@@ -75,3 +75,55 @@
 
 - name: Access control entries for existing tokens
   ansible.builtin.import_tasks: access-tokens.yaml
+
+# Second factor: a realm requires it only once every user of that realm who
+# can log in with a password has enrolled, so a rebuilt host lets the owner
+# enrol first and the requirement switches on by itself on the next run.
+# Automation users of the pve realm hold no password (they are absent from
+# the realm's shadow file) and use tokens, which a realm requirement never
+# affects.
+- name: Read realms and second-factor entries
+  ansible.builtin.command:
+    cmd: pvesh get {{ item }} --output-format json
+  loop:
+    - /access/domains
+    - /access/tfa
+  register: pve_host_tfa_read
+  changed_when: false
+
+- name: Users of the pve realm that hold a password (names only)
+  ansible.builtin.command:
+    cmd: "cut -d: -f1 /etc/pve/priv/shadow.cfg"
+  register: pve_host_shadow_users
+  changed_when: false
+
+- name: Realms where every password user has enrolled
+  ansible.builtin.set_fact:
+    pve_host_tfa_ready: >-
+      {%- set out = [] -%}
+      {%- set enrolled = pve_host_tfa_read.results[1].stdout | from_json | selectattr('entries', 'defined')
+          | rejectattr('entries', 'eq', []) | map(attribute='userid') | list -%}
+      {%- set users = pve_host_access_read.results[1].stdout | from_json | selectattr('enable', 'eq', 1)
+          | map(attribute='userid') | list -%}
+      {%- set pve_pw = pve_host_shadow_users.stdout_lines | map('regex_replace', '$', '@pve') | list -%}
+      {%- for realm in pve_tfa_realms -%}
+        {%- set members = users | select('search', '@' ~ realm ~ '$') | list -%}
+        {%- if realm == 'pve' -%}{%- set members = members | intersect(pve_pw) -%}{%- endif -%}
+        {%- if members | length > 0 and (members | difference(enrolled) | length == 0) -%}
+          {%- set _ = out.append(realm) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Realms not yet ready for the requirement
+  ansible.builtin.debug:
+    msg: "Realm {{ item }}: a password user without a second factor exists; the requirement stays off until every one has enrolled."
+  loop: "{{ pve_tfa_realms | difference(pve_host_tfa_ready) }}"
+
+- name: Realms require a second factor
+  ansible.builtin.command:
+    cmd: pveum realm modify {{ item }} --tfa type=oath
+  loop: "{{ pve_host_tfa_ready }}"
+  when: >-
+    (pve_host_tfa_read.results[0].stdout | from_json | selectattr('realm', 'eq', item) | map(attribute='tfa', default='') | first) != 'oath'
+  changed_when: true
