@@ -12,6 +12,7 @@ The local backup target: nightly images of the control-plane VM and the hypervis
   - `p2p` (switch `p2p` on the USB 2.5 GbE adapter, 10.0.99.3/29): the primary path from the hypervisor, present only while the adapter is plugged in. Port ACL: the hypervisor's address only.
 - Fallback path (E14): the workstation forwards port 8007 on its pinned address to the VM's NAT leg, the Windows firewall admits only the hypervisor, and the router allows hypervisor to workstation on 8007. The hypervisor switches its backup target between the two addresses by itself.
 - Resource budget on the workstation: Windows about 6 GiB, WSL capped at 5 GB, PBS 4 GiB fixed.
+- Notifications: PBS's native system sends failed garbage collection, verification and prune jobs and update notices to the owner's Telegram chat through a webhook target (token in the private notification file and the private repository).
 
 ## Dependencies
 
@@ -58,7 +59,7 @@ Restoring data from this server: [restore-host-config.md](../runbooks/restore-ho
 | The installer stops with "no device with valid ISO found" or the console cannot send keys | The VM is Generation 2; rebuild it with `pbs-vm.ps1 -Recreate` (Generation 1) |
 | The system landed on the 128 GiB disk | Both disks were attached during the install and their names swapped. Stop the VM, `pbs-vm.ps1 -WipeDatastore -Iso ...` (deletes and recreates the datastore disk file, installs on the only attached disk), then `-Eject` |
 | The VM boots into an initramfs shell complaining about `pbs-OLD-…` | The system disk carried an older install whose GRUB still boots. Stop the VM, `pbs-vm.ps1 -WipeSystem -Iso ...`, then `-Eject` |
-| The host play refuses the datastore disk | It holds something other than the datastore partition; read the `lsblk` output in the message before deciding whether `-WipeDatastore` is right |
+| The host play refuses the datastore disk | It holds something other than the datastore partition; read the `lsblk` output in the message before deciding whether `-WipeDatastore` is right. The role finds the disk by the partition label `pbs1` (disk names swap between boots), so a refusal means the labelled partition is gone or a stray disk appeared |
 | The VM has no internet | The NAT: `Get-NetNat pbs-nat`; the ACLs: `Get-VMNetworkAdapterAcl -VMName pbs1` |
 
 ## Removal

@@ -4,13 +4,23 @@
 # mounted by label with atime kept, and registered; prune, garbage
 # collection and verification run on schedules.
 #
-# Guard first: the disk must be empty or carry exactly the datastore
-# partition. Disk names are not stable on this VM (the installer once put
-# the system on this disk), so nothing here may run against a disk that
-# holds anything else.
+# Disk names swap between boots on this VM (the installer once put the
+# system on the datastore disk), so the disk is found by the label of its
+# partition, or, before that exists, as the one disk with nothing on it;
+# then a guard makes sure it holds nothing but the datastore.
+- name: Find the datastore disk
+  ansible.builtin.script:
+    cmd: pbs-datastore-disk.sh {{ pbs_datastore }}
+  register: pbs_host_disk_found
+  changed_when: false
+
+- name: Datastore disk
+  ansible.builtin.set_fact:
+    pbs_host_disk: "{{ pbs_host_disk_found.stdout | trim }}"
+
 - name: Read the datastore disk layout
   ansible.builtin.command:
-    cmd: lsblk -nro NAME,TYPE,FSTYPE,LABEL,MOUNTPOINT {{ pbs_datastore_disk }}
+    cmd: lsblk -nro NAME,TYPE,FSTYPE,LABEL,MOUNTPOINT {{ pbs_host_disk }}
   register: pbs_host_disk_layout
   changed_when: false
 
@@ -19,12 +29,12 @@
     that:
       - pbs_host_disk_layout.stdout_lines | length <= 2
       - pbs_host_disk_layout.stdout_lines | select('match', '^[a-z0-9]+ part') | reject('search', ' (ext4 ' ~ pbs_datastore ~ '|part *$)') | list | length == 0
-    fail_msg: "{{ pbs_datastore_disk }} holds something that is not the datastore; refusing: {{ pbs_host_disk_layout.stdout_lines }}"
+    fail_msg: "{{ pbs_host_disk }} holds something that is not the datastore; refusing: {{ pbs_host_disk_layout.stdout_lines }}"
     quiet: true
 
 - name: Datastore partition
   community.general.parted:
-    device: "{{ pbs_datastore_disk }}"
+    device: "{{ pbs_host_disk }}"
     label: gpt
     number: 1
     name: "{{ pbs_datastore }}"
@@ -34,7 +44,7 @@
 
 - name: Datastore filesystem
   community.general.filesystem:
-    dev: "{{ pbs_datastore_disk }}1"
+    dev: "{{ pbs_host_disk }}1"
     fstype: ext4
     opts: "-L {{ pbs_datastore }}"
 

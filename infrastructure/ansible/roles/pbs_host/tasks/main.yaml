@@ -14,5 +14,9 @@
 - name: Datastore and maintenance jobs
   ansible.builtin.import_tasks: datastore.yaml
 
+- name: Notifications to Telegram
+  ansible.builtin.import_tasks: notify.yaml
+  when: telegram_bot_token is defined and telegram_chat_id is defined
+
 - name: Apply pending service restarts
   ansible.builtin.meta: flush_handlers

@@ -6,10 +6,10 @@ ansible_become: true
 pbs_ops_user: ops
 pbs_ssh_authorized_keys: "{{ openwrt_ssh_authorized_keys }}"
 
-# Datastore: the second disk of the VM (fixed 128 GiB), ext4 with atime
-# (garbage collection relies on it), one datastore.
+# Datastore: the VM's second disk (fixed 128 GiB), found by its partition
+# label because disk names swap between boots; ext4 with atime (garbage
+# collection relies on it), one datastore.
 pbs_datastore: pbs1
-pbs_datastore_disk: /dev/sdb
 pbs_datastore_path: /mnt/datastore/pbs1
 
 # Who may reach the VM (E10 and E14). The workstation proxies the fallback

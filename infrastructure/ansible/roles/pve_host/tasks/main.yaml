@@ -26,6 +26,10 @@
 - name: Backups
   ansible.builtin.import_tasks: backup.yaml
 
+- name: Notifications to Telegram
+  ansible.builtin.import_tasks: notify.yaml
+  when: telegram_bot_token is defined and telegram_chat_id is defined
+
 # Restarts that a change requested are applied before the play ends, so a
 # failure in a later task cannot leave a service on its old configuration.
 - name: Apply pending service restarts
