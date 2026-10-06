@@ -1,4 +1,8 @@
 ---
+# Hardware identifiers of this host (disk and install-stick serials) live in
+# the private repository, next to its encrypted secrets.
+pve_host_ids_file: "{{ playbook_dir }}/../../../private/proxmox/{{ inventory_hostname }}.yaml"
+
 # Package repositories: the free Proxmox repository replaces the enterprise
 # ones, which need a subscription (exception X12).
 pve_host_remove_enterprise_repos: true
@@ -10,8 +14,7 @@ pve_host_remove_enterprise_repos: true
 pve_host_ntp_servers:
   - "{{ pve_router }}"
 pve_host_ntp_fallback: []
-pve_host_ntp_allow:
-  - "{{ pve_servers_network }}"
+pve_host_ntp_allow: "{{ pve_talos_nodes }}"
 
 # Network: a change to the bridges is reverted by the host itself unless the
 # play confirms it within this many seconds.

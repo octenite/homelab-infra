@@ -11,6 +11,12 @@
 - name: Firewall
   ansible.builtin.import_tasks: firewall.yaml
 
+# Restarts and reloads requested so far (sshd, nftables) happen now: a
+# failure in the datastore tasks would otherwise lose them for good, because
+# on the next run the files are already in place and nothing is notified.
+- name: Apply pending service restarts before the datastore
+  ansible.builtin.meta: flush_handlers
+
 - name: Datastore and maintenance jobs
   ansible.builtin.import_tasks: datastore.yaml
 

@@ -3,6 +3,17 @@
 # (ARCHITECTURE.md section 6). Reads first and changes only what differs.
 # Tokens are issued by playbooks/pve-tokens.yaml, which captures their
 # secrets; their ACLs are kept in access-tokens.yaml, shared with that play.
+#
+# What converges and what does not:
+#   role privilege lists      follow Git in both directions
+#   access entries            follow Git in both directions for the users and
+#                             tokens named in Git: an entry that Git no longer
+#                             grants is removed
+#   users and tokens          are only ever added; one that Git does not know
+#                             stops the play, so drift is seen, and its
+#                             removal stays a deliberate act on the host
+#   the admin password        is set once, at creation; rotation is by hand
+#                             (docs/security/secrets-register.md)
 - name: Read roles, users and pools
   ansible.builtin.command:
     cmd: pvesh get {{ item }} --output-format json
@@ -12,6 +23,7 @@
     - /pools
   register: pve_host_access_read
   changed_when: false
+  check_mode: false
 
 - name: Current roles, users and pools
   ansible.builtin.set_fact:
@@ -47,18 +59,61 @@
   when: item.userid not in pve_host_users_now
   changed_when: true
 
+# Names only. The file does not exist before the first password of the realm
+# is set, which reads as "nobody holds one".
+- name: Users of the pve realm that hold a password (names only)
+  ansible.builtin.command:
+    cmd: "cut -d: -f1 /etc/pve/priv/shadow.cfg"
+  register: pve_host_shadow_users
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: The administrator's password is usable before the account is created
+  ansible.builtin.assert:
+    that: pve_admin_password | default('') | length >= 8
+    fail_msg: "pve_admin_password is missing or shorter than the eight characters Proxmox accepts."
+    quiet: true
+  when: (pve_admin_user | split('@') | first) not in pve_host_shadow_users.stdout_lines
+
 - name: Owner's administrator account
   ansible.builtin.command:
-    cmd: pveum user add {{ pve_admin_user }} --password "{{ pve_admin_password }}" --comment "Owner; the only Administrator; enrols TOTP in the web interface"
+    cmd: pveum user add {{ pve_admin_user }} --comment "Owner; the only Administrator; enrols TOTP in the web interface"
   when: pve_admin_user not in pve_host_users_now
   changed_when: true
+
+# The password goes in on standard input (asked twice), never on a command
+# line, where the process list would show it. Keyed on the password being
+# absent, not on the account: a run that created the account and then failed
+# here sets it on the next run.
+- name: Password of the administrator account, set once
+  ansible.builtin.command:
+    cmd: pveum passwd {{ pve_admin_user }}
+    stdin: "{{ pve_admin_password }}\n{{ pve_admin_password }}"
+  when: (pve_admin_user | split('@') | first) not in pve_host_shadow_users.stdout_lines
+  changed_when: true
   no_log: true
+
+# A user or token on the host that Git does not know is drift: someone added
+# it by hand, or Git dropped it. Removing it is destructive for whoever uses
+# it, so the play names it and stops instead of deleting.
+- name: Users of the pve realm that Git does not know
+  ansible.builtin.assert:
+    that: pve_host_unmanaged_users | length == 0
+    fail_msg: >-
+      Unmanaged user(s) in the pve realm: {{ pve_host_unmanaged_users | join(', ') }}. Add them to pve_users or
+      remove them on the host (pveum user delete <user>).
+    quiet: true
+  vars:
+    pve_host_unmanaged_users: >-
+      {{ pve_host_users_now | select('search', '@pve$') | difference((pve_users | map(attribute='userid') | list) + [pve_admin_user]) }}
 
 - name: Read access control entries
   ansible.builtin.command:
     cmd: pvesh get /access/acl --output-format json
   register: pve_host_acl_read
   changed_when: false
+  check_mode: false
 
 - name: Access control entries for users
   ansible.builtin.command:
@@ -76,12 +131,57 @@
 - name: Access control entries for existing tokens
   ansible.builtin.import_tasks: access-tokens.yaml
 
+# Entries are removed only after the wanted ones exist, so narrowing a grant
+# never leaves a moment without it. Only the users named in Git and their
+# tokens are touched; root@pam and anything else is left alone.
+- name: Read access control entries after the additions
+  ansible.builtin.command:
+    cmd: pvesh get /access/acl --output-format json
+  register: pve_host_acl_after
+  changed_when: false
+  check_mode: false
+
+- name: Entries on the host that Git no longer grants
+  ansible.builtin.set_fact:
+    pve_host_acl_extra: >-
+      {%- set out = [] -%}
+      {%- set managed = (pve_users | map(attribute='userid') | list) + [pve_admin_user] -%}
+      {%- for e in pve_host_acl_after.stdout | from_json -%}
+        {%- set owner = e.ugid.split('!')[0] -%}
+        {%- if e.type in ['user', 'token'] and owner in managed -%}
+          {%- if pve_acls | selectattr('user', 'eq', owner) | selectattr('path', 'eq', e.path) | selectattr('role', 'eq', e.roleid) | list | length == 0 -%}
+            {%- set _ = out.append({'path': e.path, 'role': e.roleid, 'type': e.type, 'ugid': e.ugid}) -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Remove entries that Git no longer grants
+  ansible.builtin.command:
+    argv:
+      - pveum
+      - acl
+      - delete
+      - "{{ item.path }}"
+      - --roles
+      - "{{ item.role }}"
+      - "{{ '--tokens' if item.type == 'token' else '--users' }}"
+      - "{{ item.ugid }}"
+  loop: "{{ pve_host_acl_extra }}"
+  loop_control:
+    label: "{{ item.ugid }} {{ item.role }} on {{ item.path }}"
+  changed_when: true
+
 # Second factor: a realm requires it only once every user of that realm who
-# can log in with a password has enrolled, so a rebuilt host lets the owner
-# enrol first and the requirement switches on by itself on the next run.
+# can log in with a password has enrolled a TOTP, so a rebuilt host lets the
+# owner enrol first and the requirement switches on by itself on the next
+# run. Only TOTP counts: a realm that requires it refuses every other kind
+# of response except recovery keys, so a user holding only a hardware key or
+# only recovery keys would be locked out or left with a few logins.
 # Automation users of the pve realm hold no password (they are absent from
 # the realm's shadow file) and use tokens, which a realm requirement never
-# affects.
+# affects. A user with no factor at all cannot log in to a realm that
+# requires one: the way back is in docs/components/proxmox.md.
 - name: Read realms and second-factor entries
   ansible.builtin.command:
     cmd: pvesh get {{ item }} --output-format json
@@ -90,34 +190,40 @@
     - /access/tfa
   register: pve_host_tfa_read
   changed_when: false
+  check_mode: false
 
-- name: Users of the pve realm that hold a password (names only)
-  ansible.builtin.command:
-    cmd: "cut -d: -f1 /etc/pve/priv/shadow.cfg"
-  register: pve_host_shadow_users
-  changed_when: false
-
-- name: Realms where every password user has enrolled
+- name: Password users and their TOTP enrolment, per realm
   ansible.builtin.set_fact:
-    pve_host_tfa_ready: >-
-      {%- set out = [] -%}
-      {%- set enrolled = pve_host_tfa_read.results[1].stdout | from_json | selectattr('entries', 'defined')
-          | rejectattr('entries', 'eq', []) | map(attribute='userid') | list -%}
+    pve_host_tfa_state: >-
+      {%- set out = {} -%}
+      {%- set enrolled = [] -%}
+      {%- for u in pve_host_tfa_read.results[1].stdout | from_json -%}
+        {%- for e in u.entries | default([]) -%}
+          {%- if e.type == 'totp' and (e.enable | default(true)) and u.userid not in enrolled -%}
+            {%- set _ = enrolled.append(u.userid) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
       {%- set users = pve_host_access_read.results[1].stdout | from_json | selectattr('enable', 'eq', 1)
           | map(attribute='userid') | list -%}
       {%- set pve_pw = pve_host_shadow_users.stdout_lines | map('regex_replace', '$', '@pve') | list -%}
       {%- for realm in pve_tfa_realms -%}
         {%- set members = users | select('search', '@' ~ realm ~ '$') | list -%}
         {%- if realm == 'pve' -%}{%- set members = members | intersect(pve_pw) -%}{%- endif -%}
-        {%- if members | length > 0 and (members | difference(enrolled) | length == 0) -%}
-          {%- set _ = out.append(realm) -%}
-        {%- endif -%}
+        {%- set _ = out.update({realm: {'members': members, 'missing': members | difference(enrolled)}}) -%}
       {%- endfor -%}
       {{ out }}
 
+- name: Realms where every password user has enrolled a TOTP
+  ansible.builtin.set_fact:
+    pve_host_tfa_ready: >-
+      {{ pve_host_tfa_state | dict2items | selectattr('value.members') | rejectattr('value.missing') | map(attribute='key') | list }}
+
 - name: Realms not yet ready for the requirement
   ansible.builtin.debug:
-    msg: "Realm {{ item }}: a password user without a second factor exists; the requirement stays off until every one has enrolled."
+    msg: >-
+      Realm {{ item }}: no TOTP enrolled for {{ pve_host_tfa_state[item].missing | join(', ') | default('anyone', true) }};
+      the requirement stays off until every password user has one.
   loop: "{{ pve_tfa_realms | difference(pve_host_tfa_ready) }}"
 
 - name: Realms require a second factor

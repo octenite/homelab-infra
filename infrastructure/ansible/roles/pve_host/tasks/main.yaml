@@ -1,4 +1,7 @@
 ---
+- name: Leftover install media
+  ansible.builtin.import_tasks: install-media.yaml
+
 - name: Packages and repositories
   ansible.builtin.import_tasks: apt.yaml
 
@@ -10,6 +13,13 @@
 
 - name: Kernel, memory and logs
   ansible.builtin.import_tasks: system.yaml
+
+# Restarts requested so far (sshd, chrony, journald) happen now. The bridge
+# change that follows stops the play on purpose when it is not confirmed; a
+# failed host runs no handlers, and on the next run the files are already in
+# place, so nothing would ever restart those services.
+- name: Apply pending service restarts before the bridge change
+  ansible.builtin.meta: flush_handlers
 
 - name: Bridges
   ansible.builtin.import_tasks: network.yaml

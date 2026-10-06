@@ -1,0 +1,57 @@
+---
+# Last task file of the role. A hypervisor whose backups are not armed is
+# not converged, and a play that ends green would hide it: when the private
+# repository records an encryption key for the backup storage, this host had
+# backups before (it was rebuilt), and the play stops here, after everything
+# else has been applied, until `just pve-backup-init` has brought them back.
+- name: Read storage entries
+  ansible.builtin.command:
+    cmd: pvesh get /storage --output-format json
+  register: pve_host_storages_end
+  changed_when: false
+  check_mode: false
+
+- name: Backup storage present
+  ansible.builtin.set_fact:
+    pve_host_backup_ready: "{{ pve_host_storages_end.stdout | from_json | selectattr('storage', 'eq', pve_backup_storage) | list | length > 0 }}"
+
+- name: Recorded keys file in the private repository
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/../../../private/proxmox/backup-keys.sops.yaml"
+  delegate_to: localhost
+  become: false
+  register: pve_host_backup_keys_file
+  when: not pve_host_backup_ready
+
+- name: Is a key for this storage recorded
+  ansible.builtin.set_fact:
+    pve_host_backup_key_recorded: >-
+      {{ pve_host_backup_keys_file.stat.exists and
+         pve_backup_storage in (lookup('community.sops.sops', pve_host_backup_keys_file.stat.path) | from_yaml) }}
+  when: not pve_host_backup_ready
+  no_log: true
+
+- name: A host that had backups must get them back
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} has no storage entry {{ pve_backup_storage }}, but the private repository records an
+      encryption key for it: this host was rebuilt and its backups are NOT armed. Everything else in this play has
+      been applied. Run `just pve-backup-init` now; it creates the entry with the recorded key and arms the backups.
+  when: not pve_host_backup_ready and pve_host_backup_key_recorded
+
+- name: State of the nightly backup timer
+  ansible.builtin.systemd_service:
+    name: pbs-host-backup.timer
+  register: pve_host_backup_timer
+  when: pve_host_backup_ready
+
+- name: The nightly backup is armed
+  ansible.builtin.assert:
+    that:
+      - pve_host_backup_timer.status.UnitFileState == 'enabled'
+      - pve_host_backup_timer.status.ActiveState == 'active'
+    fail_msg: >-
+      pbs-host-backup.timer is {{ pve_host_backup_timer.status.UnitFileState }}/{{ pve_host_backup_timer.status.ActiveState }};
+      the nightly backup is not armed.
+    quiet: true
+  when: pve_host_backup_ready

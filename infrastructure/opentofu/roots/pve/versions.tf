@@ -8,7 +8,8 @@ terraform {
   required_version = "~> 1.13"
 
   backend "s3" {
-    # bucket, key, region and endpoints: private/opentofu/backend.hcl
+    # bucket, region and endpoints: private/opentofu/backend.hcl. The object
+    # key is <root>/terraform.tfstate, passed by scripts/tofu/run.sh.
     # Backblaze B2 is S3-compatible but not AWS: no STS, no account id, no
     # region validation, no conditional writes for a lock file.
     skip_credentials_validation = true

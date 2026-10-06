@@ -28,6 +28,11 @@ jobs:
         uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
       - name: Lint and policy tests
         run: just lint
+      # The workstation scripts change firewall rules, port forwards and
+      # virtual disks from an elevated prompt; the runner's PowerShell parses
+      # and analyses them here.
+      - name: PowerShell scripts
+        run: just powershell
       - name: Secret scan
         run: just secrets
 

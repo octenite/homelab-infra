@@ -4,5 +4,8 @@
   hosts: "{{ target | default('pbs') }}"
   gather_facts: true
   become: true
+  # A restart that an earlier task requested must happen even when a later
+  # task stops the play on purpose: on the next run nothing asks for it again.
+  force_handlers: true
   roles:
     - role: pbs_host

@@ -1,32 +1,36 @@
 # Task runner. `just` with no arguments lists the recipes.
 # Every recipe that CI runs is also runnable locally, with the same pinned tools.
+# Recipes are thin: anything longer than a line or two lives in scripts/, where
+# shellcheck and shfmt see it.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 default:
     @just --list
 
-# First-time setup of a working copy: tools, hooks, submodule.
+# First-time setup of a working copy: tools, hooks, and the private repository on its main branch.
 setup:
     mise install
     pre-commit install
     git submodule update --init
+    git -C private switch main
+    git -C private pull --ff-only
+
+# The private repository must be on main and in step with GitHub before secrets are written or a recovery starts.
+private-status:
+    bash scripts/ops/private-status.sh
 
 # All fast checks. The pre-commit hook and the CI lint job run this.
-lint: yaml shell actions policy ansible-lint tofu-lint
+lint: yaml shell actions policy templates ansible-lint tofu-lint
 
 # OpenTofu: formatting and validation of every root, without a backend.
 tofu-lint:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tofu fmt -check -recursive infrastructure/opentofu
-    for root in infrastructure/opentofu/roots/*/; do
-        ( cd "$root" && tofu init -backend=false -input=false >/dev/null && tofu validate )
-    done
+    bash scripts/tofu/lint.sh
 
 # Run OpenTofu for one root with credentials from the private repository. Example: just tofu pve plan
+[positional-arguments]
 tofu root *args:
-    bash scripts/tofu/run.sh {{root}} {{args}}
+    bash scripts/tofu/run.sh "$@"
 
 # Install the pinned Ansible collections into infrastructure/ansible/collections.
 ansible-deps:
@@ -36,54 +40,27 @@ ansible-deps:
 ansible-lint: ansible-deps
     cd infrastructure/ansible && ANSIBLE_CONFIG="$PWD/ansible.cfg" ansible-lint --profile production --offline playbooks roles
 
-# Open an operator session: SSH agent and decrypted age key, both in memory only.
+# Open an operator session: SSH agent and decrypted age key, both in memory only, both gone after 12 hours.
 session-start:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    umask 077
-    sock="$HOME/.ssh/homelab-agent.sock"
-    if ! SSH_AUTH_SOCK="$sock" ssh-add -l >/dev/null 2>&1; then
-        rm -f "$sock"
-        ssh-agent -a "$sock" >/dev/null
-        SSH_AUTH_SOCK="$sock" ssh-add "$HOME/.ssh/homelab_ed25519"
-    fi
-    mkdir -p /dev/shm/homelab-session
-    age -d -o /dev/shm/homelab-session/age.key "$HOME/.config/sops/age/operator.age"
-    echo "Session open. The decrypted key is in RAM only. Close it with: just session-end"
+    bash scripts/ops/session.sh start
 
-# Show one value from an encrypted file, using the open session. Example: just reveal private/proxmox/pve1.sops.yaml pve_root_password
-reveal file key="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
-    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
-    if [ -n "{{key}}" ]; then sops decrypt --extract '["{{key}}"]' "{{file}}"; echo; else sops decrypt "{{file}}"; fi
-
-# Store one secret value in an encrypted file, typed at a hidden prompt (never on a command line). Creates the file if needed. Example: just secret-set private/ansible/inventory/host_vars/pve1/secrets.sops.yaml pve_backup_ping_url
-secret-set file key:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    umask 077
-    case "{{file}}" in private/*.sops.yaml) ;; *) echo "the file must be private/....sops.yaml"; exit 1 ;; esac
-    read -rsp "value for {{key}}: " value; echo
-    [ -n "$value" ] || { echo "empty value, nothing stored"; exit 1; }
-    rel="{{file}}"; rel="${rel#private/}"
-    if [ -f "{{file}}" ]; then
-        [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
-        SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key sops set "{{file}}" "[\"{{key}}\"]" "$(printf '%s' "$value" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
-    else
-        mkdir -p "$(dirname "{{file}}")" /dev/shm/homelab-render
-        printf '%s: %s\n' "{{key}}" "$(printf '%s' "$value" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" > /dev/shm/homelab-render/new.yaml
-        ( cd private && sops encrypt --filename-override "$rel" /dev/shm/homelab-render/new.yaml > "$rel" )
-        rm -f /dev/shm/homelab-render/new.yaml
-    fi
-    unset value
-    echo "stored {{key}} in {{file}}; commit the private repository"
-
-# Close the operator session and remove every decrypted artefact from memory.
+# Close the operator session: age key removed, SSH key unloaded, agent stopped.
 session-end:
-    rm -rf /dev/shm/homelab-session /dev/shm/homelab-render
-    @echo "Session closed. The SSH agent keeps running until: ssh-agent -k, or the terminal closes."
+    bash scripts/ops/session.sh end
+
+# Is a session open?
+session-status:
+    bash scripts/ops/session.sh status
+
+# Show one value from an encrypted file. Examples: just reveal private/proxmox/pve1.sops.yaml pve_root_password ; just reveal private/proxmox/backup-keys.sops.yaml pbs-node2 key
+[positional-arguments]
+reveal file key="" subkey="":
+    bash scripts/ops/secret.sh reveal "$@"
+
+# Store one secret value in an encrypted file, typed at a hidden prompt. Creates the file if needed. Example: just secret-set private/ansible/inventory/host_vars/pve1/secrets.sops.yaml pve_backup_ping_url
+[positional-arguments]
+secret-set file key:
+    bash scripts/ops/secret.sh set "$@"
 
 # Read-only: compare network devices with Git. Example: just openwrt-check openwrt_routers
 openwrt-check target="openwrt_routers":
@@ -102,78 +79,52 @@ openwrt-check target="openwrt_routers":
 
 # Apply Git to a network device. Guarded: the device reverts by itself unless the change verifies.
 openwrt-apply target:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
-    cd infrastructure/ansible
-    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
-    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
-    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
-    ansible-playbook playbooks/openwrt-apply.yaml -e "target={{target}}"
+    bash scripts/ops/play.sh openwrt-apply -e "target={{target}}"
 
 # Verify a device against Git and disarm a pending revert (after an apply left unverified on purpose).
 openwrt-confirm target:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
-    cd infrastructure/ansible
-    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
-    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
-    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
-    ansible-playbook playbooks/openwrt-confirm.yaml -e "target={{target}}"
+    bash scripts/ops/play.sh openwrt-confirm -e "target={{target}}"
 
 # Install the authorised SSH keys from the inventory on network devices.
 openwrt-ssh-keys target="openwrt":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd infrastructure/ansible
-    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
-    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
-    ansible-playbook playbooks/openwrt-ssh-keys.yaml -e "target={{target}}"
+    bash scripts/ops/play.sh openwrt-ssh-keys -e "target={{target}}"
 
-# Configure the hypervisor from Git (idempotent). Example: just pve-apply
+# First contact with a freshly installed hypervisor (as root, once): operator account, keys, root login closed.
+pve-bootstrap:
+    bash scripts/ops/play.sh pve-bootstrap
+
+# Configure the hypervisor from Git (idempotent).
 pve-apply:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
-    cd infrastructure/ansible
-    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
-    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
-    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
-    ansible-playbook playbooks/pve.yaml
+    bash scripts/ops/play.sh pve
 
 # Issue the hypervisor API tokens missing on the host; their secrets go straight into the private repository (attended).
 pve-tokens:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
-    cd infrastructure/ansible
-    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
-    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
-    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
-    ansible-playbook playbooks/pve-tokens.yaml
+    bash scripts/ops/play.sh pve-tokens
 
-# Connect the hypervisor to the backup server once: token, storage entry, encryption key; secrets go to the private repository (attended).
+# Connect the hypervisor to the backup server, or repair that connection after a rebuild of either side (attended).
 pve-backup-init:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
-    cd infrastructure/ansible
-    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
-    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
-    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
-    ansible-playbook playbooks/pve-backup-init.yaml
+    bash scripts/ops/play.sh pve-backup-init
 
-# Configure the backup server VM from Git (idempotent).
+# Build unattended install media for the hypervisor. Examples: just pve-media validate ; just pve-media iso ; just pve-media prepare
+[positional-arguments]
+pve-media *args:
+    bash scripts/pve/build-install-media.sh "$@"
+
+# First contact with a freshly installed backup server (as root, once). Needs the management window (pbs-vm.ps1 -Manage).
+pbs-bootstrap:
+    bash scripts/ops/play.sh pbs-bootstrap
+
+# Configure the backup server VM from Git (idempotent). Needs the management window (pbs-vm.ps1 -Manage).
 pbs-apply:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
-    cd infrastructure/ansible
-    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
-    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
-    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
-    ansible-playbook playbooks/pbs.yaml
+    bash scripts/ops/play.sh pbs
+
+# Build the unattended install image for the backup server VM and copy it to the workstation.
+pbs-media:
+    bash scripts/pbs/build-install-iso.sh
+
+# Deny test of the backup path's fences from every vantage point (read-only probes). Fails when one probe disagrees.
+test-fences:
+    bash scripts/tests/backup-fences.sh
 
 # Open the router's LuCI through an SSH tunnel: https://localhost:8443 (Ctrl+C closes it).
 luci host="192.168.1.53":
@@ -186,6 +137,14 @@ yaml:
 # Shell scripts: static analysis and formatting. Untracked scripts count too.
 shell:
     files="$(git ls-files -co --exclude-standard '*.sh')"; if [ -n "$files" ]; then shellcheck $files; shfmt -d $files; fi
+
+# Answer-file templates: rendered with dummy values and parsed as TOML.
+templates:
+    python3 scripts/tests/render-templates.py
+
+# PowerShell scripts: parse and static analysis. Needs pwsh; CI has it, a workstation without it skips with a notice.
+powershell:
+    bash scripts/tests/powershell-lint.sh
 
 # GitHub Actions workflow syntax.
 actions:
@@ -207,7 +166,7 @@ scan:
     semgrep scan --config p/default --config p/secrets --config p/github-actions --metrics off --error --quiet --exclude private .
 
 # Everything CI runs.
-ci: lint secrets scan
+ci: lint powershell secrets scan
 
 # Format shell scripts in place.
 fmt:

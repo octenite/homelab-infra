@@ -54,7 +54,9 @@
 
     - name: Prove the operator account works before root is closed
       ansible.builtin.command:
-        cmd: ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p {{ ansible_port | default(22) }} {{ pbs_ops_user }}@{{ ansible_host }} sudo -n true
+        cmd: >-
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new {{ ansible_ssh_extra_args | default('') }}
+          -p {{ ansible_port | default(22) }} {{ pbs_ops_user }}@{{ ansible_host }} sudo -n true
       delegate_to: localhost
       changed_when: false
 
