@@ -56,11 +56,11 @@ A change to the bridges is guarded: the role parses the new interfaces file firs
 
 ## Backup
 
-The host configuration is reproducible from Git. A backup of `/etc` and `/etc/pve` to the backup server is added in Phase 3.5.
+The host configuration is reproducible from Git; what is not (the cluster filesystem's state, guest configurations, `/root`) is backed up nightly at 02:30 to the backup server VM by `pbs-host-backup.timer`, encrypted with the storage's key. The key lives on the host, in the private repository (`proxmox/backup-keys.sops.yaml`) and in the password manager. `pbs-failover.timer` keeps the storage entry pointed at whichever path to the backup server is up (direct link first, the workstation's port forward otherwise). Setup once: `just pve-backup-init`; then the host play.
 
 ## Restore
 
-Reinstall from the answer file, then run the two plays. Tokens are re-issued. See [DISASTER-RECOVERY.md](../../DISASTER-RECOVERY.md).
+Reinstall from the answer file, then run the two plays. Tokens are re-issued. Host state that is not in Git comes back with [restore-host-config.md](../runbooks/restore-host-config.md), after the encryption key has been put back from the private repository. See [DISASTER-RECOVERY.md](../../DISASTER-RECOVERY.md).
 
 ## Troubleshooting
 

@@ -119,6 +119,28 @@ pve-tokens:
     export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
     ansible-playbook playbooks/pve-tokens.yaml
 
+# Connect the hypervisor to the backup server once: token, storage entry, encryption key; secrets go to the private repository (attended).
+pve-backup-init:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
+    cd infrastructure/ansible
+    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
+    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
+    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
+    ansible-playbook playbooks/pve-backup-init.yaml
+
+# Configure the backup server VM from Git (idempotent).
+pbs-apply:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
+    cd infrastructure/ansible
+    export ANSIBLE_CONFIG="$PWD/ansible.cfg"
+    export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
+    export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
+    ansible-playbook playbooks/pbs.yaml
+
 # Open the router's LuCI through an SSH tunnel: https://localhost:8443 (Ctrl+C closes it).
 luci host="192.168.1.53":
     SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}" ssh -N -L 8443:127.0.0.1:443 root@{{host}}

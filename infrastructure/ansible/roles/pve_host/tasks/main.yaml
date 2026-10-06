@@ -23,6 +23,9 @@
 - name: Roles, users and access control
   ansible.builtin.import_tasks: access.yaml
 
+- name: Backups
+  ansible.builtin.import_tasks: backup.yaml
+
 # Restarts that a change requested are applied before the play ends, so a
 # failure in a later task cannot leave a service on its old configuration.
 - name: Apply pending service restarts

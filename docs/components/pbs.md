@@ -48,7 +48,7 @@ The datastore is the backup. Its content is reproducible from the sources plus t
 
 ## Restore
 
-See `docs/runbooks/restore-pbs.md` (added with the first restore test).
+Restoring data from this server: [restore-host-config.md](../runbooks/restore-host-config.md) (hypervisor configuration); guest restores follow in Phase 5 when the first VM exists. Rebuilding the server itself: `pbs-vm.ps1 -WipeSystem -Iso ...`, `-Eject`, the two plays, then `just pve-backup-init` on the hypervisor re-issues the token; the datastore disk is kept and re-registered with its content.
 
 ## Troubleshooting
 

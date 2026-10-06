@@ -1,0 +1,139 @@
+---
+# Backups to the backup server: client credentials, path failover and the
+# nightly host-configuration backup. The storage entry itself is created by
+# playbooks/pve-backup-init.yaml; until it exists this file only reports.
+- name: Read storage entries
+  ansible.builtin.command:
+    cmd: pvesh get /storage --output-format json
+  register: pve_host_storages
+  changed_when: false
+
+- name: Backup storage not initialised yet
+  ansible.builtin.debug:
+    msg: "Storage {{ pve_backup_storage }} does not exist; run `just pve-backup-init` first. Backup tasks skipped."
+  when: pve_host_storages.stdout | from_json | selectattr('storage', 'eq', pve_backup_storage) | list | length == 0
+
+- name: Backup client, failover and timers
+  when: pve_host_storages.stdout | from_json | selectattr('storage', 'eq', pve_backup_storage) | list | length > 0
+  block:
+    - name: Token secret from the private repository
+      community.sops.load_vars:
+        file: "{{ playbook_dir }}/../../../private/proxmox/tokens.sops.yaml"
+        name: pve_host_tokens
+      no_log: true
+
+    - name: Storage entry details
+      ansible.builtin.set_fact:
+        pve_host_backup_storage: "{{ pve_host_storages.stdout | from_json | selectattr('storage', 'eq', pve_backup_storage) | first }}"
+
+    - name: Configuration directory
+      ansible.builtin.file:
+        path: /etc/homelab
+        state: directory
+        mode: "0700"
+        owner: root
+        group: root
+
+    - name: Backup settings
+      ansible.builtin.copy:
+        dest: /etc/homelab/backup.conf
+        mode: "0600"
+        content: |
+          # Managed by Ansible (roles/pve_host).
+          PBS_STORE={{ pve_backup_storage }}
+          PBS_DATASTORE={{ pve_backup_datastore }}
+          PBS_USER={{ pve_backup_user }}!{{ pve_backup_token }}
+          PBS_PRIMARY={{ pve_backup_primary }}
+          PBS_FALLBACK={{ pve_backup_fallback }}
+          PBS_KEYFILE=/etc/pve/priv/storage/{{ pve_backup_storage }}.enc
+          PING_URL={{ pve_backup_ping_url }}
+
+    - name: Backup client credentials, root only
+      ansible.builtin.copy:
+        dest: /etc/homelab/backup.secret
+        mode: "0600"
+        content: |
+          PBS_PASSWORD={{ pve_host_tokens[pve_backup_user ~ '!' ~ pve_backup_token].secret }}
+          PBS_FINGERPRINT={{ pve_host_backup_storage.fingerprint }}
+      no_log: true
+
+    - name: Failover and backup scripts
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "/usr/local/bin/{{ item.dest }}"
+        mode: "0755"
+        owner: root
+        group: root
+      loop:
+        - src: pbs-target.sh
+          dest: pbs-target
+        - src: pbs-host-backup.sh
+          dest: pbs-host-backup
+        - src: pbs-host-restore.sh
+          dest: pbs-host-restore
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Services and timers
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item.name }}"
+        mode: "0644"
+        content: "{{ item.content }}"
+      loop:
+        - name: pbs-failover.service
+          content: |
+            [Unit]
+            Description=Keep the backup storage pointed at the path that is up
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/local/bin/pbs-target
+        - name: pbs-failover.timer
+          content: |
+            [Unit]
+            Description=Check the backup path every five minutes
+
+            [Timer]
+            OnBootSec=3min
+            OnUnitActiveSec=5min
+            AccuracySec=30s
+
+            [Install]
+            WantedBy=timers.target
+        - name: pbs-host-backup.service
+          content: |
+            [Unit]
+            Description=Back up the hypervisor configuration to the backup server
+            After=network-online.target pve-cluster.service
+            Wants=network-online.target
+
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/local/bin/pbs-host-backup
+        - name: pbs-host-backup.timer
+          content: |
+            [Unit]
+            Description=Nightly hypervisor configuration backup
+
+            [Timer]
+            OnCalendar={{ pve_backup_schedule }}
+            RandomizedDelaySec=10min
+            Persistent=true
+
+            [Install]
+            WantedBy=timers.target
+      loop_control:
+        label: "{{ item.name }}"
+      notify: Reload systemd units
+
+    - name: Units reloaded before the timers start
+      ansible.builtin.meta: flush_handlers
+
+    - name: Timers enabled
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - pbs-failover.timer
+        - pbs-host-backup.timer
