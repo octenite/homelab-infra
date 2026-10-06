@@ -101,3 +101,22 @@
               Issued {{ pve_tokens_missing | map(attribute='userid') | zip(pve_tokens_missing | map(attribute='tokenid'))
               | map('join', '!') | join(', ') }}; secrets stored in private/proxmox/tokens.sops.yaml,
               expiring {{ '%Y-%m-%d' | strftime(pve_tokens_expire_epoch | int) }}. Commit the private repository.
+
+      rescue:
+        # A token whose secret was not stored is useless and must not linger:
+        # remove what this run issued, so the next run issues it again.
+        - name: Remove the tokens issued by this run
+          ansible.builtin.command:
+            cmd: pveum user token remove {{ item.item.userid }} {{ item.item.tokenid }}
+          loop: "{{ pve_tokens_issued.results | default([]) | selectattr('rc', 'defined') | selectattr('rc', 'eq', 0) | list }}"
+          loop_control:
+            label: "{{ item.item.userid }}!{{ item.item.tokenid }}"
+          changed_when: true
+          failed_when: false
+
+        - name: Stop
+          ansible.builtin.fail:
+            msg: >-
+              {{ inventory_hostname }}: token issue failed at
+              "{{ ansible_failed_task.name | default('unknown') }}". Tokens issued by this run were removed;
+              nothing was stored. Fix the cause and run the play again.
