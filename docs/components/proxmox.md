@@ -56,7 +56,7 @@ A change to the bridges is guarded: the role parses the new interfaces file firs
 
 ## Backup
 
-The host configuration is reproducible from Git; what is not (the cluster filesystem's state, guest configurations, `/root`) is backed up nightly at 02:30 to the backup server VM by `pbs-host-backup.timer`, encrypted with the storage's key. The key lives on the host, in the private repository (`proxmox/backup-keys.sops.yaml`) and in the password manager. `pbs-failover.timer` keeps the storage entry pointed at whichever path to the backup server is up (direct link first, the workstation's port forward otherwise). Setup once: `just pve-backup-init`; then the host play.
+The host configuration is reproducible from Git; what is not (the cluster filesystem's state, guest configurations, `/root`) is backed up nightly at 02:30 to the backup server VM by `pbs-host-backup.timer`, encrypted with the storage's key. The key lives on the host, in the private repository (`proxmox/backup-keys.sops.yaml`) and in the password manager. The storage entry names the server `pbs1.internal`, a line in `/etc/hosts` that `pbs-failover.timer` points at whichever path is up (direct link first, then the workstation's addresses); PVE forbids changing a storage's server, so the name is what makes the failover possible. Setup once: `just pve-backup-init`; then the host play.
 
 ## Restore
 

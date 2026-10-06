@@ -25,8 +25,8 @@ if ((Get-ItemProperty -Path $key -Name fMinimizeConnections -ErrorAction Silentl
 # may power it down when it sees no traffic, which drops the link (seen
 # 2026-10-06: link up at 2.5 Gbit/s for 37 s, then down). Power management
 # off for it, whenever it is plugged in.
-$p2p = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object InterfaceDescription -match 'USB 2.5GbE|UE302' | Select-Object -First 1
-if ($p2p) {
+$p2pAdapters = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object InterfaceDescription -match 'USB 2.5GbE|UE302|Realtek PCIe GbE'
+foreach ($p2p in $p2pAdapters) {
     $pm = Get-NetAdapterPowerManagement -Name $p2p.Name
     if ($pm.AllowComputerToTurnOffDevice -ne 'Disabled' -or $pm.SelectiveSuspend -ne 'Disabled' -or $pm.DeviceSleepOnDisconnect -ne 'Disabled') {
         Disable-NetAdapterPowerManagement -Name $p2p.Name -NoRestart
@@ -35,7 +35,7 @@ if ($p2p) {
         $changes++
     }
 }
-else { Write-Host 'note:   2.5 GbE adapter not present; its power settings are applied on a run with it plugged in' }
+if (-not $p2pAdapters) { Write-Host 'note:   no direct-link adapter present; power settings are applied on a run with one plugged in' }
 
 if ($changes -eq 0) { Write-Host 'Workstation matches the policy. Nothing was changed.' }
 else { Write-Host "$changes change(s). The connection policy applies to the next link change; no reboot needed." }

@@ -34,6 +34,18 @@
         owner: root
         group: root
 
+    # The name the storage entry points at; the failover script owns the
+    # address, this only makes sure a line exists.
+    - name: Backup server name resolves
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '\s{{ pve_backup_name | regex_escape }}\s*$'
+        line: "{{ pve_backup_fallbacks | first }} {{ pve_backup_name }}"
+        backrefs: false
+        state: present
+      register: pve_host_backup_hosts
+      changed_when: pve_host_backup_hosts is changed and pve_host_backup_hosts.msg != 'line replaced'
+
     - name: Backup settings
       ansible.builtin.copy:
         dest: /etc/homelab/backup.conf
@@ -41,6 +53,7 @@
         content: |
           # Managed by Ansible (roles/pve_host).
           PBS_STORE={{ pve_backup_storage }}
+          PBS_HOSTNAME={{ pve_backup_name }}
           PBS_DATASTORE={{ pve_backup_datastore }}
           PBS_USER={{ pve_backup_user }}!{{ pve_backup_token }}
           PBS_PRIMARY={{ pve_backup_primary }}

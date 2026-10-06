@@ -109,6 +109,9 @@ pve_backup_user: pve1@pbs
 pve_backup_token: backup
 pve_backup_primary: 10.0.99.3
 pve_backup_fallbacks: "{{ pve_workstations }}"
+# The storage entry names the server by this hosts-file name; the failover
+# timer rewrites the line (PVE forbids changing a storage's server).
+pve_backup_name: pbs1.internal
 pve_backup_schedule: "*-*-* 02:30:00"
 # healthchecks.io ping on success; empty until the owner creates the account.
 pve_backup_ping_url: ""

@@ -126,20 +126,99 @@
       register: pve_backup_storages
       changed_when: false
 
-    - name: Create the storage entry
-      when: pve_backup_storages.stdout | from_json | selectattr('storage', 'eq', pve_backup_storage) | list | length == 0
+    - name: Existing storage entry, if any
+      ansible.builtin.set_fact:
+        pve_backup_existing: "{{ pve_backup_storages.stdout | from_json | selectattr('storage', 'eq', pve_backup_storage) | list | first | default({}) }}"
+
+    # The entry names the server by a hosts-file name, which the failover
+    # timer points at the path that is up (PVE forbids changing a storage's
+    # server afterwards). The line must exist before the entry is created.
+    - name: Backup server name resolves
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '\s{{ pve_backup_name | regex_escape }}\s*$'
+        line: "{{ pve_backup_fallbacks | first }} {{ pve_backup_name }}"
+        state: present
+      when: pve_backup_existing | length == 0 or pve_backup_existing.server != pve_backup_name
+
+    - name: Token secret
+      ansible.builtin.set_fact:
+        pve_backup_secret: >-
+          {{ (pve_backup_token_new.stdout | regex_search('\{[\s\S]*\}') | from_json).value if pve_backup_token_new is not skipped
+             else (lookup('community.sops.sops', pve_backup_tokens_file) | from_yaml)[pve_backup_auth_id].secret }}
+      no_log: true
+      when: pve_backup_existing | length == 0 or pve_backup_existing.server != pve_backup_name
+
+    - name: Move an entry that still names an address onto the name, keeping its key
+      when: pve_backup_existing | length > 0 and pve_backup_existing.server != pve_backup_name
       block:
-        - name: Token secret
-          ansible.builtin.set_fact:
-            pve_backup_secret: >-
-              {{ (pve_backup_token_new.stdout | regex_search('\{[\s\S]*\}') | from_json).value if pve_backup_token_new is not skipped
-                 else (lookup('community.sops.sops', pve_backup_tokens_file) | from_yaml)[pve_backup_auth_id].secret }}
+        # pvesm takes the key as a file path on the command line; the copy
+        # lives in a root-only file for the duration of the command.
+        - name: Keep the key aside
+          ansible.builtin.copy:
+            remote_src: true
+            src: /etc/pve/priv/storage/{{ pve_backup_storage }}.enc
+            dest: /root/.{{ pve_backup_storage }}.enc.keep
+            mode: "0600"
+            owner: root
+            group: root
           no_log: true
 
-        - name: Storage entry, fallback address first, encryption key generated
+        - name: Remove the entry (this deletes its key and password files)
+          ansible.builtin.command:
+            cmd: pvesm remove {{ pve_backup_storage }}
+          changed_when: true
+
+        - name: Entry again, on the name, with the same key
+          ansible.builtin.command:
+            argv:
+              - pvesm
+              - add
+              - pbs
+              - "{{ pve_backup_storage }}"
+              - --server
+              - "{{ pve_backup_name }}"
+              - --datastore
+              - "{{ pve_backup_datastore }}"
+              - --username
+              - "{{ pve_backup_auth_id }}"
+              - --password
+              - "{{ pve_backup_secret }}"
+              - --fingerprint
+              - "{{ pve_backup_fingerprint.stdout }}"
+              - --encryption-key
+              - /root/.{{ pve_backup_storage }}.enc.keep
+              - --content
+              - backup
+          changed_when: true
+          no_log: true
+
+        - name: Key copy removed
+          ansible.builtin.command:
+            cmd: shred -u /root/.{{ pve_backup_storage }}.enc.keep
+          changed_when: true
+
+      rescue:
+        - name: Key copy removed even on failure
+          ansible.builtin.command:
+            cmd: shred -u /root/.{{ pve_backup_storage }}.enc.keep
+          changed_when: true
+          failed_when: false
+
+        - name: Stop
+          ansible.builtin.fail:
+            msg: >-
+              Moving the storage entry failed at "{{ ansible_failed_task.name | default('unknown') }}".
+              The key is in private/proxmox/backup-keys.sops.yaml; recreate the entry by hand with it
+              (pvesm add pbs {{ pve_backup_storage }} --server {{ pve_backup_name }} ... --encryption-key "<key json>").
+
+    - name: Create the storage entry
+      when: pve_backup_existing | length == 0
+      block:
+        - name: Storage entry on the name, encryption key generated
           ansible.builtin.command:
             cmd: >-
-              pvesm add pbs {{ pve_backup_storage }} --server {{ pve_backup_fallbacks | first }}
+              pvesm add pbs {{ pve_backup_storage }} --server {{ pve_backup_name }}
               --datastore {{ pve_backup_datastore }} --username '{{ pve_backup_auth_id }}'
               --password '{{ pve_backup_secret }}' --fingerprint '{{ pve_backup_fingerprint.stdout }}'
               --encryption-key autogen --content backup
