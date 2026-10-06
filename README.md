@@ -17,11 +17,10 @@ On 2026-10-07: Phases 0, 1, 2 and 4 are closed. Phase 3 is built and reviewed, a
 | 3 | Hypervisor: unattended reinstall, hardening, exporters, access roles and tokens, backup server VM, nightly host backup, OpenTofu root | Built and reviewed; gate open, see [the record](docs/phases/phase-3.md) |
 | 5 to 15 | Cluster, platform, applications, recovery drill | Not started |
 
-What keeps the Phase 3 gate open (items G1 and G3 of the record; G2, G4, G5 and G6 closed on 2026-10-07):
+What keeps the Phase 3 gate open (item G3 of the record; the other five closed on 2026-10-07):
 
 | Item | Closed by |
 |---|---|
-| Deny test of the backup path's fences | passed with the management window open (51 of 51 probes). Still owed: the owner runs `scripts\node2\workstation.ps1` in an elevated PowerShell and restarts Windows, then closes the window with a plain run of `scripts\node2\pbs-vm.ps1`; `just test-fences` must pass again |
 | 24-hour soak of the direct 2.5 GbE link | the result after 2026-10-07 21:10 |
 
 Open in Phase 3 without gating it:
@@ -89,7 +88,6 @@ Every recipe that touches a host needs an operator session. A session holds the 
 | Apply Git to a network device, guarded by a revert | `just openwrt-apply <target>` |
 | Configure the hypervisor | `just pve-apply` |
 | Configure the backup server (needs the management window: `pbs-vm.ps1 -Manage`) | `just pbs-apply` |
-| Deny test of the backup path's fences | `just test-fences` |
 | OpenTofu for one root (works once the state backend is initialised) | `just tofu pve plan` |
 | Read one secret value; store one at a hidden prompt | `just reveal <file> <key>`, `just secret-set <file> <key>` |
 

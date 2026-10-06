@@ -2,7 +2,9 @@
 # The operator session: an SSH agent holding the lab key and the decrypted
 # age key, both in memory only, both gone after a fixed number of hours.
 #
-#   session.sh start     asks for the two passphrases; run again to extend
+#   session.sh start     asks for two passphrases, first the age key's, then
+#                        the SSH key's (two keys, two jobs: one decrypts the
+#                        secrets, one logs in to the hosts); run again to extend
 #   session.sh end       removes the age key, unloads the SSH key, stops the agent
 #   session.sh status
 #
@@ -62,7 +64,7 @@ start)
 	echo "$deadline" >"$DIR/expires"
 	setsid nohup bash "$0" expire "$deadline" >/dev/null 2>&1 &
 	echo "$!" >"$DIR/expiry.pid"
-	echo "Session open until $(date -d "@$deadline" '+%Y-%m-%d %H:%M'). The decrypted key is in memory only. Close it with: just session-end"
+	echo "Session open for $HOURS hours, until $(date -d "@$deadline" '+%Y-%m-%d %H:%M %Z'). The decrypted key is in memory only. Close it with: just session-end"
 	;;
 expire)
 	deadline=${2:?}
@@ -78,7 +80,7 @@ end)
 status)
 	if [ -r "$DIR/age.key" ]; then
 		until=""
-		[ -r "$DIR/expires" ] && until=" until $(date -d "@$(cat "$DIR/expires")" '+%Y-%m-%d %H:%M')"
+		[ -r "$DIR/expires" ] && until=" until $(date -d "@$(cat "$DIR/expires")" '+%Y-%m-%d %H:%M %Z')"
 		echo "age key: open$until"
 		if ! { [ -r "$DIR/expiry.pid" ] && kill -0 "$(cat "$DIR/expiry.pid")" 2>/dev/null; }; then
 			echo "WARNING: no expiry timer is running; close the session with: just session-end"

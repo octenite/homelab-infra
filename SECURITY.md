@@ -62,9 +62,9 @@ The register is the table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) sectio
 | # | Item | Closed by |
 |---|---|---|
 | 1 | The backup server's `root@pam` has no second factor (X18, backlog B24) | the owner enrols TOTP in the backup server's web interface |
-| 2 | The workstation's disks are not encrypted (X23). Nothing readable is stored in a file there, but WSL swap and the Windows pagefile can write the decrypted age key to the disk until the hardening is applied (B23): `scripts/node2/workstation.ps1` sets WSL swap to zero and encrypts the pagefile, and hibernation is already off | the owner runs the script in an elevated prompt and restarts Windows; disk encryption removes the exception |
-| 3 | The fence test passed on 2026-10-07 with the management window open (51 of 51 probes). It has not been run with the window closed (X25, X26) | the owner closes the window with a plain run of `scripts\node2\pbs-vm.ps1`; then `just test-fences` ends with "fences hold" |
-| 4 | The root cause of X25 stays in place until the next restart (B22). The owner decided on 2026-10-07 to restore one service per process; `scripts/node2/workstation.ps1` sets it | the owner runs the script in an elevated prompt and restarts Windows; then the fence test passes again |
+| 2 | The workstation's disks are not encrypted (X23). Nothing readable is stored in a file there, and since 2026-10-07 `scripts/node2/workstation.ps1` keeps the session key off the disk: no WSL swap, an encrypted pagefile, no hibernation. A stolen disk still yields the backup VM's system disk and the ciphertext | disk encryption removes the exception |
+| 3 | The fence test (X25, X26) passed on 2026-10-07 with the management window open and, after the restart, with it closed. Nothing runs it on a schedule | run `just test-fences` after every change to the workstation's network or firewall, and after every run of `pbs-vm.ps1` |
+| 4 | The root cause of X25 was removed on 2026-10-07: `scripts/node2/workstation.ps1` keeps Windows on one service per process. A tuning tool or a Windows change can raise the threshold again | the script reports and corrects it on every run; the block rules stay as the second layer |
 | 6 | The healthchecks ping URL appeared once in a session transcript | a new URL, stored with `just secret-set` |
 | 7 | No off-site copy of the backups exists (B25) | the off-site buckets, with the datasets of the later phases |
 | 8 | The backup server's traffic to the internet is not restricted (X7, B33) | an allow-list, or the owner's acceptance as it stands |
