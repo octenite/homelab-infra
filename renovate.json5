@@ -10,7 +10,7 @@
   // The private companion repository is pinned by hand.
   "git-submodules": { enabled: false },
   mise: {
-    managerFilePatterns: ["/(^|/)mise\\.ci\\.toml$/"],
+    managerFilePatterns: ["/(^|/)mise(\\.ci)?\\.toml$/"],
   },
   // Versions pinned in Ansible variables, marked with a "# renovate:" comment
   // on the line above (exporters on the hypervisor).

@@ -21,3 +21,5 @@ yq = "4.54.1"
 # Phase 2: network devices are configured with Ansible.
 "pipx:ansible-core" = "2.21.4"
 "pipx:ansible-lint" = "26.9.0"
+# Phase 3.6: OpenTofu state backend; Phase 5 adds the VMs.
+opentofu = "1.13.1"
