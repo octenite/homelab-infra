@@ -31,6 +31,9 @@ pve_p2p_network: 10.0.99.0/29
 # The owner's account is the only holder of Administrator; root@pam is
 # break-glass. Its password comes from the private inventory.
 pve_admin_user: octenite-admin@pve
+# Realms that require a second factor once all their users have enrolled.
+# Automation users hold no password and log in with tokens only.
+pve_tfa_realms: [pve, pam]
 pve_pool: talos
 pve_roles:
   TerraformProvisioner: >-
