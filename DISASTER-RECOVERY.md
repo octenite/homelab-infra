@@ -144,7 +144,7 @@ Targets of the design for the later phases, until measured: platform back in one
 | Opening a session from the recovery keys on a new workstation has no recipe | A recipe or a rehearsed runbook step |
 | [operator-key-compromised.md](docs/runbooks/operator-key-compromised.md), the runbook for a stolen workstation, is written but has never been drilled | A drill, recorded in the phase record |
 | The whole-database restore has only been checked in a scratch directory, never put in place on a host | A drill once the first guest exists (Phase 5) |
-| Recovery of the OpenTofu state from the kept copy has not been rehearsed | A rehearsal of [docs/runbooks/tofu-offline.md](docs/runbooks/tofu-offline.md) while the root holds only its marker |
+| Recovery of the OpenTofu state into a new bucket has not been rehearsed (part C of [docs/runbooks/tofu-offline.md](docs/runbooks/tofu-offline.md)); working from the kept copy and returning to the bucket has | A rehearsal with a second bucket |
 
 ## Drill log
 
@@ -153,6 +153,7 @@ Targets of the design for the later phases, until measured: platform back in one
 | 2026-10-06 | Planned reinstall of the running hypervisor: media built on the host, one-time boot into the installer, no hands on the machine | Passed, with the media script as it was that day. The script has changed since; no later run is recorded | About five minutes for the install |
 | 2026-10-06 | Restore of `etc.pxar` into a scratch directory, before and after the key rotation | Passed: five files compared equal to the live ones | - |
 | 2026-10-07 | Backup, then restore of all three archives into scratch directories; integrity check of the restored cluster database | Passed. The database was not put in place on a host | - |
+| 2026-10-07 | OpenTofu without its bucket: work from the kept state copy, change something, return to the bucket ([tofu-offline.md](docs/runbooks/tofu-offline.md), parts A and B) | Passed three times with the marker-only state. Three defects found and fixed: plain-text temporary files, a wrapper that ran in offline mode unnoticed, an override file that could be committed | About 20 minutes |
 | - | Hypervisor rebuilt after a loss, image built on the backup server VM | Not run | - |
 | - | Hypervisor installed by the manual fallback | Not run | - |
 | - | Backup server VM rebuilt, datastore kept | Not run | - |

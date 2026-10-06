@@ -13,6 +13,17 @@ export AWS_ACCESS_KEY_ID="$b2_key_id" AWS_SECRET_ACCESS_KEY="$b2_application_key
 export TF_VAR_state_passphrase="$tofu_state_passphrase"
 unset b2_key_id b2_application_key tofu_state_passphrase
 
+# OpenTofu's own temporary files are not encrypted. When a state is moved
+# between backends (`init -migrate-state`) it writes both states in the clear,
+# readable by every user, into the temporary directory while it asks its
+# question (seen in the rehearsal of 2026-10-07). The workstation's disk is
+# not encrypted (X23), so every command gets a private directory in memory,
+# removed when the command ends.
+umask 077
+TMPDIR=$(mktemp -d /dev/shm/tofu.XXXXXX)
+export TMPDIR
+trap 'rm -rf "$TMPDIR"' EXIT
+
 eval "set -- $TOFU_ARGS"
 cd "$TOFU_ROOT_DIR"
 
@@ -55,7 +66,8 @@ copy_state() {
 case "$1" in
 init)
 	shift
-	exec tofu init -backend-config="$TOFU_BACKEND" -backend-config="key=$STATE_KEY" "$@"
+	# Not exec'd, here and below: the trap above has to run afterwards.
+	tofu init -backend-config="$TOFU_BACKEND" -backend-config="key=$STATE_KEY" "$@"
 	;;
 apply | destroy | import | state | taint | untaint | refresh)
 	# Anything here may have changed the state, even when it fails half-way.
@@ -68,6 +80,6 @@ apply | destroy | import | state | taint | untaint | refresh)
 	exit "$rc"
 	;;
 *)
-	exec tofu "$@"
+	tofu "$@"
 	;;
 esac

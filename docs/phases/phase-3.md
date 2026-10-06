@@ -156,7 +156,7 @@ Run on 2026-10-07, after the owner named the bucket. The backend settings are in
 | `just tofu pve state list` | `terraform_data.root` |
 | The bucket key's scope | A call that lists all buckets is refused (AccessDenied). The state bucket holds one object, `pve/terraform.tfstate` |
 
-Not done: a rehearsal of `docs/runbooks/tofu-offline.md` with the kept copy, and a rotation of the state passphrase (backlog B29).
+Added after the phase closed, 2026-10-07: `docs/runbooks/tofu-offline.md`, parts A and B, was rehearsed three times with the kept copy; its record and the three changes it led to are in the runbook. Not done: a rotation of the state passphrase (backlog B29), and the runbook's part C (a new bucket).
 
 ## Incidents
 

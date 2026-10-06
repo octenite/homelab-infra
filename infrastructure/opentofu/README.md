@@ -54,7 +54,7 @@ After every command that can change state, the wrapper fetches the object from t
 
 - The copy is accepted only when it carries an `encrypted_data` field and no `resources` field. Otherwise the wrapper prints a warning and leaves the previous copy as it was.
 - The private repository's guard (`scripts/check-encrypted.sh` there) refuses anything in that directory that is not an encrypted state.
-- The copy is usable offline with a local backend and the same passphrase: [tofu-offline.md](../../docs/runbooks/tofu-offline.md). The wrapper has no command for that. The runbook's steps are manual.
+- The copy is usable offline with a local backend and the same passphrase: [tofu-offline.md](../../docs/runbooks/tofu-offline.md). The wrapper has no command for that, and it refuses to run while a root holds a backend override. The runbook's steps are manual; parts A and B were rehearsed on 2026-10-07.
 
 ## Checks
 
@@ -62,4 +62,4 @@ After every command that can change state, the wrapper fetches the object from t
 just tofu-lint
 ```
 
-It runs `scripts/tofu/lint.sh`: `tofu fmt -check -recursive` over `infrastructure/opentofu`, then `tofu init -backend=false` and `tofu validate` in every root. It needs no backend, no session and no secret. It is part of `just lint`, which the CI lint job runs. The pre-commit hook runs only `tofu fmt -check` on the changed `.tf` files.
+It runs `scripts/tofu/lint.sh`: it fails when a backend override file exists anywhere under `infrastructure/opentofu` (a tool of the offline runbook that must never be committed), then `tofu fmt -check -recursive` over `infrastructure/opentofu`, then `tofu init -backend=false` and `tofu validate` in every root. It needs no backend, no session and no secret. It is part of `just lint`, which the CI lint job runs. The pre-commit hook runs only `tofu fmt -check` on the changed `.tf` files.
