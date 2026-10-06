@@ -65,7 +65,7 @@ Owner of every row: the repository owner, who is the only administrator.
 
 ## 5. OpenTofu state
 
-The backend is not initialised yet: `private/opentofu/backend.hcl` (bucket, region, endpoint; identifiers, not secrets) does not exist, and no state exists. See `docs/phases/phase-3.md`, gate item G2.
+The backend was initialised on 2026-10-07: `private/opentofu/backend.hcl` holds bucket, region and endpoint (identifiers, not secrets), and the state round trip passed. See `docs/phases/phase-3.md`, "OpenTofu state round trip".
 
 | Secret | Created | Lives in | Used by | Rotation | If it leaks |
 |---|---|---|---|---|---|
@@ -328,7 +328,7 @@ It was done once, on 2026-10-06, while the datastore held two test snapshots (`d
 | # | Item | Who | Closes when |
 |---|---|---|---|
 | O1 | The two runbooks for a lost or stolen workstation are written and not rehearsed: [restore-workstation.md](../runbooks/restore-workstation.md), whose section 3 opens a session from the recovery keys on a replacement workstation, and [operator-key-compromised.md](../runbooks/operator-key-compromised.md), which [bootstrap-keys.md](../runbooks/bootstrap-keys.md) names for a stolen laptop | Engineer | The first was rehearsed (backlog B30) |
-| O2 | Password-manager copies not confirmed: the pbs1 root password and the OpenWrt root passwords. Confirmed by the owner on 2026-10-06: the backup encryption key (entry replaced after the rotation) and the TOTP recovery keys of both hypervisor accounts | Owner | The owner confirms each remaining entry |
+| O2 | Password-manager copies not confirmed: the OpenWrt root passwords. Confirmed by the owner: the backup encryption key (2026-10-06, entry replaced after the rotation, and again 2026-10-07), the TOTP recovery keys of both hypervisor accounts (2026-10-06) and the pbs1 root password (2026-10-07) | Owner | The owner confirms the remaining entry |
 | O3 | The healthchecks.io ping URL appeared once in a session transcript | Owner, then engineer | R9 done |
 | O4 | `root@pam` on pbs1 has no second factor | Owner | Backlog B24 |
 | O5 | No rotation path for the state passphrase | Engineer | Backlog B29 |

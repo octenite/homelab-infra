@@ -6,7 +6,7 @@ Roots under `roots/` are applied one at a time, from the workstation, with a ses
 |---|---|---|
 | `pve` | Everything on the hypervisor: a marker today, the Talos VMs from Phase 5 | Phase 3.6 |
 
-Status: the backend is not initialised yet. `private/opentofu/backend.hcl` does not exist: the owner still has to name the bucket and its endpoint (Phase 3.6). Until then `just tofu` stops and prints the keys the file needs. No apply and no state round trip has run.
+Status: the backend was initialised on 2026-10-07 and the state round trip passed (init, apply, encrypted copy kept, second plan without changes; `docs/phases/phase-3.md`). The root `pve` holds only its marker. Without `private/opentofu/backend.hcl` the wrapper stops and prints the keys the file needs.
 
 ## State
 

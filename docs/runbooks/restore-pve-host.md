@@ -316,7 +316,7 @@ A rebuilt host does not require a second factor until every password user has en
 | `ssh ops@10.0.10.10 sudo systemctl start pbs-host-backup.service`, then `ssh ops@10.0.10.10 sudo pbs-host-restore list` | A new snapshot from this minute |
 | `ssh ops@10.0.10.10 sudo pve-firewall status` | Enabled and running |
 | `ssh root@10.0.10.10` | `Permission denied` |
-| `just test-fences` | `fences hold: <n> probes, all as expected`. A passing run on the present workstation is still open ([phase-3.md](../phases/phase-3.md)) |
+| `just test-fences` | `fences hold: <n> probes, all as expected`. The run of 2026-10-07 passed with the management window open ([phase-3.md](../phases/phase-3.md)) |
 
 Record the date, the path taken and the time in the drill log of [DISASTER-RECOVERY.md](../../DISASTER-RECOVERY.md).
 
