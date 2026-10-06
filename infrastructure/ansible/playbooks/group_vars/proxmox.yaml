@@ -112,6 +112,10 @@ pve_backup_fallbacks: "{{ pve_workstations }}"
 # The storage entry names the server by this hosts-file name; the failover
 # timer rewrites the line (PVE forbids changing a storage's server).
 pve_backup_name: pbs1.internal
+# The workstation's USB adapter drops an idle direct link after about ten
+# seconds (B21); one packet per second is the cadence proven to keep it up
+# (five seconds was not enough).
+pve_backup_keepalive_seconds: 1
 pve_backup_schedule: "*-*-* 02:30:00"
 # healthchecks.io ping on success; empty until the owner creates the account.
 pve_backup_ping_url: ""
