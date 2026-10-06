@@ -144,7 +144,6 @@ Targets of the design for the later phases, until measured: platform back in one
 | Opening a session from the recovery keys on a new workstation has no recipe | A recipe or a rehearsed runbook step |
 | [operator-key-compromised.md](docs/runbooks/operator-key-compromised.md), the runbook for a stolen workstation, is written but has never been drilled | A drill, recorded in the phase record |
 | The whole-database restore has only been checked in a scratch directory, never put in place on a host | A drill once the first guest exists (Phase 5) |
-| The deny test of the backup path's fences passed with the management window open (2026-10-07), not yet with it closed | `just test-fences` ending with `fences hold` after a plain run of `pbs-vm.ps1`, recorded in [docs/phases/phase-3.md](docs/phases/phase-3.md) |
 | Recovery of the OpenTofu state from the kept copy has not been rehearsed | A rehearsal of [docs/runbooks/tofu-offline.md](docs/runbooks/tofu-offline.md) while the root holds only its marker |
 
 ## Drill log

@@ -1,6 +1,6 @@
 # Phase 3 gate record: hypervisor
 
-Status: **in progress on 2026-10-07; the gate is not closed.** Everything in `phase-3-plan.md` is built. Both host plays were applied on 2026-10-07 and a second run of each changes nothing. The deny test of the backup path passes with the management window open, and the OpenTofu state round trip passed. Two items still gate the phase: the deny test with the window closed and after the restart that the workstation hardening needs (G1), and the result of the 24-hour soak of the direct link (G3). They are listed under "What still gates closing the phase". Dates are 2026-10-06 unless stated.
+Status: **in progress on 2026-10-07; the gate is not closed.** Everything in `phase-3-plan.md` is built. Both host plays were applied on 2026-10-07 and a second run of each changes nothing. The deny test of the backup path passes with the management window open, and the OpenTofu state round trip passed. The workstation hardening is applied and the deny test passed again after the restart, with the window closed. One item still gates the phase: the result of the 24-hour soak of the direct link (G3). It is listed under "What still gates closing the phase". Dates are 2026-10-06 unless stated.
 
 In this record "engineer" is whoever runs the plays from the workstation with a session open. The backlog calls the same role "operator".
 
@@ -12,7 +12,7 @@ In this record "engineer" is whoever runs the plays from the workstation with a 
 | 3.2 Reinstall | Host answers at 10.0.10.10 with a new host key; root logs in with the lab key only; layout as planned | **Done.** Changed: root has no SSH login at all after the bootstrap play. The account `ops` is the only SSH login |
 | 3.3 Measurements | Recorded here; worker VM size decided | **Done.** Idle memory measured again on the finished host on 2026-10-07 |
 | 3.4 Ansible | Each play idempotent; deny tests from the servers and trusted networks; host without guests at or under 1.5 GiB | **Done** for both plays. Deny tests from the management and trusted networks passed. The servers network has no guest yet: deferred to Phase 5 (backlog B26). The memory gate is missed: 1.85 GiB used on the finished host, so the worker VM is created at 8.5 GiB, as the design foresaw. Changed: the host serves time to the two Talos node addresses, not to the whole servers network |
-| 3.5 Backup server VM, first backup, restore | Restore verified; the backup job pings the dead-man's switch | **Built, restore verified.** The owner confirmed the notifications. The pings succeed as seen from the host. Open: the deny test with the management window closed (G1). Changed: the VM is Generation 1 (X7) and is started by hand. The fallback is the workstation's forward of port 8007 over the home network (E14) |
+| 3.5 Backup server VM, first backup, restore | Restore verified; the backup job pings the dead-man's switch | **Built, restore verified.** The owner confirmed the notifications. The pings succeed as seen from the host. The deny test passed with the management window open and, after the restart, with it closed. Changed: the VM is Generation 1 (X7) and is started by hand. The fallback is the workstation's forward of port 8007 over the home network (E14) |
 | 3.6 OpenTofu state backend | Init, apply and state pull round trip | **Done** on 2026-10-07: init, apply, encrypted copy kept, second plan without changes. Changed: the kept state copy is the bucket's object as stored (ciphertext), not the output of `tofu state pull`, which is plaintext |
 | 3.7 2.5 GbE link | Link up at 2.5 Gbit/s, or fallback F1 recorded | **Link up at 2.5 Gbit/s**, held by a keep-alive. The 24-hour soak ends 2026-10-07 21:10 (G3). F1 was not needed |
 
@@ -55,7 +55,7 @@ Resolved in two steps on 2026-10-06.
 1. The first cable had only two working pairs: 100 Mbit/s on the laptop's built-in port. A new cable gave 2.5 Gbit/s on the USB adapter.
 2. The adapter still dropped the link 10 to 50 s after the last frame and never brought it back by itself. It powers its PHY down when idle. Proof: the link held for ten minutes under one ping per second and fell ten seconds after the pings stopped.
 
-The hypervisor now runs `pbs-keepalive.service`: one small packet per second towards the backup server. Five seconds apart was too slow; the link fell again. The link has been up at 2.5 Gbit/s without a drop since the keep-alive was installed at 21:10. The 24-hour soak ends on 2026-10-07 at 21:10 and its result is not recorded yet (G3). The search for a driver setting is backlog B21.
+The hypervisor now runs `pbs-keepalive.service`: one small packet per second towards the backup server. Five seconds apart was too slow; the link fell again. The link has been up at 2.5 Gbit/s since the keep-alive was installed at 21:10, with one explained interruption: the workstation was restarted on 2026-10-07 at 02:21, the link fell at 02:21:23 and came back by itself at 02:21:42, at 2.5 Gbit/s, and the name `pbs1.internal` still pointed at the direct link afterwards. The 24-hour soak ends on 2026-10-07 at 21:10 and its result is not recorded yet (G3). The search for a driver setting is backlog B21.
 
 ## Host firewall tests
 
@@ -129,7 +129,16 @@ Two read-only reviews ran after the build. The first covered everything built in
 | Hypervisor, router, WSL and the backup VM: the other 39 probes | The backup server, the workstation's home addresses, the hypervisor, the lab through the VM's NAT leg, the internet | As the script states | Pass | Pass. The backup VM still reaches a public resolver and the package mirror through its NAT leg |
 | Total | | Every probe as expected; the script ends with "fences hold" | **12 of 51 probes disagree.** Ten are the forwarded ports 8007 and 2222 answering a source that no rule admits. Two are Windows' own ports 135 and 2179 answering the direct link and the backup VM. The new block rules for those two source ranges cover all twelve | **Fences hold: 51 probes, all as expected.** Run on 2026-10-07 after the owner's elevated run of the script, management window open |
 
-The "After" run had the management window open. The run with the window closed, and one after the restart that restores one service per process, are still owed (G1).
+The "After" run had the management window open.
+
+Second run, 2026-10-07 02:26, after the owner had run `scripts\node2\workstation.ps1`, restarted Windows, started the VM and closed the window with a plain run of `pbs-vm.ps1`:
+
+| State checked | Result |
+|---|---|
+| Service split threshold | 3670016 KB, the Windows default. The port-forward service (`iphlpsvc`) runs alone in its process |
+| Page file encryption | On |
+| WSL | 4919 MiB memory, no swap |
+| `just test-fences`, management window closed | **Fences hold: 22 probes, all as expected.** Port 2222 is closed from every vantage point. The 29 probes from inside the backup VM are skipped, because they need the window; they passed in the run before the restart, and the rules they test did not change |
 
 ## OpenTofu state round trip (step 3.6)
 
@@ -186,9 +195,9 @@ These calls predate the removal of `Sys.Modify` and the narrower network grant. 
 
 | # | Gate item | Who | Closes when |
 |---|---|---|---|
-| G1 | Deny test of the backup path | Owner, then engineer | The owner runs `powershell -ExecutionPolicy Bypass -File scripts\node2\pbs-vm.ps1 -Manage` in an elevated prompt. The engineer runs `just test-fences`; it must end with "fences hold" and the "After" column above is filled. The owner then closes the window with a plain run of the script, and a second `just test-fences` passes with the window closed. **State 2026-10-07:** the run with the window open passed, 51 of 51. Still owed: the owner runs `scripts\node2\workstation.ps1` elevated and restarts Windows, starts the VM and closes the window with a plain run of `pbs-vm.ps1`; then `just test-fences` passes once more |
+| G1 | Deny test of the backup path | Owner, then engineer | The owner runs `powershell -ExecutionPolicy Bypass -File scripts\node2\pbs-vm.ps1 -Manage` in an elevated prompt. The engineer runs `just test-fences`; it must end with "fences hold" and the "After" column above is filled. The owner then closes the window with a plain run of the script, and a second `just test-fences` passes with the window closed. **Closed 2026-10-07:** 51 of 51 with the window open; 22 of 22 with the window closed, after the restart that restored one service per process |
 | G2 | OpenTofu state backend and round trip | Owner, then engineer | The owner gives the bucket name, region and endpoint. They go into `private/opentofu/backend.hcl`. Then `just tofu pve init` and `just tofu pve apply` succeed, the wrapper reports "state copy saved (ciphertext, as stored in the bucket)", the copy is committed to the private repository, and a following `just tofu pve plan` reports no changes. **Closed 2026-10-07** |
-| G3 | 24-hour soak of the direct link | Engineer | After 2026-10-07 21:10: no link loss on `enp2s0` since 2026-10-06 21:10, and `ethtool enp2s0` on pve1 shows 2500 Mb/s. The result is recorded under "Direct link". If it failed, fallback F1 is recorded instead |
+| G3 | 24-hour soak of the direct link | Engineer | After 2026-10-07 21:10: no link loss on `enp2s0` since 2026-10-06 21:10 other than a restart of the workstation, and `ethtool enp2s0` on pve1 shows 2500 Mb/s. The result is recorded under "Direct link". If it failed, fallback F1 is recorded instead |
 | G4 | Idle memory of the finished host | Engineer | `free -m` on pve1 without guests is recorded under "Measurements" and the budget is re-based on it. **Closed 2026-10-07** |
 | G5 | Dead-man's switch proven | Owner, then engineer | The owner regenerates the ping URL in healthchecks.io. It is stored and deployed (`docs/security/secrets-register.md`, R9). After the next backup the owner confirms that the check shows the ping. **Closed 2026-10-07** on the host's evidence (see "Apply and verification"); the owner waived the regeneration |
 | G6 | Notifications received | Owner | The owner confirms that the test messages of pve1 and pbs1 arrived in Telegram. **Closed 2026-10-07** |
@@ -198,8 +207,8 @@ These calls predate the removal of `Sys.Modify` and the narrower network grant. 
 | Item | Who | Where it is tracked |
 |---|---|---|
 | Second factor for `root@pam` on pbs1 | Owner | Backlog B24 |
-| Restore the default service-process split on the workstation | Decided yes (2026-10-07). In `scripts/node2/workstation.ps1`; the owner runs it elevated and restarts Windows | Backlog B22 |
-| Swap, pagefile and hibernation hardening for the session key (X23) | Decided yes (2026-10-07). Same script and the same restart; WSL swap applies after `wsl --shutdown` | Backlog B23 |
+| Restore the default service-process split on the workstation | Done 2026-10-07: set by `scripts/node2/workstation.ps1`, in effect since the restart | Backlog B22, closed |
+| Swap, pagefile and hibernation hardening for the session key (X23) | Done 2026-10-07: WSL swap off, page file encrypted, hibernation off; in effect since the restart | Backlog B23, closed |
 | Off-site copy of the backups; the 3-2-1 rule is not met | Engineer proposes | Backlog B25 |
 | Deny test from the servers network | Engineer | Backlog B26, Phase 5 |
 | Password-manager copies to confirm: the OpenWrt root passwords | Owner | Secrets register, O2 |
