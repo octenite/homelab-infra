@@ -13,6 +13,10 @@ pve_host_ntp_fallback: []
 pve_host_ntp_allow:
   - "{{ pve_servers_network }}"
 
+# Network: a change to the bridges is reverted by the host itself unless the
+# play confirms it within this many seconds.
+pve_host_net_revert_seconds: 180
+
 # Memory: swap only as a safety net; KSM off (side channel, hidden pressure).
 pve_host_swappiness: 10
 
@@ -41,6 +45,6 @@ pve_host_fw_rules:
     proto: udp
     dport: "123"
 
-# Exporters, bound to the management address only.
-pve_host_node_exporter_version: 1.12.1
-pve_host_smartctl_exporter_version: 0.14.0
+# Thin-pool usage for node_exporter's textfile collector, refreshed on a timer.
+pve_host_textfile_dir: /var/lib/node_exporter
+pve_host_lvm_metrics_interval: 5min

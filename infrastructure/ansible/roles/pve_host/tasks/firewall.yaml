@@ -30,11 +30,14 @@
         IN ACCEPT -source {{ pve_router }} -p icmp -log nolog # router may ping
         IN ACCEPT -source {{ pve_workstation }} -p icmp -log nolog # workstation may ping
         IN ACCEPT -source {{ pve_workstation }} -p tcp -dport 3128,5900:5999 -log nolog # E2 workstation: console ports
-        # pve-firewall appends built-in rules that admit the host's own subnet
-        # (the "management" set, always extended with the local network) to SSH,
-        # the web interface, the console ports and migration. Host rules run
-        # first, so the rest of the management VLAN is dropped here (X10).
-        IN DROP -source {{ pve_mgmt_network }} -p tcp -dport 22,8006,3128,5900:5999,60000:60050 -log nolog # X10 no rights by VLAN membership
+        # pve-firewall appends built-in rules that admit the host's own subnets
+        # (the "management" set, always extended with every local network) to
+        # SSH, the web interface, the console ports and migration. Host rules
+        # run first, so the rest of the management VLAN and the whole direct
+        # link are dropped here (X10).
+        {% for n in [pve_mgmt_network, pve_p2p_network] %}
+        IN DROP -source {{ n }} -p tcp -dport 22,8006,3128,5900:5999,60000:60050 -log nolog # X10 no rights by subnet membership
+        {% endfor %}
 
 - name: Read the current firewall files
   ansible.builtin.slurp:

@@ -64,10 +64,14 @@ config dhcp 'wan'
 	option dhcpv4 'disabled'
 
 {# The firewall admits the operator workstation by address (E1 to E3), so
-   that address is bound to its network card. #}
+   that address is bound to its network cards: the dock port and the Wi-Fi
+   adapter, which are never up at the same time (dnsmasq documents a host
+   entry with several addresses for exactly this case). #}
 config host 'workstation'
 	option name 'workstation'
-	list mac '{{ openwrt_workstation_mac }}'
+{% for mac in openwrt_workstation_macs %}
+	list mac '{{ mac }}'
+{% endfor %}
 	option ip '192.168.1.196'
 
 {# The ESP32 keeps one address in the IoT network, so shortcuts and, later,

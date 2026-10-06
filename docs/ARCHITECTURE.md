@@ -294,7 +294,7 @@ Levers, in order: trim `talos-cp-1` to 2.5 GiB and give the worker 9.5 (+0.5 GiB
 | VLAN | Zone | Subnet | Router | Members |
 |---|---|---|---|---|
 | 10 | mgmt | 10.0.10.0/24 | .1 | AP1 .2, AP2 .3, pve1 .10; static only, no DHCP pool |
-| 20 | trusted | **192.168.1.0/24 kept** | .53 (unchanged) | laptops, phones, Node 2 at .196 (MAC-bound static lease), SSID `home` |
+| 20 | trusted | **192.168.1.0/24 kept** | .53 (unchanged) | laptops, phones, Node 2 at .196 (static lease bound to its dock port and its Wi-Fi adapter, never both up; owner decision 2026-10-06), SSID `home` |
 | 30 | remote | 10.0.30.0/24 | - | reserved for optional Phase R |
 | 40 | dmz | 10.0.40.0/24 | - | reserved, not built: under CGNAT there is no inbound path to place in a DMZ |
 | 50 | servers | 10.0.50.0/24 | .1 | Talos VMs, API VIP, LoadBalancer pool |

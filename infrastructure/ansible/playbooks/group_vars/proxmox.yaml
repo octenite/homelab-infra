@@ -16,3 +16,21 @@ pve_router: 10.0.10.1
 pve_talos_nodes: [10.0.50.11, 10.0.50.21]
 pve_talos_workers: [10.0.50.21, 10.0.50.22]
 pve_servers_network: 10.0.50.0/24
+
+# Bridges. Port names are path-based on this board: enp3s0 is the onboard
+# gigabit port, enp2s0 the 2.5 GbE card. The direct link to the workstation
+# is 10.0.99.0/29 (host .1, workstation .2, backup server VM .3).
+pve_nic_lan: enp3s0
+pve_nic_p2p: enp2s0
+pve_guest_vlans: [50]
+pve_p2p_address: 10.0.99.1/29
+pve_p2p_network: 10.0.99.0/29
+
+# Exporters (prometheus.prometheus roles), management address only.
+# renovate: datasource=github-releases depName=prometheus/node_exporter
+node_exporter_version: 1.12.1
+node_exporter_web_listen_address: "{{ pve_mgmt_address }}:9100"
+node_exporter_textfile_dir: /var/lib/node_exporter
+# renovate: datasource=github-releases depName=prometheus-community/smartctl_exporter
+smartctl_exporter_version: 0.14.0
+smartctl_exporter_web_listen_address: "{{ pve_mgmt_address }}:9633"

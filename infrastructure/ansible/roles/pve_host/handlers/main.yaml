@@ -18,6 +18,19 @@
     name: systemd-journald
     state: restarted
 
+- name: Reload systemd units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+# On the first run the unit does not exist yet; the exporter role creates and
+# starts it afterwards with the drop-in already in place.
+- name: Restart smartctl_exporter
+  ansible.builtin.systemd_service:
+    name: smartctl_exporter
+    state: restarted
+  register: pve_host_smartctl_restart
+  failed_when: pve_host_smartctl_restart.failed and ('Could not find' not in pve_host_smartctl_restart.msg | default(''))
+
 - name: Reload pve-firewall
   ansible.builtin.command:
     cmd: pve-firewall restart

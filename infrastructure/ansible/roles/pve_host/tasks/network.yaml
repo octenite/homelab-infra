@@ -1,0 +1,123 @@
+---
+# Bridges: vmbr0 on the onboard port carries the host address untagged and
+# the guest VLANs tagged; vmbr1 on the 2.5 GbE port carries the direct link
+# to the workstation and no guests.
+#
+# A change to the interfaces file is applied detached from the SSH session,
+# with a revert timer armed first. If the host does not answer on its
+# management address again in time, or a check below fails, nothing disarms
+# the timer and the host restores the previous file by itself.
+- name: Wanted interfaces file
+  ansible.builtin.set_fact:
+    pve_host_net_wanted: "{{ lookup('ansible.builtin.template', 'interfaces.j2') }}"
+
+- name: Read the current interfaces file
+  ansible.builtin.slurp:
+    src: /etc/network/interfaces
+  register: pve_host_net_current
+
+- name: Apply the network change with automatic revert
+  when: (pve_host_net_current.content | b64decode) != pve_host_net_wanted
+  block:
+    - name: Staging directory in RAM
+      ansible.builtin.file:
+        path: /run/homelab-net
+        state: directory
+        mode: "0700"
+        owner: root
+        group: root
+
+    - name: Stage the wanted file
+      ansible.builtin.copy:
+        dest: /run/homelab-net/interfaces.new
+        content: "{{ pve_host_net_wanted }}"
+        mode: "0644"
+
+    - name: Parse the wanted file before touching anything
+      ansible.builtin.command:
+        cmd: ifup --syntax-check --all -i /run/homelab-net/interfaces.new
+      changed_when: false
+
+    - name: Revert script
+      ansible.builtin.copy:
+        src: net-revert.sh
+        dest: /run/homelab-net/revert.sh
+        mode: "0700"
+
+    - name: Keep the previous file for the revert
+      ansible.builtin.copy:
+        remote_src: true
+        src: /etc/network/interfaces
+        dest: /run/homelab-net/interfaces.prev
+        mode: "0644"
+
+    - name: Clear a timer left over from an earlier run
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - homelab-net-revert.timer
+        - homelab-net-revert.service
+      changed_when: false
+      failed_when: false
+
+    - name: Arm the revert timer
+      ansible.builtin.command:
+        cmd: >-
+          systemd-run --unit homelab-net-revert --collect
+          --on-active={{ pve_host_net_revert_seconds }} --timer-property=AccuracySec=1s
+          /bin/sh /run/homelab-net/revert.sh
+      changed_when: true
+
+    - name: Install the wanted file and reload the network, detached from this session
+      ansible.builtin.command:
+        cmd: >-
+          systemd-run --collect
+          /bin/sh -c 'cp /run/homelab-net/interfaces.new /etc/network/interfaces && ifreload -a'
+      changed_when: true
+
+    - name: Wait for the host on its management address
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: "{{ pve_host_net_revert_seconds - 60 }}"
+
+    - name: Read the VLANs of the onboard bridge port
+      ansible.builtin.command:
+        cmd: bridge vlan show dev {{ pve_nic_lan }}
+      register: pve_host_net_vlans
+      changed_when: false
+
+    - name: Guest VLANs are on the bridge port
+      ansible.builtin.assert:
+        that: pve_host_net_vlans.stdout is search('(^|\s)' ~ item ~ '(\s|$)')
+        fail_msg: "VLAN {{ item }} is missing on {{ pve_nic_lan }}"
+        quiet: true
+      loop: "{{ pve_guest_vlans }}"
+
+    - name: Point-to-point bridge exists with its address
+      ansible.builtin.command:
+        cmd: ip -br addr show dev vmbr1
+      register: pve_host_net_vmbr1
+      changed_when: false
+      failed_when: pve_host_net_vmbr1.rc != 0 or pve_p2p_address not in pve_host_net_vmbr1.stdout
+
+    - name: Disarm the revert
+      ansible.builtin.systemd_service:
+        name: homelab-net-revert.timer
+        state: stopped
+
+    - name: Forget the previous file
+      ansible.builtin.file:
+        path: /run/homelab-net/interfaces.prev
+        state: absent
+
+  rescue:
+    # Nothing here touches the host: the revert timer is still armed, and
+    # leaving it alone is the recovery.
+    - name: Stop and let the host restore itself
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: the network change was NOT confirmed
+          (failed task: {{ ansible_failed_task.name | default('unknown') }}).
+          If the revert was armed, the host restores its previous interfaces file by itself
+          {{ pve_host_net_revert_seconds }} seconds after arming. Wait for that, then run the play again.

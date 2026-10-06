@@ -6,3 +6,8 @@
   become: true
   roles:
     - role: pve_host
+    # Exporters from the upstream collection, bound to the management address
+    # (E7). The archives are fetched and checksum-verified on the workstation
+    # and only the binaries reach the host.
+    - role: prometheus.prometheus.node_exporter
+    - role: prometheus.prometheus.smartctl_exporter
