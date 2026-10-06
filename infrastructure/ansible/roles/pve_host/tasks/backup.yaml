@@ -137,3 +137,10 @@
       loop:
         - pbs-failover.timer
         - pbs-host-backup.timer
+
+  rescue:
+    - name: Stop
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: backup configuration failed at "{{ ansible_failed_task.name | default('unknown') }}".
+          The storage entry is untouched; the nightly backup may not be armed. Fix the cause and run the play again.

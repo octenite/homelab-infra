@@ -105,6 +105,20 @@
           become: false
           no_log: true
 
+      rescue:
+        # A token whose secret was not stored is useless: remove it so the
+        # next run issues it again.
+        - name: Remove the token issued by this run
+          ansible.builtin.command:
+            cmd: proxmox-backup-manager user delete-token {{ pve_backup_user }} {{ pve_backup_token }}
+          delegate_to: "{{ pve_backup_pbs_host }}"
+          changed_when: true
+          failed_when: false
+
+        - name: Stop
+          ansible.builtin.fail:
+            msg: "Storing the token failed at \"{{ ansible_failed_task.name | default('unknown') }}\"; the token was removed. Fix the cause and run again."
+
     # ---- hypervisor: storage entry with its own encryption key ---------------
     - name: Read storage entries
       ansible.builtin.command:
@@ -131,6 +145,14 @@
               --encryption-key autogen --content backup
           changed_when: true
           no_log: true
+
+      rescue:
+        - name: Stop
+          ansible.builtin.fail:
+            msg: >-
+              Creating the storage entry failed at "{{ ansible_failed_task.name | default('unknown') }}".
+              Nothing was stored for it. Check that the backup server answers on {{ pve_backup_fallback }}:8007
+              and that user and token hold DatastoreBackup on /datastore/{{ pve_backup_datastore }}.
 
     # ---- secrets: encryption key into the private repository -----------------
     - name: Read the storage's encryption key
