@@ -67,7 +67,7 @@ secret-set file key:
     case "{{file}}" in private/*.sops.yaml) ;; *) echo "the file must be private/....sops.yaml"; exit 1 ;; esac
     read -rsp "value for {{key}}: " value; echo
     [ -n "$value" ] || { echo "empty value, nothing stored"; exit 1; }
-    rel="${{file}}"; rel="${rel#private/}"
+    rel="{{file}}"; rel="${rel#private/}"
     if [ -f "{{file}}" ]; then
         [ -r /dev/shm/homelab-session/age.key ] || { echo "No key session open. Run 'just session-start' first."; exit 1; }
         SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key sops set "{{file}}" "[\"{{key}}\"]" "$(printf '%s' "$value" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')"
