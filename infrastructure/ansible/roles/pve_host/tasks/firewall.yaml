@@ -28,8 +28,8 @@
         IN ACCEPT -source {{ r.source }} -p {{ r.proto }} -dport {{ r.dport }} -log nolog # {{ r.comment }}
         {% endfor %}
         IN ACCEPT -source {{ pve_router }} -p icmp -log nolog # router may ping
-        IN ACCEPT -source {{ pve_workstation }} -p icmp -log nolog # workstation may ping
-        IN ACCEPT -source {{ pve_workstation }} -p tcp -dport 3128,5900:5999 -log nolog # E2 workstation: console ports
+        IN ACCEPT -source {{ pve_workstations | join(',') }} -p icmp -log nolog # workstation may ping
+        IN ACCEPT -source {{ pve_workstations | join(',') }} -p tcp -dport 3128,5900:5999 -log nolog # E2 workstation: console ports
         # pve-firewall appends built-in rules that admit the host's own subnets
         # (the "management" set, always extended with every local network) to
         # SSH, the web interface, the console ports and migration. Host rules

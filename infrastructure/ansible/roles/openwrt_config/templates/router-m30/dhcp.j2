@@ -63,16 +63,20 @@ config dhcp 'wan'
 	option limit '150'
 	option dhcpv4 'disabled'
 
-{# The firewall admits the operator workstation by address (E1 to E3), so
-   that address is bound to its network cards: the dock port and the Wi-Fi
-   adapter, which are never up at the same time (dnsmasq documents a host
-   entry with several addresses for exactly this case). #}
+{# The firewall admits the operator workstation by address (E1 to E3, E14),
+   so each of its network cards is bound to its own address: the dock port
+   and the Wi-Fi adapter. (One shared address for both was tried on
+   2026-10-06 and deadlocked Windows, which refused the dock's lease while
+   Wi-Fi held the address.) #}
 config host 'workstation'
 	option name 'workstation'
-{% for mac in openwrt_workstation_macs %}
-	list mac '{{ mac }}'
-{% endfor %}
+	list mac '{{ openwrt_workstation_mac }}'
 	option ip '192.168.1.196'
+
+config host 'workstation_wifi'
+	option name 'workstation-wifi'
+	list mac '{{ openwrt_workstation_wifi_mac }}'
+	option ip '192.168.1.197'
 
 {# The ESP32 keeps one address in the IoT network, so shortcuts and, later,
    Home Assistant can address it. #}

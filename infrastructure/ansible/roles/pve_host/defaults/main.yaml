@@ -29,7 +29,7 @@ pve_host_unattended_reboot: false
 # Firewall (pve-firewall): default DROP, these exceptions only.
 pve_host_fw_rules:
   - comment: "E2 workstation: SSH and web interface"
-    source: "{{ pve_workstation }}"
+    source: "{{ pve_workstations | join(',') }}"
     proto: tcp
     dport: "22,8006"
   - comment: "E6 workers: API"

@@ -90,10 +90,11 @@ if ($p2pAdapter) {
         Step "switch $P2pSwitch on '$($p2pAdapter.Name)'"
     }
     $p2pIf = Get-NetAdapter -Name "vEthernet ($P2pSwitch)"
-    if (-not (Get-NetIPAddress -InterfaceIndex $p2pIf.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object IPAddress -eq $P2pHost)) {
-        Set-NetIPInterface -InterfaceIndex $p2pIf.ifIndex -AddressFamily IPv4 -Dhcp Disabled
-        Get-NetIPAddress -InterfaceIndex $p2pIf.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false
-        New-NetIPAddress -InterfaceIndex $p2pIf.ifIndex -IPAddress $P2pHost -PrefixLength 29 | Out-Null
+    $p2pPersistent = Get-NetIPAddress -InterfaceIndex $p2pIf.ifIndex -AddressFamily IPv4 -PolicyStore PersistentStore -ErrorAction SilentlyContinue | Where-Object IPAddress -eq $P2pHost
+    if (-not $p2pPersistent) {
+        # netsh sets the static address and turns DHCP off in both stores in
+        # one step; the PowerShell pair refuses with "inconsistent parameters".
+        netsh interface ipv4 set address name="$($p2pIf.Name)" source=static address=$P2pHost mask=255.255.255.248 | Out-Null
         Step "host address $P2pHost/29 on $P2pSwitch (no gateway)"
     }
     $prof = Get-NetConnectionProfile -InterfaceIndex $p2pIf.ifIndex -ErrorAction SilentlyContinue
@@ -187,8 +188,11 @@ if ($nat.MacAddress -ne $MacNat) {
 }
 if (Get-VMSwitch -Name $P2pSwitch -ErrorAction SilentlyContinue) {
     if (-not (Get-VMNetworkAdapter -VMName $VmName -Name p2p -ErrorAction SilentlyContinue)) {
-        Add-VMNetworkAdapter -VMName $VmName -Name p2p -SwitchName $P2pSwitch -StaticMacAddress $MacP2p
-        Step "adapter 'p2p' on $P2pSwitch, MAC $MacP2p"
+        if ($off) {
+            Add-VMNetworkAdapter -VMName $VmName -Name p2p -SwitchName $P2pSwitch -StaticMacAddress $MacP2p
+            Step "adapter 'p2p' on $P2pSwitch, MAC $MacP2p"
+        }
+        else { Note "adapter 'p2p' is added when the VM is off (Stop-VM $VmName, run again, Start-VM $VmName)" }
     }
 }
 

@@ -15,10 +15,12 @@ config zone
 	option output 'ACCEPT'
 	option forward 'REJECT'
 
+{# The workstation's two addresses: dock port and Wi-Fi adapter. #}
 config rule
 	option name 'E2-workstation-ssh'
 	option src 'mgmt'
-	option src_ip '192.168.1.196'
+	list src_ip '192.168.1.196'
+	list src_ip '192.168.1.197'
 	option proto 'tcp'
 	option dest_port '22'
 	option target 'ACCEPT'
@@ -28,6 +30,7 @@ config rule
 	option src 'mgmt'
 	list src_ip '10.0.10.1'
 	list src_ip '192.168.1.196'
+	list src_ip '192.168.1.197'
 	option proto 'icmp'
 	option icmp_type 'echo-request'
 	option family 'ipv4'

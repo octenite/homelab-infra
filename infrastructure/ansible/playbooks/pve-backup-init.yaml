@@ -139,7 +139,7 @@
         - name: Storage entry, fallback address first, encryption key generated
           ansible.builtin.command:
             cmd: >-
-              pvesm add pbs {{ pve_backup_storage }} --server {{ pve_backup_fallback }}
+              pvesm add pbs {{ pve_backup_storage }} --server {{ pve_backup_fallbacks | first }}
               --datastore {{ pve_backup_datastore }} --username '{{ pve_backup_auth_id }}'
               --password '{{ pve_backup_secret }}' --fingerprint '{{ pve_backup_fingerprint.stdout }}'
               --encryption-key autogen --content backup
@@ -151,7 +151,7 @@
           ansible.builtin.fail:
             msg: >-
               Creating the storage entry failed at "{{ ansible_failed_task.name | default('unknown') }}".
-              Nothing was stored for it. Check that the backup server answers on {{ pve_backup_fallback }}:8007
+              Nothing was stored for it. Check that the backup server answers on {{ pve_backup_fallbacks | first }}:8007
               and that user and token hold DatastoreBackup on /datastore/{{ pve_backup_datastore }}.
 
     # ---- secrets: encryption key into the private repository -----------------
