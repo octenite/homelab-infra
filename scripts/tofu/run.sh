@@ -26,6 +26,18 @@ SECRETS="$REPO/private/opentofu/b2.sops.yaml"
 	echo "no such root: $ROOT_DIR" >&2
 	exit 2
 }
+# A backend override puts the root in offline mode: OpenTofu then works on a
+# local copy of the state. Run through this wrapper, a plan would look like a
+# plan against the bucket and is not, so the wrapper stays out of that mode.
+if compgen -G "$ROOT_DIR/override.tf" >/dev/null || compgen -G "$ROOT_DIR/*_override.tf" >/dev/null; then
+	cat >&2 <<EOF
+$ROOT_DIR holds a backend override: the root is in offline mode and works on a
+local copy of the state, not on the bucket. This wrapper does not run in that mode.
+  to keep working offline:   docs/runbooks/tofu-offline.md, part A (OpenTofu is started directly)
+  to return to the bucket:   docs/runbooks/tofu-offline.md, part B (it starts by removing the override)
+EOF
+	exit 2
+fi
 [ -f "$BACKEND" ] || {
 	cat >&2 <<EOF
 missing $BACKEND

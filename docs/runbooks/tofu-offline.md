@@ -2,7 +2,7 @@
 
 Use this when `just tofu <root> plan` cannot reach the Backblaze B2 bucket (internet outage, provider outage, key revoked) and a change cannot wait, or when the bucket or its state object is gone.
 
-Status: not rehearsed. The backend was initialised on 2026-10-07 and the first state copy exists (`private/opentofu/state-copies/pve.state.json`). The steps below follow the wrapper scripts and the backend block of `infrastructure/opentofu/roots/pve/versions.tf`. They count as verified once the first rehearsal is recorded. The right moment is now, while the root holds only its marker.
+Status: parts A and B rehearsed on 2026-10-07, three times, while the root held only its marker; the record is at the end. Part C (a new bucket) and "No copy" are not rehearsed.
 
 ## What exists
 
@@ -14,7 +14,7 @@ Status: not rehearsed. The backend was initialised on 2026-10-07 and the first s
 
 How the copy is made: after every `apply`, `destroy`, `import`, `refresh`, `taint`, `untaint` and every `state` command that changes something, `scripts/tofu/child.sh` fetches the object from the bucket and replaces the copy. It keeps the previous copy and prints a warning when the object cannot be read or is not an encrypted state. The copy is only as new as the last commit of the private repository that contains it.
 
-The wrapper (`just tofu`) has no offline or restore command. It always talks to the bucket. The steps below start OpenTofu directly, with the passphrase taken from the private repository for one command at a time.
+The wrapper (`just tofu`) has no offline or restore command. It always talks to the bucket, and it refuses to run while a root holds a backend override. The steps below start OpenTofu directly, with the passphrase taken from the private repository for one command at a time.
 
 ## Before starting
 
@@ -39,7 +39,7 @@ The examples use the root `pve` and start in the repository's top directory.
    cp private/opentofu/state-copies/pve.state.json infrastructure/opentofu/roots/pve/offline.tfstate
    ```
 
-3. Override the backend with a local one. The encryption block of `versions.tf` stays in force.
+3. Override the backend with a local one. The encryption block of `versions.tf` stays in force, so the local file stays ciphertext and a wrong passphrase is refused. Git does not ignore the override file: it shows in `git status` until part B removes it, and `just tofu-lint` fails while it exists, so it cannot be merged.
 
    ```sh
    cat > infrastructure/opentofu/roots/pve/backend_override.tf <<'EOF'
@@ -70,7 +70,7 @@ The examples use the root `pve` and start in the repository's top directory.
 
 6. Apply only what cannot wait, with the same command and `apply` in place of `plan`. From now on `offline.tfstate` is newer than the bucket. Do not delete it.
 
-Do not use `just tofu` while the override file exists: its `init` passes the bucket settings, which a local backend rejects.
+While the override file exists, `just tofu` refuses to run and points here. That is on purpose: a plan through the wrapper would look like a plan against the bucket and would not be one.
 
 ## B. Return to the bucket
 
@@ -89,13 +89,13 @@ When the bucket answers again:
    rm -f infrastructure/opentofu/roots/pve/offline.tfstate infrastructure/opentofu/roots/pve/offline.tfstate.backup
    ```
 
-3. If something was applied offline, move the newer local state into the bucket. OpenTofu asks before it overwrites the object; answer `yes`. The bucket is versioned, so the replaced object stays available as an older version.
+3. If something was applied offline, move the newer local state into the bucket. OpenTofu says that a state already exists in the new backend and asks "Do you want to overwrite the state in the new backend with the previous state?"; answer `yes`. "Previous" is the local file, "new" is the bucket. The bucket is versioned, so the replaced object stays available as an older version.
 
    ```sh
-   TMPDIR=/dev/shm just tofu pve init -migrate-state
+   just tofu pve init -migrate-state
    ```
 
-   While it asks, OpenTofu saves both states to a temporary directory for comparison. `TMPDIR=/dev/shm` keeps those files in memory, because the workstation's disk is not encrypted (X23). Then remove the working copy as in step 2.
+   While it asks, OpenTofu saves both states to temporary files for comparison, in the clear. The wrapper gives every command a private temporary directory in memory (`/dev/shm/tofu.*`, removed when the command ends), because the workstation's disk is not encrypted (X23). Never run this step with OpenTofu started directly. Then remove the working copy as in step 2.
 
 4. Prove the state and refresh the copy. The plan shows no changes. The apply saves a new copy.
 
@@ -148,3 +148,24 @@ Without the bucket object and without a copy there is no state. Today the `pve` 
 - `private/opentofu/state-copies/pve.state.json` is new, committed and pushed.
 - No `backend_override.tf` and no `offline.tfstate` remain in the root.
 - The event is recorded in the gate record of the current phase.
+
+## Rehearsal record
+
+2026-10-07, root `pve` holding only its marker, bucket reachable throughout. The offline change was a replacement of the marker (`apply -replace=terraform_data.root`), which touches nothing real.
+
+| Step | Result |
+|---|---|
+| A.2 to A.5 | Local backend configured on the copy. The plan read the ciphertext and showed no changes |
+| The same plan with a wrong passphrase | Refused: "decryption failed for all provided methods" |
+| A.6 | Applied. The local state and its backup file stayed ciphertext; the serial went up |
+| B.1, B.3 | The question appeared as quoted above; answered `yes`; the bucket took the local state |
+| B.4 | The plan against the bucket showed no changes and named the marker created offline. `just tofu pve apply` with nothing to change asked nothing and saved the new copy |
+| B.6 | No override and no working copy left; `just tofu-lint` passed |
+
+What the rehearsal changed:
+
+- The two temporary files of the migration were plain text and readable by every user (mode 644). The wrapper now puts them in a private directory in memory by itself (mode 700, files 600, nothing appeared under `/tmp`, nothing left afterwards). Before, this depended on the operator typing `TMPDIR=/dev/shm`.
+- The wrapper used to run in offline mode without saying so: `just tofu pve plan` planned against the local file. It now refuses while an override exists.
+- The override file is not ignored by Git. `just tofu-lint`, which CI runs, now fails while one exists.
+
+Not rehearsed: part C with a new bucket and a new key, the "No copy" case, and offline work with the internet really down (the provider plugins of a later root must then already be in `.terraform`).
