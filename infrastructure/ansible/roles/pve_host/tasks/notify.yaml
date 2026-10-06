@@ -1,0 +1,57 @@
+---
+# Native PVE notifications to Telegram through a webhook target: backup job
+# failures, package update notices and fencing go straight to the owner's
+# phone, independent of the cluster. The bot token lives in the private
+# notification file (never in the public configuration); PVE keeps it in
+# its private store and substitutes it into the URL at send time.
+#
+# Both files live on the cluster filesystem, which refuses atomic
+# replacement, so they are compared and written in place (same pattern as
+# the firewall files).
+- name: Wanted notification files
+  ansible.builtin.set_fact:
+    pve_host_notify_files:
+      /etc/pve/notifications.cfg: |
+        webhook: telegram
+                url https://api.telegram.org/bot{{ '{{' }} secrets.token {{ '}}' }}/sendMessage
+                method post
+                header name=Content-Type,value={{ 'application/json' | b64encode }}
+                body {{ pve_host_notify_body | b64encode }}
+                comment Telegram, the owner's phone
+
+        matcher: default-matcher
+                target telegram
+                comment Everything, until the alerting design narrows it
+
+      /etc/pve/priv/notifications.cfg: |
+        webhook: telegram
+                secret name=token,value={{ telegram_bot_token | b64encode }}
+
+  vars:
+    pve_host_notify_body: >-
+      {"chat_id": "{{ telegram_chat_id }}",
+      "text": "{{ '{{' }} escape title {{ '}}' }}\n\n{{ '{{' }} escape message {{ '}}' }}",
+      "disable_web_page_preview": true}
+  no_log: true
+
+- name: Read the current notification files
+  ansible.builtin.slurp:
+    src: "{{ item.key }}"
+  loop: "{{ pve_host_notify_files | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: pve_host_notify_current
+  failed_when: false
+  no_log: true
+
+- name: Write notification files that differ
+  ansible.builtin.shell:
+    cmd: "cat > {{ item.item.key }}"
+    stdin: "{{ item.item.value }}"
+    stdin_add_newline: false
+  loop: "{{ pve_host_notify_current.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when: (item.content | default('') | b64decode) != item.item.value
+  changed_when: true
+  no_log: true

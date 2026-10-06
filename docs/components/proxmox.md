@@ -12,6 +12,7 @@ Node 1 runs Proxmox VE and hosts the Talos VMs. It is the single physical host o
 - Firewall: pve-firewall with policy DROP and the exceptions E2, E6, E7 and E13 from [ARCHITECTURE.md](../ARCHITECTURE.md) section 6.
 - Time: the router is the only source; the host serves the servers network with a local fallback.
 - Metrics: `node_exporter` (9100) and `smartctl_exporter` (9633) from the upstream Ansible collection, bound to the management address; a timer adds thin-pool usage through the textfile collector. Only the Talos workers may scrape them (E7).
+- Notifications: PVE's native system sends every notification (backup job failures, update notices, fencing) to the owner's Telegram chat through a webhook target; the bot token sits in PVE's private store and in the private repository, the chat id in the private inventory. The nightly host-configuration backup additionally pings a healthchecks.io check, so a backup that never runs alerts too.
 
 ## Dependencies
 
