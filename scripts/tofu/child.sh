@@ -57,8 +57,26 @@ proxmox_credentials() {
 	export SSL_CERT_FILE="$TMPDIR/ca-bundle.crt"
 }
 
+# The tailnet's policy and settings: an OAuth client limited to those two
+# things, and the owner's login, which the policy file names. One encrypted
+# file holds all three; they are read one by one so nothing else of it is
+# ever in the environment.
+tailscale_credentials() {
+	local file="$TOFU_REPO/private/tailscale/oauth.sops.yaml" id secret login
+	[ -r "$file" ] || {
+		echo "missing private/tailscale/oauth.sops.yaml. Store the OAuth client and the login with 'just secret-set' (docs/runbooks/tailnet-setup.md)." >&2
+		exit 2
+	}
+	id=$(sops decrypt --extract '["tailscale_oauth_client_id"]' "$file")
+	secret=$(sops decrypt --extract '["tailscale_oauth_client_secret"]' "$file")
+	login=$(sops decrypt --extract '["tailscale_owner_login"]' "$file")
+	: "${id:?tailscale_oauth_client_id is missing}" "${secret:?tailscale_oauth_client_secret is missing}" "${login:?tailscale_owner_login is missing}"
+	export TAILSCALE_OAUTH_CLIENT_ID="$id" TAILSCALE_OAUTH_CLIENT_SECRET="$secret" TF_VAR_owner_login="$login"
+}
+
 case "$TOFU_ROOT" in
 pve | remote) proxmox_credentials ;;
+tailscale) tailscale_credentials ;;
 esac
 
 eval "set -- $TOFU_ARGS"
