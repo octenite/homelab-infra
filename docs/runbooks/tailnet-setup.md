@@ -2,7 +2,7 @@
 
 Use this once, when the Tailscale network for remote access is created, and again only if it has to be created anew. The design is `docs/adr/0005-administrative-access.md`; the steps it belongs to are R.2 to R.4 of `docs/phases/phase-r-plan.md`.
 
-Status: steps 1 to 3 written for step R.2 on 2026-10-09. The parts for devices and node signing are added with steps R.3 and R.4.
+Status: steps 1 to 3 written for step R.2 and carried out on 2026-10-09. The parts for devices and node signing are added with steps R.3 and R.4.
 
 ## Before starting
 
@@ -65,7 +65,7 @@ What this credential can do if it leaks: change the policy among the devices tha
    just tofu tailscale plan
    ```
 
-   Tailscale checks the policy and its tests while planning. A failing test fails the plan.
+   Before a plan and before an apply, `scripts/tofu/child.sh` sends the policy to Tailscale's validation and stops when a test of the policy fails. The provider alone does not: its plan passes with a failing test, and only the save is refused (measured on 2026-10-09, provider 0.29.2).
 
 3. Apply, then plan again.
 
@@ -76,7 +76,7 @@ What this credential can do if it leaks: change the policy among the devices tha
 
    Expected: `No changes.`
 
-4. In the console, under **DNS**, switch **MagicDNS** off. The lab addresses its targets by number, and the laptop takes no name service from Tailscale.
+4. In the console, under **DNS**, switch **MagicDNS** off. The lab addresses its targets by number, and the laptop takes no name service from Tailscale. This is a step by hand on purpose: the credential of step 2 can neither read nor change the name service (it answers "not found"), and a scope that could would also let a leaked credential point the devices at another name server.
 
 ## How to know it worked
 
@@ -90,5 +90,6 @@ What this credential can do if it leaks: change the policy among the devices tha
 |---|---|
 | `missing private/tailscale/oauth.sops.yaml` | Step 2.3 was not done |
 | The plan fails with a permission error on the settings | The client lacks the Feature Settings scope. Revoke it, create it again with both scopes, store it again |
-| The plan fails on a test of the policy | The policy would allow something a test forbids, or a test names a login that does not exist. The message names the test. Nothing was applied |
+| `the policy is refused by Tailscale: test(s) failed` | The policy would allow something a test forbids, or a test names a login that does not exist. The lines below the message name the address and what was expected. Nothing was planned or applied |
+| `policy.hujson uses a template variable that scripts/tofu/child.sh does not know` | A new `${...}` value was added to the policy. Add it to `tailnet_policy_check` in the same pull request, so the check validates what OpenTofu sends |
 | The import says the resource is already managed | It was imported before. Go on with the plan |

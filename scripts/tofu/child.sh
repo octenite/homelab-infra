@@ -74,6 +74,52 @@ tailscale_credentials() {
 	export TAILSCALE_OAUTH_CLIENT_ID="$id" TAILSCALE_OAUTH_CLIENT_SECRET="$secret" TF_VAR_owner_login="$login"
 }
 
+# Tailscale refuses to save a policy that fails one of its own tests, but a
+# plan does not show it: the validation call the provider makes answers "200"
+# in that case and names the failed test in the body, which the provider does
+# not read (seen on 2026-10-09 with provider 0.29.2: a plan passed with a
+# grant that a test forbids, and the save was refused with "400"). So the
+# same call is made here before a plan or an apply, and anything but an empty
+# answer stops the command. Nothing is changed in the tailnet by it.
+tailnet_policy_check() {
+	local policy="$TOFU_ROOT_DIR/policy.hujson" rendered="$TMPDIR/policy.rendered" token
+	python3 - "$policy" "$rendered" <<'PY'
+import os
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+text = text.replace("${owner_login}", os.environ["TF_VAR_owner_login"])
+if "${" in text:
+    sys.exit("policy.hujson uses a template variable that scripts/tofu/child.sh does not know; add it to tailnet_policy_check")
+pathlib.Path(sys.argv[2]).write_text(text)
+PY
+	token=$(printf 'user = "%s:%s"\n' "$TAILSCALE_OAUTH_CLIENT_ID" "$TAILSCALE_OAUTH_CLIENT_SECRET" |
+		curl --fail --silent --show-error --config - --max-time 20 --data 'grant_type=client_credentials' \
+			https://api.tailscale.com/api/v2/oauth/token |
+		python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])')
+	printf 'header = "Authorization: Bearer %s"\n' "$token" |
+		curl --fail --silent --show-error --config - --max-time 20 \
+			--header 'Content-Type: application/hujson' --data-binary "@$rendered" \
+			https://api.tailscale.com/api/v2/tailnet/-/acl/validate |
+		python3 -c '
+import json
+import sys
+
+body = sys.stdin.read().strip()
+answer = json.loads(body) if body else {}
+if answer:
+    print("the policy is refused by Tailscale:", answer.get("message", ""), file=sys.stderr)
+    for item in answer.get("data") or []:
+        for error in item.get("errors") or []:
+            print("  " + str(item.get("user", "")) + ": " + error, file=sys.stderr)
+    sys.exit(1)
+' || {
+		echo "infrastructure/opentofu/roots/tailscale/policy.hujson did not pass Tailscale's validation; nothing was planned or applied" >&2
+		exit 1
+	}
+}
+
 case "$TOFU_ROOT" in
 pve | remote) proxmox_credentials ;;
 tailscale) tailscale_credentials ;;
@@ -81,6 +127,12 @@ esac
 
 eval "set -- $TOFU_ARGS"
 cd "$TOFU_ROOT_DIR"
+
+if [ "$TOFU_ROOT" = tailscale ]; then
+	case "$1" in
+	plan | apply) tailnet_policy_check ;;
+	esac
+fi
 
 STATE_KEY="$TOFU_ROOT/terraform.tfstate"
 
