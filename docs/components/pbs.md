@@ -136,7 +136,7 @@ Unattended upgrades install Debian security updates only. Proxmox packages are u
 
 ### Why block rules
 
-On the workstation many Windows services share one `svchost` process (X25): the registry value `SvcHostSplitThresholdInKB` is far above the installed memory. A built-in allow rule scoped to one service in that process then admits every port the process listens on, from any source. The port forwards listen in that process. Address-scoped allow rules alone therefore restrict nothing (found by the deny test of 2026-10-06).
+On the workstation many Windows services shared one `svchost` process (X25): the registry value `SvcHostSplitThresholdInKB` had been raised far above the installed memory. A built-in allow rule scoped to one service in that process then admitted every port the process listened on, from any source, and the port forwards listened in that process. Address-scoped allow rules alone restricted nothing (found by the deny test of 2026-10-06).
 
 Block rules win over allow rules. `pbs-vm.ps1` maintains the rules below by content on every run, reads each one back after creating it, and removes any other rule named `homelab-*`. Rules name addresses, never interfaces: a rule bound to an interface stops matching when the virtual adapter is created again.
 
@@ -144,21 +144,32 @@ Block rules win over allow rules. `pbs-vm.ps1` maintains the rules below by cont
 |---|---|---|---|---|
 | `homelab-block-direct-link` | Block | any | 10.0.99.0 to 10.0.99.7 | always |
 | `homelab-block-backup-vm` | Block | any | 10.0.98.2 to 10.0.98.6 | always |
-| `homelab-pbs1-8007-others` | Block | TCP 8007 | every address except 10.0.10.10 | always |
+| `homelab-pbs1-8007-others` | Block | TCP 8007 | every address except 10.0.10.10; with `-Away` every address | always |
 | `homelab-pbs1-ssh-others` | Block | TCP 2222 | every address outside 172.16.0.0/12 | always |
-| `homelab-pbs1-8007` | Allow | TCP 8007 | 10.0.10.10 (E14) | always |
+| `homelab-pbs1-8007` | Allow | TCP 8007 | 10.0.10.10 (E14) | not with `-Away` |
 | `homelab-pbs1-ssh-wsl` | Allow | TCP 2222 | 172.16.0.0/12, the range WSL takes its network from | only with `-Manage` |
 
-The remedy at the root is the default split threshold and a reboot. That is an open owner decision. The block rules stay either way.
+The remedy at the root, the default split threshold, was applied on 2026-10-07 by `scripts/node2/workstation.ps1` (`docs/phases/phase-3.md`). The block rules stay as the second layer.
 
 ### Port forwards
 
 | Listens on | Forwards to | Present |
 |---|---|---|
-| 0.0.0.0:8007 | 10.0.98.3:8007 | always |
+| 0.0.0.0:8007 | 10.0.98.3:8007 | not with `-Away` |
 | 0.0.0.0:2222 | 10.0.98.3:22 | only with `-Manage` |
 
 Both listen on every address of the workstation. The firewall rules above are what limits them. A forwarded connection reaches the VM from 10.0.98.1, so the guest cannot tell the hypervisor from any other source: the workstation's rules are the control on this path.
+
+### Away from home
+
+The backup port is admitted by source address. When the laptop travels it accepts a route to 10.0.10.10 through the Tailscale tunnel (Phase R, `docs/phases/phase-r-plan.md`), and that address then no longer proves which path a packet took. So the forward does not exist on the road:
+
+| Action | Command (elevated PowerShell) | Effect |
+|---|---|---|
+| Before leaving | `powershell -ExecutionPolicy Bypass -File scripts\node2\pbs-vm.ps1 -Away` | Removes the 8007 forward and `homelab-pbs1-8007`; `homelab-pbs1-8007-others` blocks the port for every source. The management window is closed. `-Away` cannot be combined with another switch |
+| Back at home | `powershell -ExecutionPolicy Bypass -File scripts\node2\pbs-vm.ps1` | Restores the forward and the rule for the hypervisor |
+
+No mode is stored. The last line of the script's output names the state of the backup port. `scripts\node2\travel.ps1` (step R.9) will call both forms; until it exists they are run by hand. While the laptop is away the hypervisor has no backup target, and the dead-man's switch reports the missed runs.
 
 ### Management window
 
@@ -177,10 +188,10 @@ The second layer. They belong to an adapter and vanish with it, so every run ass
 
 | Adapter | Entries, both directions |
 |---|---|
-| `nat` | Deny 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16. Allow 10.0.98.1 |
+| `nat` | Deny 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10. Allow 10.0.98.1 |
 | `p2p` | Deny everything. Allow 10.0.99.1 |
 
-The VM's NAT traffic leaves with the workstation's address, which the router trusts (E1 to E3). The `nat` ACL is what keeps that trust from the VM: it reaches no private address except its gateway. IPv6 is unbound from both host-side adapters, so link-local addresses offer no way around the address-based rules. The host side of `p2p` is pinned to the Public profile.
+The VM's NAT traffic leaves with the workstation's address, which the router trusts (E1 to E3). The `nat` ACL is what keeps that trust from the VM: it reaches no private address except its gateway. 100.64.0.0/10 is the range of Tailscale addresses: with the Tailscale client on the workstation, the VM's NAT traffic would otherwise leave through the tunnel as the laptop. IPv6 is unbound from both host-side adapters, so link-local addresses offer no way around the address-based rules. The host side of `p2p` is pinned to the Public profile.
 
 ### Guest firewall
 
@@ -213,7 +224,9 @@ Run it in WSL with a session open. It only opens TCP connections and sends pings
 | WSL | 8007 closed on the workstation's addresses, on the WSL gateway and on 10.0.99.2 |
 | Backup VM (only while the window is open) | Nothing on the hypervisor's direct-link address, nothing on the workstation, nothing in a private range; 9.9.9.9 port 53 and download.proxmox.com port 443 open |
 
-Status: open. Before the rules above were applied on the workstation, 12 probes disagreed (2026-10-07). The run after `pbs-vm.ps1 -Manage` in an elevated prompt is pending. Do not treat the fences as proven until `just test-fences` has passed with the window open and the result is in the Phase 3 record.
+After `pbs-vm.ps1 -Away` the test is `just test-fences away`: the same probes, with 8007 on the workstation's home addresses expected closed.
+
+Status: passed on 2026-10-07 with the window open and with it closed; the results are in `docs/phases/phase-3.md`. Before the rules above were applied on the workstation, 12 probes had disagreed. The away form and the probe of a Tailscale address were added in Phase R, step R.3, and are proven in that step's record.
 
 ## Security considerations
 

@@ -134,8 +134,10 @@ pbs-media:
     bash scripts/pbs/build-install-iso.sh
 
 # Deny test of the backup path's fences from every vantage point (read-only probes). Fails when one probe disagrees.
-test-fences:
-    bash scripts/tests/backup-fences.sh
+# After `pbs-vm.ps1 -Away`: just test-fences away
+[positional-arguments]
+test-fences *args:
+    bash scripts/tests/backup-fences.sh "$@"
 
 # Scope test of the OpenTofu API token: what it may read, and which writes are refused (each a no-op by design).
 test-token:
