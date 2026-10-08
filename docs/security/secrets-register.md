@@ -69,7 +69,7 @@ The backend was initialised on 2026-10-07: `private/opentofu/backend.hcl` holds 
 
 | Secret | Created | Lives in | Used by | Rotation | If it leaks |
 |---|---|---|---|---|---|
-| State passphrase | 2026-10-06 (generated) | `private/opentofu/b2.sops.yaml`, key `tofu_state_passphrase`. Password manager | `just tofu <root> <command>`: `scripts/tofu/child.sh` passes it to OpenTofu, which encrypts every state and plan file before it leaves the workstation | Not rotated routinely. No rotation path is built: the root has one key provider and no fallback, so a changed passphrase cannot read existing state (backlog B29). While no state exists, `just secret-set private/opentofu/b2.sops.yaml tofu_state_passphrase` is the whole change | With the bucket keys or a state copy: the state in the clear. From Phase 5 the state holds the Talos secrets |
+| State passphrase | 2026-10-06 (generated) | `private/opentofu/b2.sops.yaml`, key `tofu_state_passphrase`. Password manager | `just tofu <root> <command>`: `scripts/tofu/child.sh` passes it to OpenTofu, which encrypts every state and plan file before it leaves the workstation | On exposure, and after a lost workstation: [rotate-state-passphrase.md](../runbooks/rotate-state-passphrase.md), rehearsed 2026-10-09 | With the bucket keys or a state copy: the state in the clear. From Phase 5 the state holds the Talos secrets |
 | Backblaze B2 application key for the state bucket | 2026-10-06 (owner) | `private/opentofu/b2.sops.yaml`, keys `b2_key_id` and `b2_application_key` | `just tofu`: the S3 backend, and the fetch of the encrypted state copy into `private/opentofu/state-copies/` | Yearly, and on exposure. [R7](#r7-replace-the-b2-application-key) | Reading, overwriting and deleting the state objects. They are ciphertext |
 
 ## 6. Notifications and monitoring
@@ -331,7 +331,6 @@ It was done once, on 2026-10-06, while the datastore held two test snapshots (`d
 | O2 | Password-manager copies not confirmed: the OpenWrt root passwords. Confirmed by the owner: the backup encryption key (2026-10-06, entry replaced after the rotation, and again 2026-10-07), the TOTP recovery keys of both hypervisor accounts (2026-10-06) and the pbs1 root password (2026-10-07) | Owner | The owner confirms the remaining entry |
 | O3 | The healthchecks.io ping URL appeared once in a session transcript | Owner, then engineer | R9 done |
 | O4 | `root@pam` on pbs1 has no second factor | Owner | Backlog B24 |
-| O5 | No rotation path for the state passphrase | Engineer | Backlog B29 |
 | O6 | Where the second factor and the recovery codes of each external account are kept is not recorded | Owner | The owner states it per account and section 7 is updated |
 | O7 | The scope of the B2 application key (state bucket only) is not verified | Engineer | Checked when the backend is initialised (`docs/phases/phase-3.md`, G2) |
 

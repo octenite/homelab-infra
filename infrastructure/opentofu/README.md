@@ -20,6 +20,7 @@ Status: the backend was initialised on 2026-10-07 and the state round trip passe
 | Bucket, region, endpoint (identifiers, not secrets) | `private/opentofu/backend.hcl` |
 | B2 key (`b2_key_id`, `b2_application_key`) and state passphrase (`tofu_state_passphrase`) | `private/opentofu/b2.sops.yaml` |
 | Break-glass copy of the state | `private/opentofu/state-copies/<root>.state.json` |
+| Changing the passphrase | `just tofu-passphrase`; [rotate-state-passphrase.md](../../docs/runbooks/rotate-state-passphrase.md) |
 
 `backend.hcl` holds three settings:
 

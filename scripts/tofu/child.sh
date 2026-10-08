@@ -8,10 +8,19 @@ set -euo pipefail
 : "${b2_application_key:?b2_application_key is missing in private/opentofu/b2.sops.yaml}"
 : "${tofu_state_passphrase:?tofu_state_passphrase is missing in private/opentofu/b2.sops.yaml}"
 
-# The backend expects the AWS names, the encryption block its variable.
+# The backend expects the AWS names, the encryption block its variables.
 export AWS_ACCESS_KEY_ID="$b2_key_id" AWS_SECRET_ACCESS_KEY="$b2_application_key"
 export TF_VAR_state_passphrase="$tofu_state_passphrase"
-unset b2_key_id b2_application_key tofu_state_passphrase
+# While a rotation is under way (scripts/tofu/passphrase.sh) the file also
+# holds the previous passphrase, which OpenTofu may fall back to when it
+# reads a state. Outside a rotation, and when the caller asks for it, the
+# fallback is the current passphrase itself: nothing else can read the state.
+if [ -n "${tofu_state_passphrase_previous:-}" ] && [ -z "${TOFU_NO_FALLBACK:-}" ]; then
+	export TF_VAR_state_passphrase_previous="$tofu_state_passphrase_previous"
+else
+	export TF_VAR_state_passphrase_previous="$tofu_state_passphrase"
+fi
+unset b2_key_id b2_application_key tofu_state_passphrase tofu_state_passphrase_previous
 
 # OpenTofu's own temporary files are not encrypted. When a state is moved
 # between backends (`init -migrate-state`) it writes both states in the clear,
