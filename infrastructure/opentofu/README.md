@@ -21,6 +21,8 @@ Status: the backend was initialised on 2026-10-07 and the state round trip passe
 | B2 key (`b2_key_id`, `b2_application_key`) and state passphrase (`tofu_state_passphrase`) | `private/opentofu/b2.sops.yaml` |
 | Break-glass copy of the state | `private/opentofu/state-copies/<root>.state.json` |
 | Changing the passphrase | `just tofu-passphrase`; [rotate-state-passphrase.md](../../docs/runbooks/rotate-state-passphrase.md) |
+| Credentials of a root, beyond the state's | Set by `scripts/tofu/child.sh` for that root only. The roots `pve` and `remote` get the scoped API token of the hypervisor from `private/proxmox/tokens.sops.yaml` |
+| The hypervisor's CA certificate | `private/proxmox/pve1-ca.crt`, fetched and proven with `just pve-ca`. The provider has no setting for it, so the wrapper adds it to the system's bundle for the command. Verification is never switched off |
 
 `backend.hcl` holds three settings:
 
