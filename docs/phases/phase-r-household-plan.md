@@ -1,6 +1,6 @@
 # Phase R, second part: household access from away
 
-Status: **proposed on 2026-10-09; not approved, nothing built.** On 2026-10-09 the owner widened the purpose of remote access: it is also for using the home from away, on the laptop and the phone, not only for building the lab. This plan covers that. The administration path is `phase-r-plan.md`; the changes this plan makes there are listed at the end. The research is in `docs/research/2026-10-09-household-access-research.md`. The draft was reviewed by two independent reviewers; their findings are worked in.
+Status: **approved by the owner on 2026-10-09, with every recommended default (H1 to H9); not started. It starts when the administration path has passed its gate.** The decision record is `docs/adr/0005-administrative-access.md`. Three things the owner said with the approval: the two app PINs of H4 are set; printed recovery codes are at home; the ESP32's page password is deferred, because it needs a firmware flash (backlog B35), so rule E18 for the ESP32 waits for it unless the owner decides otherwise at H.0. On 2026-10-09 the owner widened the purpose of remote access: it is also for using the home from away, on the laptop and the phone, not only for building the lab. This plan covers that. The administration path is `phase-r-plan.md`; the changes this plan makes there are listed at the end. The research is in `docs/research/2026-10-09-household-access-research.md`. The draft was reviewed by two independent reviewers; their findings are worked in.
 
 Goal: from away, the owner can operate chosen home devices, later the services hosted on Node 1, and can browse through the home connection. The owner can also close things down from away when something looks wrong. None of this may reach the management side.
 
@@ -75,10 +75,10 @@ Whether a hosted service is also published on the internet is decided per servic
 | Item | When | Why |
 |---|---|---|
 | Each new IoT device, when it is added: its name, and whether you need its own page from away | as they come | H1 is a list of names and ports. Known today: one ESP32 and the printer; three or four more ESP32 devices are planned |
-| The two app PINs of H4 set, and no standing GitHub session on the phone | before H.5 | Answered 2026-10-09: the second factor is a synced authenticator app and synced passkeys; the password manager is locked on the phone. The login therefore works without the phone and without the laptop, from any device you sign the two apps in to |
-| Printed recovery codes for GitHub, the password manager and the authenticator, kept at home | before H.5 | The two apps protect each other's logins. Without paper, losing both devices at once can lock you out of all three |
-| A password on the ESP32's web page, web update off | before H.3 | See the risk on that password |
-| The printer's model, and whether its page has a password | before its row is written | Its ports are read off the device, not guessed |
+| The two app PINs of H4 set (done 2026-10-09), and no standing GitHub session on the phone | before H.5 | Answered 2026-10-09: the second factor is a synced authenticator app and synced passkeys; the password manager is locked on the phone. The login therefore works without the phone and without the laptop, from any device you sign the two apps in to |
+| Printed recovery codes for GitHub, the password manager and the authenticator, kept at home (done 2026-10-09) | before H.5 | The two apps protect each other's logins. Without paper, losing both devices at once can lock you out of all three |
+| A password on the ESP32's web page, web update off | deferred by the owner on 2026-10-09 to the next firmware flash (backlog B35) | E18 waits for it. See the risk on that password: it protects against other devices at home, not against the phone that stores it, so the owner may decide at H.0 to open E18 without it |
+| Whether the printer's status page has a password, and which of its services you want from away | at H.0 | The model is a Brother HL-L2350DW (answered 2026-10-09). Its ports are read off the device, not guessed |
 
 ## Addresses and rules
 
@@ -92,7 +92,7 @@ New firewall exceptions on the router:
 | ID | From | To | Ports | Written |
 |---|---|---|---|---|
 | E18 | 10.0.31.10 | ESP32 10.0.60.10 | tcp 80 | H.3 |
-| E19 | 10.0.31.10 | printer 10.0.60.182 | the ports read off the device | when its model is known |
+| E19 | 10.0.31.10 | printer 10.0.60.182, a Brother HL-L2350DW | the ports read off the device at H.0; this model usually offers its status page on tcp 80 and 443 and printing on tcp 631 and 9100 | H.3, for the ports the owner wants from away |
 | E20 | 10.0.31.10 | household listener 10.0.50.200 | tcp 443 | in the phase that builds and proves the listener |
 | E21 | 10.0.31.10 | internet, as defined above | tcp 80, 443 and udp 443 per H2; what Tailscale itself needs | H.3 |
 | E22 | workstation 192.168.1.196, .197 | 10.0.31.10 | tcp 22: configuring the container, from home only | H.3 |
@@ -162,7 +162,7 @@ Plex, photo and video backup and a shared drive need bulk storage. Node 1 has on
 
 | # | Step | Needs the owner | Changes a device | Gate |
 |---|---|---|---|---|
-| H.0 | This plan approved; ADR 0005 widened to household access; the list of H1; the answers of H4; the ESP32's page protected; its real ports probed from a trusted device | list, answers, ESP32 | ESP32 | The page asks for its password |
+| H.0 | This plan approved (done 2026-10-09); ADR 0005 (done 2026-10-09); the list of H1; the answers of H4; the ESP32's page protected; its real ports probed from a trusted device | list, answers, ESP32 | ESP32 | The page asks for its password |
 | H.1 | pve1: the token's row for VLAN 31. Container `home1` created by OpenTofu in the root of `remote1`, with pve1's firewall on its network device as stated above | - | pve1 | The plan shows `remote1` unchanged. The tag check accepts 30 for `remote1` and 31 for `home1` only. From `home1`, a second address and the address of `remote1` are refused at pve1 |
 | H.2 | Policy, first part: the second tag, the automatic approval of its routes and of the exit node, the deny tests | - | Tailscale only | The tests pass; a grant widened on purpose is refused by them |
 | H.3 | Router: name lookups for the zone, the forced lookups extended to it, E18, E21, E22. The firewall file only. Then `just test-remote` for `home1`, first with pve1's layer off, then with it on | - | Router | Zero differences; the listed pairs and name lookups at 10.0.31.1 answer; 10.0.50.201 on tcp 443 and the provider's equipment are refused, with the layer that refuses each named |
