@@ -33,6 +33,34 @@ TMPDIR=$(mktemp -d /dev/shm/tofu.XXXXXX)
 export TMPDIR
 trap 'rm -rf "$TMPDIR"' EXIT
 
+# ---- credentials per root -----------------------------------------------------
+# Every root gets the state backend's credentials above. Beyond that, each
+# root receives only what it needs, so a mistake or a compromised provider in
+# one root cannot use another root's credential.
+PVE_TOKEN_ID='terraform@pve!tofu'
+PVE_CA="$TOFU_REPO/private/proxmox/pve1-ca.crt"
+
+proxmox_credentials() {
+	local tokens="$TOFU_REPO/private/proxmox/tokens.sops.yaml" secret
+	[ -r "$PVE_CA" ] || {
+		echo "missing $PVE_CA: the hypervisor's CA certificate. Fetch it with 'just pve-ca' (it changes with every reinstall of the hypervisor)." >&2
+		exit 2
+	}
+	secret=$(sops decrypt --extract "[\"$PVE_TOKEN_ID\"][\"secret\"]" "$tokens")
+	: "${secret:?no secret for $PVE_TOKEN_ID in private/proxmox/tokens.sops.yaml}"
+	export PROXMOX_VE_API_TOKEN="$PVE_TOKEN_ID=$secret"
+	# The provider has no setting for a CA of its own, and switching
+	# verification off is not an option. OpenTofu and its providers read
+	# one bundle file, so the hypervisor's CA is added to the system's
+	# bundle in the private temporary directory.
+	cat /etc/ssl/certs/ca-certificates.crt "$PVE_CA" >"$TMPDIR/ca-bundle.crt"
+	export SSL_CERT_FILE="$TMPDIR/ca-bundle.crt"
+}
+
+case "$TOFU_ROOT" in
+pve | remote) proxmox_credentials ;;
+esac
+
 eval "set -- $TOFU_ARGS"
 cd "$TOFU_ROOT_DIR"
 

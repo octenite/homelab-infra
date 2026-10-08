@@ -219,6 +219,14 @@ The backup server VM must run and the management window must be open (section 2B
 
    Expected: `Issued ...; secrets stored in private/proxmox/tokens.sops.yaml`. The secrets are never displayed.
 
+   A reinstalled host also has a new certificate authority of its own. Fetch it, so OpenTofu and the token test can verify the API again:
+
+   ```sh
+   just pve-ca
+   ```
+
+   Expected: `written: private/proxmox/pve1-ca.crt` and `the API's certificate verifies against it for 10.0.10.10`. Commit it with the tokens in step 3.
+
 2. Connect the host to the backup server:
 
    ```sh

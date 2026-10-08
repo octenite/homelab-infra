@@ -111,6 +111,10 @@ pve-tokens:
 pve-backup-init:
     bash scripts/ops/play.sh pve-backup-init
 
+# Fetch the hypervisor's CA certificate into the private repository and prove the API's certificate against it. Needed once, and after every reinstall.
+pve-ca:
+    bash scripts/ops/pve-ca.sh
+
 # Build unattended install media for the hypervisor. Examples: just pve-media validate ; just pve-media iso ; just pve-media prepare
 [positional-arguments]
 pve-media *args:
@@ -132,6 +136,10 @@ pbs-media:
 # Deny test of the backup path's fences from every vantage point (read-only probes). Fails when one probe disagrees.
 test-fences:
     bash scripts/tests/backup-fences.sh
+
+# Scope test of the OpenTofu API token: what it may read, and which writes are refused (each a no-op by design).
+test-token:
+    bash scripts/tests/token-scope.sh
 
 # Open the router's LuCI through an SSH tunnel: https://localhost:8443 (Ctrl+C closes it).
 luci host="192.168.1.53":
