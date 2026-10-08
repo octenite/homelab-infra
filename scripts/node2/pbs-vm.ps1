@@ -6,6 +6,7 @@
 # Run in an elevated PowerShell:
 #   powershell -ExecutionPolicy Bypass -File scripts\node2\pbs-vm.ps1            converge; the management window is closed
 #   ... -Manage                                                                  converge and open the management window (SSH from WSL)
+#   ... -Away                                                                    converge for a laptop that leaves the house: no port forward at all
 #   ... -Iso F:\homelab\iso\pbs1-auto.iso                                        attach the install medium (VM off) and start the VM
 #   ... -Eject                                                                   detach the medium after the install and delete the image
 #   ... -Recreate      -Yes 'recreate pbs1'                                      remove the VM definition (disk files are kept), build it again
@@ -36,6 +37,17 @@
 # interfaces: a rule bound to an interface is bound to its GUID and silently
 # stops matching when the virtual adapter is created again.
 #
+# Away from home (-Away; Phase R, docs/phases/phase-r-plan.md)
+#   The backup port is admitted by source address. On the road the laptop
+#   accepts a route to the hypervisor through the Tailscale tunnel, so that
+#   address no longer proves the path a packet took. -Away therefore removes
+#   the forward and the allow rule, and the block rule for the backup port
+#   then names every source. The hypervisor has no backup target meanwhile.
+#   No mode is stored: the next plain run restores the forward.
+#   scripts\node2\travel.ps1 calls both forms.
+#   The VM itself never reaches a Tailscale address (100.64.0.0/10): its NAT
+#   leg denies that range like the private ranges, in every mode.
+#
 # Generation 1 (BIOS), not 2: the Proxmox installer's early environment has
 # no synthetic Hyper-V keyboard or storage driver, so on a Generation 2 VM it
 # finds neither its DVD nor the console keyboard (seen 2026-10-06). The
@@ -53,6 +65,7 @@ param(
     [string]$Iso,
     [switch]$Eject,
     [switch]$Manage,
+    [switch]$Away,
     [switch]$Recreate,
     [switch]$WipeDatastore,
     [switch]$WipeSystem,
@@ -92,6 +105,7 @@ $MacNat = '00155D980003'
 $MacP2p = '00155D990003'
 $PveAddress = '10.0.10.10'
 $WslRange = '172.16.0.0-172.31.255.255'   # WSL's NAT network is somewhere in 172.16.0.0/12 after every start
+$TailnetRange = '100.64.0.0/10'           # every Tailscale address; the host's Tailscale interface would route the VM there
 $BackupPort = 8007
 $SshForwardPort = 2222
 $WslMemory = '5GB'
@@ -117,6 +131,9 @@ if (-not (Get-Command Get-VM -ErrorAction SilentlyContinue)) { throw 'Hyper-V Po
 if ($Iso -and $Eject) { throw '-Iso and -Eject cannot be combined: attach, let the installer finish, then eject.' }
 if ($Iso -and -not (Test-Path -LiteralPath $Iso)) { throw "ISO not found: $Iso" }
 if ($WipeDatastore -and $WipeSystem) { throw 'One wipe at a time: run -WipeSystem and -WipeDatastore separately.' }
+if ($Away -and ($Manage -or $Iso -or $Eject -or $Recreate -or $WipeSystem -or $WipeDatastore)) {
+    throw '-Away stands alone: it closes the management window and removes the port forward. Work on the VM is done at home, before leaving.'
+}
 $destructive = @()
 if ($Recreate) { $destructive += @{ Switch = '-Recreate'; Phrase = "recreate $VmName"; What = 'turns the VM off and removes its definition (the disk files are kept)' } }
 if ($WipeSystem) { $destructive += @{ Switch = '-WipeSystem'; Phrase = "delete $VmName system"; What = 'deletes the system disk of the VM' } }
@@ -374,6 +391,7 @@ Sync-Acl 'nat' @(
     @{ Action = 'Deny'; Remote = '10.0.0.0/8' },
     @{ Action = 'Deny'; Remote = '172.16.0.0/12' },
     @{ Action = 'Deny'; Remote = '192.168.0.0/16' },
+    @{ Action = 'Deny'; Remote = $TailnetRange },
     @{ Action = 'Allow'; Remote = "$NatHost/32" }
 )
 if (Get-VMNetworkAdapter -VMName $VmName -Name p2p -ErrorAction SilentlyContinue) {
@@ -456,10 +474,17 @@ $sshOthers = Get-Others $WslRange
 $rules = @(
     @{ Name = 'homelab-block-direct-link'; Display = 'homelab: nothing inbound from the direct link'; Action = 'Block'; Protocol = 'Any'; Remote = @($P2pNet) },
     @{ Name = 'homelab-block-backup-vm'; Display = 'homelab: nothing inbound from the backup VM'; Action = 'Block'; Protocol = 'Any'; Remote = @($NatGuests) },
-    @{ Name = 'homelab-pbs1-8007-others'; Display = "homelab: backup port $BackupPort from nobody but the hypervisor"; Action = 'Block'; Protocol = 'TCP'; Port = $BackupPort; Remote = $backupOthers.Wide; RemoteAlt = $backupOthers.Narrow },
-    @{ Name = 'homelab-pbs1-ssh-others'; Display = "homelab: management port $SshForwardPort from nobody but WSL"; Action = 'Block'; Protocol = 'TCP'; Port = $SshForwardPort; Remote = $sshOthers.Wide; RemoteAlt = $sshOthers.Narrow },
-    @{ Name = 'homelab-pbs1-8007'; Display = "homelab: backup port $BackupPort from the hypervisor (E14)"; Action = 'Allow'; Protocol = 'TCP'; Port = $BackupPort; Remote = @($PveAddress) }
+    @{ Name = 'homelab-pbs1-ssh-others'; Display = "homelab: management port $SshForwardPort from nobody but WSL"; Action = 'Block'; Protocol = 'TCP'; Port = $SshForwardPort; Remote = $sshOthers.Wide; RemoteAlt = $sshOthers.Narrow }
 )
+if ($Away) {
+    # The same rule name in both modes: a change of mode replaces the rule,
+    # and the allow rule is removed below as one this run does not want.
+    $rules += @{ Name = 'homelab-pbs1-8007-others'; Display = "homelab: backup port $BackupPort from nobody (away)"; Action = 'Block'; Protocol = 'TCP'; Port = $BackupPort; Remote = @('Any') }
+}
+else {
+    $rules += @{ Name = 'homelab-pbs1-8007-others'; Display = "homelab: backup port $BackupPort from nobody but the hypervisor"; Action = 'Block'; Protocol = 'TCP'; Port = $BackupPort; Remote = $backupOthers.Wide; RemoteAlt = $backupOthers.Narrow }
+    $rules += @{ Name = 'homelab-pbs1-8007'; Display = "homelab: backup port $BackupPort from the hypervisor (E14)"; Action = 'Allow'; Protocol = 'TCP'; Port = $BackupPort; Remote = @($PveAddress) }
+}
 if ($Manage) {
     $rules += @{ Name = 'homelab-pbs1-ssh-wsl'; Display = "homelab: management port $SshForwardPort from WSL (window open)"; Action = 'Allow'; Protocol = 'TCP'; Port = $SshForwardPort; Remote = @($WslRange) }
 }
@@ -475,7 +500,8 @@ foreach ($r in @(Get-NetFirewallRule -Name 'homelab-*' -ErrorAction SilentlyCont
 $svc = Get-Service iphlpsvc
 if ($svc.StartType -ne 'Automatic') { Set-Service iphlpsvc -StartupType Automatic; Step 'IP Helper service automatic (port forwards)' }
 if ($svc.Status -ne 'Running') { Start-Service iphlpsvc; Step 'IP Helper service started' }
-$forwards = @(@{ Listen = "$BackupPort"; Address = $NatPbs; Port = "$BackupPort"; What = 'backup port (E14)' })
+$forwards = @()
+if (-not $Away) { $forwards += @{ Listen = "$BackupPort"; Address = $NatPbs; Port = "$BackupPort"; What = 'backup port (E14)' } }
 if ($Manage) { $forwards += @{ Listen = "$SshForwardPort"; Address = $NatPbs; Port = '22'; What = 'management window: SSH from WSL' } }
 $haveForwards = foreach ($line in (Invoke-Netsh interface portproxy show v4tov4)) {
     if ("$line" -match '^\s*(\S+)\s+(\d+)\s+(\S+)\s+(\d+)\s*$') { @{ ListenAddress = $Matches[1]; Listen = $Matches[2]; Address = $Matches[3]; Port = $Matches[4] } }
@@ -525,5 +551,7 @@ if ($changes.Count -eq 0) { Write-Host "$VmName matches the script. Nothing was 
 else { Write-Host "$($changes.Count) change(s)." }
 if ($Manage) { Write-Host "management window: OPEN (SSH from WSL through port $SshForwardPort). Close it with a plain run when the work is done." }
 else { Write-Host 'management window: closed.' }
+if ($Away) { Write-Host "backup port: CLOSED for travel (no forward, port $BackupPort blocked for every source). A plain run at home opens it for the hypervisor again." }
+else { Write-Host "backup port: forwarded to the VM for the hypervisor ($PveAddress) only." }
 Get-VM -Name $VmName | Select-Object Name, State, @{n = 'MemoryGB'; e = { $_.MemoryStartup / 1GB } }, ProcessorCount, AutomaticStartAction | Format-Table -AutoSize
 Get-VMNetworkAdapter -VMName $VmName | Select-Object Name, SwitchName, MacAddress, IPAddresses | Format-Table -AutoSize

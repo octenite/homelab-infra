@@ -4,6 +4,8 @@
 # connections and sends pings, from every vantage point the lab offers.
 #
 #   scripts/tests/backup-fences.sh            (or: just test-fences)
+#   scripts/tests/backup-fences.sh away       after pbs-vm.ps1 -Away: the
+#                                             backup port answers nobody
 #
 # Runs in WSL with a session open. Vantage points: the hypervisor, the router
 # (a trusted-network source that no rule admits), WSL itself, and the backup
@@ -15,6 +17,15 @@
 # filtered (no answer). "closed" in an expectation accepts refused or
 # filtered: both mean nothing answered on that port.
 set -uo pipefail
+
+case "${1:-home}" in
+home) FORWARD=open ;;
+away) FORWARD=closed ;;
+*)
+	echo "usage: $0 [away]" >&2
+	exit 2
+	;;
+esac
 
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8)
 export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
@@ -80,7 +91,8 @@ run_on() { # <label> <"target port expected" lines> <ssh target...> ; runs the p
 echo "== from the hypervisor"
 # Over the direct link the workstation answers nothing and the backup server
 # answers the backup port only. Over the home network the workstation answers
-# the backup port (E14) and nothing else.
+# the backup port (E14) and nothing else; after pbs-vm.ps1 -Away not even that.
+echo "  backup port on the home network: expected $FORWARD"
 spec=$(
 	for p in 22 135 445 2222 3389 8007; do echo "$P2P_HOST $p filtered"; done
 	echo "$P2P_HOST ping silent"
@@ -105,7 +117,7 @@ fi
 spec=$(
 	for a in "${WS_ADDRS[@]}"; do
 		if grep -qx "$a" <<<"$held"; then
-			echo "$a 8007 open"
+			echo "$a 8007 $FORWARD"
 			for p in 22 445 2222 3389; do echo "$a $p closed"; done
 		fi
 	done
@@ -183,6 +195,8 @@ if [ "$window" = open ]; then
 		echo "${WS_ADDRS[0]} 445 filtered"
 		echo "${WS_ADDRS[0]} 8007 filtered"
 		echo "$ROUTER ping silent"
+		# nor a Tailscale address: the resolver every Tailscale client offers
+		echo "100.100.100.100 53 filtered"
 		# and it keeps its way out
 		echo "9.9.9.9 53 open"
 		echo "download.proxmox.com 443 open"
