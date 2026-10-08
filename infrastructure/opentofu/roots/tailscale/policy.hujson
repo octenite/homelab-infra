@@ -1,0 +1,38 @@
+// Access policy of the tailnet. Source of truth: this file, applied with
+// `just tofu tailscale apply`. Design: docs/adr/0005-administrative-access.md.
+//
+// Phase R, step R.2: nothing may reach anything. A new tailnet starts with a
+// rule that lets every device reach every other; this file replaces it before
+// the first device joins. The grants for the laptop follow in step R.3, when
+// its own address in the tailnet exists.
+//
+// Rules for this file:
+//   - Grants only. No "acls" and no "ssh" section: Tailscale SSH is not used.
+//   - A source is always one device, named by its tailnet address. Never a
+//     group of people and never "*".
+//   - Every grant names the one container it passes through.
+//   - No grant names a phone or a container as its destination.
+{
+	// Nobody may assign a tag except the owner, by hand in the console.
+	"tagOwners": {},
+
+	"grants": [],
+
+	// Checked by Tailscale every time the file changes. A failing test
+	// rejects the file, so a mistake that opens something cannot be applied.
+	"tests": [
+		{
+			// The owner's login reaches nothing at home by itself: not the
+			// hypervisor, not the router, not the access points.
+			"src": "${owner_login}",
+			"deny": [
+				"10.0.10.10:22",
+				"10.0.10.10:8006",
+				"10.0.10.2:22",
+				"10.0.10.3:22",
+				"192.168.1.53:22",
+				"10.0.50.201:443",
+			],
+		},
+	],
+}

@@ -71,6 +71,7 @@ The backend was initialised on 2026-10-07: `private/opentofu/backend.hcl` holds 
 |---|---|---|---|---|---|
 | State passphrase | 2026-10-06 (generated) | `private/opentofu/b2.sops.yaml`, key `tofu_state_passphrase`. Password manager | `just tofu <root> <command>`: `scripts/tofu/child.sh` passes it to OpenTofu, which encrypts every state and plan file before it leaves the workstation | On exposure, and after a lost workstation: [rotate-state-passphrase.md](../runbooks/rotate-state-passphrase.md), rehearsed 2026-10-09 | With the bucket keys or a state copy: the state in the clear. From Phase 5 the state holds the Talos secrets |
 | Backblaze B2 application key for the state bucket | 2026-10-06 (owner) | `private/opentofu/b2.sops.yaml`, keys `b2_key_id` and `b2_application_key` | `just tofu`: the S3 backend, and the fetch of the encrypted state copy into `private/opentofu/state-copies/` | Yearly, and on exposure. [R7](#r7-replace-the-b2-application-key) | Reading, overwriting and deleting the state objects. They are ciphertext |
+| Tailscale OAuth client for the policy | 2026-10-09 (owner, Tailscale console). Scopes read back the same day: `policy_file`, `feature_settings`, and the two the console adds, `devices:core:read` and `devices:posture_attributes` | `private/tailscale/oauth.sops.yaml`, keys `tailscale_oauth_client_id` and `tailscale_oauth_client_secret`. The key `tailscale_owner_login` in the same file is an identifier, kept out of the public repository | `just tofu tailscale <command>` only: `scripts/tofu/child.sh` gives it to no other root | Yearly, and on exposure. It does not expire by itself. A new client per [tailnet-setup.md](../runbooks/tailnet-setup.md) section 2, then the old one revoked in the console | The policy and the settings of the tailnet can be changed: access between devices that are already members can be widened or cut. It cannot add a device or create a key (refused, checked 2026-10-09), and from step R.4 it cannot get around node signing |
 
 ## 6. Notifications and monitoring
 
@@ -91,6 +92,7 @@ Logins, second factors and recovery codes are held by the owner. None of them is
 | Backblaze | Owns the state bucket and its application key | Password on exposure. The application key: [R7](#r7-replace-the-b2-application-key) | Buckets and keys can be created and deleted. State objects are ciphertext |
 | healthchecks.io | Owns the dead-man's switch of the nightly backup | Password on exposure. The ping URL: [R9](#r9-replace-the-healthchecksio-ping-url) | The check can be paused or deleted, which silences the alert for a missing backup |
 | Telegram | Owns the bot (BotFather) and receives the notifications | The bot token: [R8](#r8-replace-the-telegram-bot-token) | The bot can be taken over or deleted |
+| Tailscale | Owns the tailnet for remote access. Created on 2026-10-09 by signing in with GitHub, so it has no password of its own: whoever can log in to the GitHub account is its owner | With the GitHub account | Devices can be added and the policy changed, up to what node signing refuses from step R.4 (`docs/adr/0005-administrative-access.md`) |
 
 ## 8. Derived copies
 
