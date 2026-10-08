@@ -23,19 +23,40 @@ terraform {
 
   # State and plan files never leave this machine unencrypted; "enforced"
   # refuses to read or write an unencrypted state.
+  #
+  # Two key slots, "state" and "state_alt". The slot named in `method` writes,
+  # with the current passphrase. The other is the fallback for reading, with
+  # the previous passphrase, which exists only while a rotation is under way;
+  # otherwise the wrapper passes the current passphrase for both, so there is
+  # one key and no second way in. OpenTofu keeps a key's salt under the
+  # slot's name and wants the writing method named statically, so a rotation
+  # swaps the two slots: scripts/tofu/passphrase.sh does it, never by hand
+  # (docs/runbooks/rotate-state-passphrase.md).
   encryption {
     key_provider "pbkdf2" "state" {
       passphrase = var.state_passphrase
     }
+    key_provider "pbkdf2" "state_alt" {
+      passphrase = var.state_passphrase_previous
+    }
     method "aes_gcm" "state" {
       keys = key_provider.pbkdf2.state
     }
+    method "aes_gcm" "state_alt" {
+      keys = key_provider.pbkdf2.state_alt
+    }
     state {
-      method   = method.aes_gcm.state
+      method = method.aes_gcm.state
+      fallback {
+        method = method.aes_gcm.state_alt
+      }
       enforced = true
     }
     plan {
-      method   = method.aes_gcm.state
+      method = method.aes_gcm.state
+      fallback {
+        method = method.aes_gcm.state_alt
+      }
       enforced = true
     }
   }
@@ -46,3 +67,10 @@ variable "state_passphrase" {
   type        = string
   sensitive   = true
 }
+
+variable "state_passphrase_previous" {
+  description = "Passphrase a state may still be encrypted with during a rotation (TF_VAR_state_passphrase_previous). Equal to the current one otherwise."
+  type        = string
+  sensitive   = true
+}
+

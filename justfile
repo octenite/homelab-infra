@@ -32,6 +32,11 @@ tofu-lint:
 tofu root *args:
     bash scripts/tofu/run.sh "$@"
 
+# Change the passphrase that encrypts the OpenTofu state: status, begin, finish, back. See docs/runbooks/rotate-state-passphrase.md.
+[positional-arguments]
+tofu-passphrase *args:
+    bash scripts/tofu/passphrase.sh "$@"
+
 # Install the pinned Ansible collections into infrastructure/ansible/collections.
 ansible-deps:
     cd infrastructure/ansible && ANSIBLE_CONFIG="$PWD/ansible.cfg" ansible-galaxy collection install -r requirements.yml -p ./collections
