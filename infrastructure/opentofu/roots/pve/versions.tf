@@ -7,6 +7,15 @@
 terraform {
   required_version = "~> 1.13"
 
+  required_providers {
+    # Exact pin; Renovate proposes the bumps. The lock file beside this file
+    # holds the checksums.
+    proxmox = {
+      source  = "bpg/proxmox"
+      version = "0.116.0"
+    }
+  }
+
   backend "s3" {
     # bucket, region and endpoints: private/opentofu/backend.hcl. The object
     # key is <root>/terraform.tfstate, passed by scripts/tofu/run.sh.
@@ -74,3 +83,16 @@ variable "state_passphrase_previous" {
   sensitive   = true
 }
 
+variable "pve_endpoint" {
+  description = "API address of the hypervisor. Reached from the workstation's pinned addresses (E2) and, from Phase R, through the administration path (E15)."
+  type        = string
+  default     = "https://10.0.10.10:8006/"
+}
+
+# The API token comes from the environment (PROXMOX_VE_API_TOKEN), set by
+# scripts/tofu/child.sh for this root only. The certificate is verified
+# against the hypervisor's own CA; `insecure` is never set. No SSH block: the
+# token is the only way in, so nothing here can need the root login.
+provider "proxmox" {
+  endpoint = var.pve_endpoint
+}
