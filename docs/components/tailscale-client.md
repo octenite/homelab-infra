@@ -1,6 +1,6 @@
 # Component: Tailscale client on the workstation
 
-Status: built in Phase R, step R.3 (2026-10-09). The policies are applied. State encryption and the login are open: see [TPM](#tpm).
+Status: built in Phase R, step R.3 (2026-10-09). The policies are applied and the empty state is sealed. Open: the check after a restart of Windows, and the login.
 
 ## Purpose
 
@@ -80,7 +80,13 @@ What the seal is worth: the file is bound to this TPM and to nothing else, with 
 
 A cleared TPM cannot open the file. The laptop then needs a new login and a new approval, and, as the only signer of the tailnet, the disablement procedure at home (decision D4). Before a firmware update, a "reset this PC" or a deliberate clear: set `EncryptState` to `0`, restart the service, check that the file is plain, make the change, then run the script again.
 
-**Open on 2026-10-09: a TPM operation is pending on this laptop.** The firmware interface reports request 5, "clear the TPM", waiting for the next start, and the confirmation status says no key press is needed for it. The same storage key has been in use since at least 2026-03-25 across about a hundred starts, so the request has either never been carried out or is recent. The script does not switch state encryption on while any request is pending, and `-Enrol` refuses without a sealed state. The owner decides whether the request is cancelled; the result is recorded in `docs/phases/phase-r-plan.md`, step R.3.
+The script does not switch state encryption on while the firmware holds a pending TPM operation, and `-Enrol` refuses without a sealed state. On 2026-10-09 this laptop reported request 5, "clear the TPM", waiting for the next start, with no key press needed for it. The same storage key had been in use since at least 2026-03-25 across about a hundred starts, so the request had either never been carried out or was recent; who made it is not known. The owner had it cancelled the same day: request 0, "no operation", submitted through Windows and read back, and `Get-Tpm` no longer shows a restart pending. To read it again:
+
+```
+(Get-CimInstance -Namespace root\cimv2\Security\MicrosoftTpm -ClassName Win32_Tpm | Invoke-CimMethod -MethodName GetPhysicalPresenceRequest).Request
+```
+
+Measured on 2026-10-09, with the client logged out and its state empty: the script switched the policy on and the file became sealed; with `EncryptState` set to `0` and a service restart it became plain again, `-Check` reported it, and the next run sealed it again. The service log names each conversion. Still to measure: that the seal survives a restart of Windows.
 
 ## Security considerations
 
