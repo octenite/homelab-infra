@@ -1,6 +1,6 @@
 # Component: Tailscale client on the workstation
 
-Status: built in Phase R, step R.3 (2026-10-09). The policies are applied and the empty state is sealed. Open: the check after a restart of Windows, and the login.
+Status: built in Phase R, step R.3. The policies are applied, the state is sealed, and the laptop was enrolled on 2026-10-10 and left disconnected.
 
 ## Purpose
 
@@ -80,13 +80,13 @@ What the seal is worth: the file is bound to this TPM and to nothing else, with 
 
 A cleared TPM cannot open the file. The laptop then needs a new login and a new approval, and, as the only signer of the tailnet, the disablement procedure at home (decision D4). Before a firmware update, a "reset this PC" or a deliberate clear: set `EncryptState` to `0`, restart the service, check that the file is plain, make the change, then run the script again.
 
-The script does not switch state encryption on while the firmware holds a pending TPM operation, and `-Enrol` refuses without a sealed state. On 2026-10-09 this laptop reported request 5, "clear the TPM", waiting for the next start, with no key press needed for it. The same storage key had been in use since at least 2026-03-25 across about a hundred starts, so the request had either never been carried out or was recent; who made it is not known. The owner had it cancelled the same day: request 0, "no operation", submitted through Windows and read back, and `Get-Tpm` no longer shows a restart pending. To read it again:
+The script does not switch state encryption on while the firmware holds a pending TPM operation, and `-Enrol` refuses without a sealed state.
 
-```
-(Get-CimInstance -Namespace root\cimv2\Security\MicrosoftTpm -ClassName Win32_Tpm | Invoke-CimMethod -MethodName GetPhysicalPresenceRequest).Request
-```
+**`Get-Tpm` shows `RestartPending: True` on this laptop after every start. It is a quirk of the firmware (Lenovo FCCN21WW), not a pending operation.** On 2026-10-09 the firmware interface reported request 5, "clear the TPM", and it was taken for real and cancelled at the owner's word. After the next start it read 5 again. Measured on 2026-10-10: the firmware answers "which operation is pending" with the number of the operation it was last asked about. Asking whether operation 14 would need a key press makes it read 14, then 6, then 5, then 0, with nothing requested in between. Windows asks about operation 5 at every start, which is where the 5 came from. The firmware's own record of the last operation it carried out is empty, and the TPM's storage key has been the same since at least 2026-03-25. No clear was ever requested, and the cancellation changed nothing.
 
-Measured on 2026-10-09, with the client logged out and its state empty: the script switched the policy on and the file became sealed; with `EncryptState` set to `0` and a service restart it became plain again, `-Check` reported it, and the next run sealed it again. The service log names each conversion. Still to measure: that the seal survives a restart of Windows.
+The script therefore asks one question about operation 0 when the firmware names a pending operation, and reads again. A request that is really pending stays; the echo goes away, and the script prints a note.
+
+Measured with the client logged out and its state empty (2026-10-09): the script switched the policy on and the file became sealed; with `EncryptState` set to `0` and a service restart it became plain again, `-Check` reported it, and the next run sealed it again. The service log names each conversion. Measured on 2026-10-10: the seal survived a restart of Windows, and the file stayed sealed through the login.
 
 ## Security considerations
 
@@ -111,7 +111,8 @@ After a reinstall of Windows, a new laptop or a cleared TPM: remove the old devi
 | `Tailscale <x> is installed; this script pins <y>` | The client was updated or installed at another version. Install the pinned one, or change the pin by pull request |
 | `... holds the value '<name>', which this design never sets` | Something wrote a policy that connects or redirects the client. Find out what, remove the value, run again |
 | `state encryption is switched on but ... is plain` | The service could not use the TPM or did not read the policy. Do not log in. Read `C:\ProgramData\Tailscale\Logs\tailscale-service-*.txt` for lines with `TPM` |
-| `the firmware holds a pending TPM operation` | See [TPM](#tpm) |
+| `the firmware holds a pending TPM operation` | A real request: it stayed after the script's question about another operation. Find out who made it before sealing anything. See [TPM](#tpm) |
+| The client is connected although the script disconnected it | Something switched it on: the tray menu's "Connect", or a command. `tailscale down` switches it off; the service log (`C:\ProgramData\Tailscale\Logs`) shows the edit as `EditPrefs: MaskedPrefs{WantRunning=true}`. At home with routes not accepted it reaches nothing, but the design keeps it off until `travel.ps1 -Away` |
 | `the client is '<state>', not 'NeedsLogin'` on `-Enrol` | The laptop is enrolled already. Nothing to do |
 | The health line `State store failed to initialize` | The sealed file cannot be opened: the TPM was cleared or replaced. Follow Restore |
 | A bare `tailscale up` fails after the key expired | The client wants every non-default setting named. Use the command it prints, which contains `--shields-up` and `--accept-dns=false`, then run the script with `-Check` |

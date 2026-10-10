@@ -130,7 +130,17 @@ function Get-TpmBlocker {
     if ("$($w.SpecVersion)" -notmatch '^2\.0') { return "the TPM is version '$($w.SpecVersion)', not 2.0" }
     $pending = ($w | Invoke-CimMethod -MethodName GetPhysicalPresenceRequest).Request
     if ($pending -ne 0) {
-        return "the firmware holds a pending TPM operation (request $pending; 5, 14, 21 and 22 clear the TPM at the next start). A cleared TPM cannot open a sealed state: the laptop would have to be enrolled again. See docs/components/tailscale-client.md, 'TPM'"
+        # This laptop's firmware answers "which operation is pending" with
+        # the number of the operation it was last ASKED about, and Windows
+        # asks about operation 5, "clear", at every start (measured
+        # 2026-10-10). A question about operation 0 tells the two apart: a
+        # request that is really pending does not go away by asking.
+        [void]($w | Invoke-CimMethod -MethodName GetPhysicalPresenceConfirmationStatus -Arguments @{ Operation = [uint32]0 })
+        $again = ($w | Invoke-CimMethod -MethodName GetPhysicalPresenceRequest).Request
+        if ($again -ne 0) {
+            return "the firmware holds a pending TPM operation (request $again; 5, 14, 21 and 22 clear the TPM at the next start). A cleared TPM cannot open a sealed state: the laptop would have to be enrolled again. See docs/components/tailscale-client.md, 'TPM'"
+        }
+        Note "the firmware named TPM operation $pending as pending, and nothing after one question about another operation: its answer repeats the last question, no operation is pending"
     }
     return $null
 }
