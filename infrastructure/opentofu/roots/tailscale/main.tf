@@ -9,9 +9,12 @@ resource "tailscale_acl" "policy" {
 
 # Settings of the tailnet. What is not listed here is left as it is.
 resource "tailscale_tailnet_settings" "tailnet" {
-  # Until node signing is enabled (step R.4), a new device needs the owner's
-  # approval. The two cannot be on together; R.4 switches this off.
-  devices_approval_on = true
+  # Off since step R.4: node signing replaces it, and Tailscale does not
+  # allow both. A new device now needs a signature from the laptop, which
+  # the Tailscale service itself cannot give. If node signing is ever
+  # disabled for longer than the rehearsal of a recovery, this goes back to
+  # true in the same change (docs/runbooks/tailnet-setup.md).
+  devices_approval_on = false
 
   # Versions are pinned and bumped by pull request.
   devices_auto_updates_on = false

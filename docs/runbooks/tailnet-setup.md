@@ -2,7 +2,7 @@
 
 Use this once, when the Tailscale network for remote access is created, and again only if it has to be created anew. The design is `docs/adr/0005-administrative-access.md`; the steps it belongs to are R.2 to R.4 of `docs/phases/phase-r-plan.md`.
 
-Status: steps 1 to 3 written for step R.2 and carried out on 2026-10-09. The parts for devices and node signing are added with steps R.3 and R.4.
+Status: sections 1 to 3 carried out on 2026-10-09 (step R.2), the devices on 2026-10-10 (R.3), node signing and one rehearsal of the way out on 2026-10-11 (R.4).
 
 ## Before starting
 
@@ -77,6 +77,66 @@ What this credential can do if it leaks: change the policy among the devices tha
    Expected: `No changes.`
 
 4. In the console, under **DNS**, switch **MagicDNS** off. The lab addresses its targets by number, and the laptop takes no name service from Tailscale. This is a step by hand on purpose: the credential of step 2 can neither read nor change the name service (it answers "not found"), and a scope that could would also let a leaked credential point the devices at another name server.
+
+## 4. The devices
+
+The laptop: `docs/components/tailscale-client.md`, "Deployment". The phone: the Tailscale app, signed in with GitHub. Each new device's address goes into `policy.hujson` under `hosts`, with a test of its own, by pull request.
+
+While node signing is off, a new device waits for approval in the console (**Machines**). While it is on, it waits for a signature: section 6.
+
+## 5. Node signing
+
+Node signing ("Tailnet lock") means a device joins only with a signature from a trusted device. The Tailscale service cannot give one, and neither can someone who takes over the GitHub account. The laptop is the only signer (decision D4). First enabled on 2026-10-11.
+
+Before starting: the laptop connected (`tailscale up`), a session open, the password manager open and paper at hand.
+
+1. Check the list of devices. It must hold exactly the devices you know, because enabling signs every device that is in it.
+
+   ```sh
+   tailscale status
+   tailscale lock status
+   ```
+
+   The second prints this laptop's signing key, `tlpub:...`. On the phone, **Settings**, **Tailnet lock** shows the phone's node key and lock key; compare them with **Machines** in the console.
+2. Switch device approval off: Tailscale does not allow both. In `infrastructure/opentofu/roots/tailscale/main.tf` set `devices_approval_on = false`, then `just tofu tailscale apply`. From here until step 3 a GitHub login alone adds a device, so go on at once.
+3. Enable, **in your own terminal**, with the laptop's key from step 1:
+
+   ```
+   tailscale lock init --confirm --gen-disablements 3 tlpub:<this laptop's key>
+   ```
+
+   Without `--confirm` the command only prints what it would do. With it, it prints three disablement secrets, once. Do not use `--gen-disablement-for-support`: no secret goes to the vendor.
+4. Store the three secrets in the password manager and on one printed copy kept at home. Never in Git, never in a chat, never in a file on the laptop. Close the terminal.
+5. Check. Neither command prints a secret; the "disablement values" in the log are hashes.
+
+   ```
+   tailscale lock status
+   tailscale lock log --limit 3
+   ```
+
+   Expected: `Tailnet Lock is ENABLED`, this laptop's key as the only trusted signing key with `(self)`, and no device listed as locked out.
+
+## 6. Signing a new device
+
+On the laptop, connected:
+
+```
+tailscale lock status
+tailscale lock sign nodekey:<the new device's node key>
+```
+
+The first lists devices that wait, with their node keys. Compare the key with what the new device itself shows before signing it. A device can also be signed before it is approved by anything else; without a signature it stays cut off.
+
+## 7. The way out: disabling node signing
+
+Needed when the laptop's Tailscale state is lost (theft, a cleared TPM, a reinstall): no device can then be signed, the laptop included. Rehearsed on 2026-10-11.
+
+1. In the console, from any browser: **Settings**, **Device management**, **Tailnet lock**, **Disable Tailnet lock**. Paste one disablement secret. On a device that is still signed, `tailscale lock disable <secret>` does the same.
+2. One used secret switches signing off for the whole tailnet and for good: the others are worthless from then on.
+3. At once, by pull request or by hand in the console: `devices_approval_on = true`, so a new device again needs approval.
+4. Enrol the laptop again if it was lost (`docs/components/tailscale-client.md`), put its new address into `policy.hujson`, then enable signing anew with section 5. That makes three new secrets; replace the stored ones and destroy the old paper copy.
+
+Without a secret there is no way out: the tailnet has to be deleted and built again.
 
 ## How to know it worked
 
