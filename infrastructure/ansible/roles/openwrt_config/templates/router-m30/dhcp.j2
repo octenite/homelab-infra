@@ -55,6 +55,15 @@ config dhcp 'servers'
 	option interface 'servers'
 	option ignore '1'
 
+{# Remote access: static addresses only, no DHCP, no router advertisements. #}
+config dhcp 'remote'
+	option interface 'remote'
+	option ignore '1'
+
+config dhcp 'home_remote'
+	option interface 'home_remote'
+	option ignore '1'
+
 config dhcp 'wan'
 	option interface 'wan'
 	option ignore '1'
@@ -63,7 +72,7 @@ config dhcp 'wan'
 	option limit '150'
 	option dhcpv4 'disabled'
 
-{# The firewall admits the operator workstation by address (E1 to E3, E14),
+{# The firewall admits the operator workstation by address (E1 to E3, E14, E17),
    so each of its network cards is bound to its own address: the dock port
    and the Wi-Fi adapter. (One shared address for both was tried on
    2026-10-06 and deadlocked Windows, which refused the dock's lease while

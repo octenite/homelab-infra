@@ -68,7 +68,7 @@ The whole build is several sessions at home. The container can be configured onl
 
 | Step | Effect |
 |---|---|
-| R.5 | The router restarts its network: wired and Wi-Fi clients lose their connection for a few seconds |
+| R.5 | The router restarts its network: wired clients pause for several seconds; devices on the router's own Wi-Fi reconnect, which can take up to half a minute and may drop a call; once more five minutes later if the change is not confirmed. Do not switch the router off and on within ten minutes of the change |
 | R.6 | Nothing, unless the bridge change fails: then pve1 is unreachable for up to three minutes and restores itself |
 | Everything else | Nothing |
 
@@ -242,6 +242,7 @@ If the phone is lost: the household plan has the procedure. The phone holds no s
 | Every remote session reaches pve1 from one address, and the free plan keeps no traffic logs. After an incident, traffic cannot be attributed to a device | One person uses it. pve1 logs each login. Recorded as exception X29 |
 | Userspace mode is rated slower and newer than kernel mode by the vendor | Tested in R.8 and R.10 before the gate. If it fails, the choice between a kernel-mode container, which needs one root-run step on pve1, and a small VM returns to the owner |
 | Both ends sit behind provider NAT, so traffic is probably relayed | Usable for SSH and Ansible, slow for large copies. Measured in the speed drill. A relay of your own is a job for the later cloud server |
+| The router's resolver answers the container's name lookups from the same table as everyone's, so the container, the one machine that faces the internet, can learn the names and addresses of the household's devices | It cannot reach them: its zone forwards to the hypervisor's two ports and to the internet only. A resolver of its own for the zone is put to the owner when R.7 is planned |
 | The container dies or loses its signature while you are away | The health check alerts through the existing channel. `-Away` proves the whole path before you leave. Nothing repairs it remotely |
 | An access-rule trap in the hypervisor play: the cluster VLAN is addressed as "the first guest VLAN", so adding VLAN 30 in front would move the token's right and delete the old one | R.6 rewrites the rule first, in a run that must change nothing, and reads the permissions back |
 | The hypervisor's firewall has no automatic revert, and a dry run shows nothing of it today | R.6 adds the printed difference; the change adds rows only; a second login is opened before the first is closed; done at home with the console in reach |

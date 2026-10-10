@@ -6,11 +6,11 @@ The D-Link M30 routes between the home networks and the internet, enforces the f
 
 ## Architecture
 
-- One VLAN-aware bridge on the router carries five networks: management (10), trusted (20), servers (50), IoT (60) and guest (70). The plan and the port table are in [ARCHITECTURE.md](../ARCHITECTURE.md) section 6.
-- Six firewall zones, default deny between them and towards the router. Every allow rule carries the ID of its exception, E1 to E14. The table below lists them as they are in the template.
+- One VLAN-aware bridge on the router carries seven networks: management (10), trusted (20), servers (50), IoT (60), guest (70), and the two remote-access networks of Phase R, remote (30) and home_remote (31), which exist on the trunk to Node 1 only. The plan and the port table are in [ARCHITECTURE.md](../ARCHITECTURE.md) section 6.
+- Eight firewall zones, default deny between them and towards the router. Every allow rule carries the ID of its exception, E1 to E17. The table below lists them as they are in the template. The zone `home_remote` is in no rule.
 - The operator workstation holds two reserved addresses, each bound to one adapter: 192.168.1.196 on the dock port and 192.168.1.197 on Wi-Fi. Every workstation rule on the router and on the access points names both.
-- DNS: dnsmasq answers every network and forwards to a local smartdns instance. Client networks cannot use another resolver: such queries are redirected to the router.
-- IPv6 is off on every internal network.
+- DNS: dnsmasq answers every network except `home_remote` and forwards to a local smartdns instance. In `remote` it answers the container's address only. Client networks cannot use another resolver: such queries are redirected to the router.
+- IPv6 is off on every internal network: no prefix, no advertisements, no DHCPv6. The older networks still carry the router's link-local address; the two remote-access networks carry none.
 - Each access point is connected by a trunk and bridges the trusted, IoT and guest networks between Wi-Fi and the router. It has an address in the management network only (10.0.10.2 and 10.0.10.3), and its own small firewall protects that address.
 
 Exceptions in the router's firewall template (`templates/router-m30/firewall.j2`). "Workstation" means both of its addresses.
@@ -36,6 +36,10 @@ Exceptions in the router's firewall template (`templates/router-m30/firewall.j2`
 | E12 | `E12-pve1-to-household-listener` | 10.0.10.10 | 10.0.50.200 | TCP 443 |
 | E13 | `E13-talos-to-pve1-ntp` | 10.0.50.11, 10.0.50.21 | 10.0.10.10 | UDP 123 |
 | E14 | `E14-pve1-to-backup-server` | 10.0.10.10 | Workstation | TCP 8007 |
+| E15 | `E15-remote1-to-pve1` | 10.0.30.10 | 10.0.10.10 | TCP 22, 8006 |
+| E16 | `E16-remote1-to-wan-https` | 10.0.30.10 | Internet, without the private, link-local and carrier ranges on the provider's side | TCP 443 |
+| E17 | `E17-workstation-to-remote1-ssh` | Workstation | 10.0.30.10 | TCP 22 |
+| - | `Router-DNS-remote` | 10.0.30.10 | Router, 10.0.30.1 | TCP and UDP 53. Unlike the other `Router-...` rules it names one address, not a zone |
 
 Not exceptions: the trusted and guest networks reach the internet, and every zone reaches the services the router itself offers to it (rules named `Router-...`). E7 in ARCHITECTURE.md also names the exporters of the access points and the router. No rule for them is in the template today.
 
@@ -96,6 +100,7 @@ Firmware updates use the router's `owut` tool, which keeps the installed package
 |---|---|
 | An apply reports "does not match Git" after the change | The diff is printed. The device reverts by itself unless confirmed |
 | The workstation cannot reach the router after a change | Wait five minutes for the revert. Check that the workstation still holds one of its reserved addresses, 192.168.1.196 or 192.168.1.197 |
+| The router was switched off and on while a change waited for its confirmation | The revert is gone: the snapshot and its timer live in memory, and the router started with the new files. Nothing confirmed them. Run `just openwrt-check openwrt_routers` and decide: keep, or restore from the backup of the phase. Do not power-cycle the router within ten minutes of an apply |
 | A client gets no address | `logread -e dnsmasq` on the router; the pool of its network in `dhcp.j2` |
 | A connection between networks is refused | Expected by default. Find or add the exception in `firewall.j2` and the matrix |
 | What did the last apply do | `logread -e homelab` on the device |

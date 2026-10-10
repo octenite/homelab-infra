@@ -8,7 +8,8 @@ openwrt_config_health_commands:
 
 # What is cabled to each LAN port, as measured from the bridge's address table
 # on 2026-10-05 (it differs from the original hardware list).
-#   lan1  Node 1 (hypervisor): management untagged, servers tagged
+#   lan1  Node 1 (hypervisor): management untagged; servers (50) and the two
+#         remote-access networks (30, 31) tagged
 #   lan2  access point 1
 #   lan3  access point 2
 #   lan4  operator workstation: trusted

@@ -19,7 +19,8 @@ config device
 	list ports 'lan4'
 
 {# Port roles are documented in playbooks/group_vars/openwrt_routers.yaml.
-   lan1 = Node 1: management untagged, servers tagged.
+   lan1 = Node 1: management untagged; servers and the two remote-access
+   networks tagged.
    A port in openwrt_ap_trunk_ports leads to an access point: management
    untagged; trusted, IoT and guest tagged.
    Any other port carries the trusted network untagged. #}
@@ -37,6 +38,19 @@ config bridge-vlan 'vlan20'
 {% for p in ['lan2', 'lan3', 'lan4'] %}
 	list ports '{{ p }}:{{ 't' if p in openwrt_ap_trunk_ports else 'u*' }}'
 {% endfor %}
+
+{# Remote access (Phase R, docs/adr/0005-administrative-access.md): one
+   network per purpose, each for one container on Node 1. Tagged on the
+   trunk to Node 1 and on no other port; no Wi-Fi network carries them. #}
+config bridge-vlan 'vlan30'
+	option device 'br-lan'
+	option vlan '30'
+	list ports 'lan1:t'
+
+config bridge-vlan 'vlan31'
+	option device 'br-lan'
+	option vlan '31'
+	list ports 'lan1:t'
 
 config bridge-vlan 'vlan50'
 	option device 'br-lan'
@@ -68,6 +82,30 @@ config interface 'lan'
 	option proto 'static'
 	option multipath 'off'
 	list ipaddr '192.168.1.53/24'
+	option delegate '0'
+
+{# The two remote-access networks carry IPv4 only, and unlike the older
+   networks not even a link-local IPv6 address on the router's side: the
+   exposed containers live here, and nothing in these zones needs IPv6. #}
+{% for vid in [30, 31] %}
+config device
+	option name 'br-lan.{{ vid }}'
+	option ipv6 '0'
+
+{% endfor %}
+{# remote: the administration container remote1 (10.0.30.10). #}
+config interface 'remote'
+	option device 'br-lan.30'
+	option proto 'static'
+	list ipaddr '10.0.30.1/24'
+	option delegate '0'
+
+{# home_remote: the household container home1, built by the household plan.
+   Laid here so the router's network restarts once for both. #}
+config interface 'home_remote'
+	option device 'br-lan.31'
+	option proto 'static'
+	list ipaddr '10.0.31.1/24'
 	option delegate '0'
 
 config interface 'servers'

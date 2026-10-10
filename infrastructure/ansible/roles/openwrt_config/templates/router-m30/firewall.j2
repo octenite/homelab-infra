@@ -1,6 +1,6 @@
 {# Managed by Ansible. Source of truth: this template plus the private inventory.
    Policy: docs/ARCHITECTURE.md section 6. Default deny between all zones and
-   towards the router. Every allow below carries the ID of its exception (E1 to E14)
+   towards the router. Every allow below carries the ID of its exception (E1 to E17)
    or the word Router for a service the router itself offers to a zone. #}
 {# The operator workstation holds two reserved addresses: its dock port and
    its Wi-Fi adapter (decision 2026-10-06; one shared address deadlocked
@@ -13,13 +13,20 @@
 {% set k8s_workers = ['10.0.50.21', '10.0.50.22'] %}
 {% set gw_household = '10.0.50.200' %}
 {% set gw_admin = '10.0.50.201' %}
+{# The administration container of Phase R. Its rules name this one address:
+   a second address in the zone gets nothing. #}
+{% set remote1 = '10.0.30.10' %}
 config defaults
 	option syn_flood '1'
 	option input 'REJECT'
 	option output 'ACCEPT'
 	option forward 'REJECT'
 
-{% for z in ['lan', 'mgmt', 'servers', 'iot', 'guest'] %}
+{# remote and home_remote are the two remote-access zones (Phase R). The
+   second is laid empty: it is in no rule below, not even for name lookups,
+   until the household plan fills it. Neither is in any of the loops below
+   that offer a router service to a list of zones. #}
+{% for z in ['lan', 'mgmt', 'servers', 'iot', 'guest', 'remote', 'home_remote'] %}
 config zone
 	option name '{{ z }}'
 	list network '{{ z }}'
@@ -283,6 +290,69 @@ config rule
 	option dest_ip '{{ pve1 }}'
 	option proto 'udp'
 	option dest_port '123'
+	option target 'ACCEPT'
+
+{# Remote administration (Phase R, ADR 0005). Every rule of the zone names
+   the container's one address, the name lookups included: another address
+   in VLAN 30 gets nothing from the router, not even an answer to a lookup.
+   The zone gets no time service, no ping and no DHCP.
+   The router's resolver also answers for the household's device names, so
+   the container can learn them; it cannot reach them (risk table of
+   docs/phases/phase-r-plan.md). #}
+config rule
+	option name 'Router-DNS-remote'
+	option src 'remote'
+	option src_ip '{{ remote1 }}'
+	option dest_ip '10.0.30.1'
+	option proto 'tcp udp'
+	option dest_port '53'
+	option family 'ipv4'
+	option target 'ACCEPT'
+
+{# The container reaches the hypervisor's SSH and web interface and nothing
+   else at home. #}
+config rule
+	option name 'E15-remote1-to-pve1'
+	option src 'remote'
+	option src_ip '{{ remote1 }}'
+	option dest 'mgmt'
+	option dest_ip '{{ pve1 }}'
+	option proto 'tcp'
+	option dest_port '22 8006'
+	option family 'ipv4'
+	option target 'ACCEPT'
+
+{# Tailscale's coordination and relay servers, and the package sources, all
+   over HTTPS. No UDP: every connection is relayed (decision D8).
+   "wan" is whatever leaves through the WAN port, and that includes the
+   provider's own private networks and its modem. The internet is meant, so
+   the private, link-local and carrier ranges are excluded. #}
+config rule
+	option name 'E16-remote1-to-wan-https'
+	option src 'remote'
+	option src_ip '{{ remote1 }}'
+	option dest 'wan'
+{% for net in ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', '100.64.0.0/10'] %}
+	list dest_ip '!{{ net }}'
+{% endfor %}
+	option proto 'tcp'
+	option dest_port '443'
+	option family 'ipv4'
+	option target 'ACCEPT'
+
+{# The container is configured from the workstation at home, never through
+   the tunnel it carries. #}
+config rule
+	option name 'E17-workstation-to-remote1-ssh'
+	option src 'lan'
+{% for w in workstations %}
+	list src_ip '{{ w }}'
+{% endfor %}
+	option dest 'remote'
+	option dest_ip '{{ remote1 }}'
+	option proto 'tcp'
+	option dest_port '22'
+	option family 'ipv4'
 	option target 'ACCEPT'
 
 {# Forced DNS, kept from the previous configuration: a client that addresses
