@@ -52,7 +52,9 @@ Refused when found, in this key and in the older key `HKLM\SOFTWARE\Tailscale IP
    ```
 
    It refuses unless every check passes and the state is sealed. It prints a browser address, logs in with every setting named, disconnects at once, and prints the laptop's tailnet address. The device then waits for approval in the Tailscale console.
-5. The address goes into `infrastructure/opentofu/roots/tailscale/policy.hujson` by pull request.
+5. The address goes into `infrastructure/opentofu/roots/tailscale/policy.hujson` by pull request: the host `laptop`, which the grant and the tests name. A new enrolment gives a new address, so this step repeats then.
+
+Enrolled on 2026-10-10: address 100.85.8.57, approved in the console, key expiry 2027-01-08 (90 days, decision D7).
 
 ## Configuration
 
@@ -78,7 +80,9 @@ So every run checks both the policy value and the shape of `C:\ProgramData\Tails
 
 What the seal is worth: the file is bound to this TPM and to nothing else, with no start-up secret and no measurement of the boot. It stops a copy of the disk or of the file. It does not stop someone who holds the laptop and starts it (X23): after a loss the device is removed from the tailnet in every case.
 
-A cleared TPM cannot open the file. The laptop then needs a new login and a new approval, and, as the only signer of the tailnet, the disablement procedure at home (decision D4). Before a firmware update, a "reset this PC" or a deliberate clear: set `EncryptState` to `0`, restart the service, check that the file is plain, make the change, then run the script again.
+A cleared TPM cannot open the file. The laptop then needs a new login and a new approval, and, as the only signer of the tailnet, the disablement procedure at home (decision D4).
+
+What that looks like was drilled on 2026-10-11, with the sealed key damaged on purpose and a copy kept: the service starts and stays up, with no state (`NoState`), no address, and the health line `State store failed to initialize ... failed to unseal encryption key with TPM`. It does not overwrite the file. `tailscale.ps1 -Check` reports the health line and ends with exit code 1. Putting the copy back restored the enrolment: same device, same address. A copy of the sealed file is therefore worth nothing without this TPM and everything with it, which is why none is kept. Before a firmware update, a "reset this PC" or a deliberate clear: set `EncryptState` to `0`, restart the service, check that the file is plain, make the change, then run the script again.
 
 The script does not switch state encryption on while the firmware holds a pending TPM operation, and `-Enrol` refuses without a sealed state.
 
