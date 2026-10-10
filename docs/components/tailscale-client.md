@@ -94,7 +94,7 @@ Measured with the client logged out and its state empty (2026-10-09): the script
 
 ## Security considerations
 
-- The laptop is the only device that may sign others into the tailnet from step R.4. Its signing key lives in the same sealed file.
+- The laptop is the only device that may sign others into the tailnet (node signing, on since 2026-10-11). Its signing key lives in the same sealed file. If that file is lost, the way out is a disablement secret: `docs/runbooks/tailnet-setup.md`, section 7.
 - An administrator on the laptop can change every policy. The policies guard against drift, a click and an unprivileged process, not against someone who already controls the machine.
 - The client admits traffic for its own tailnet address through a firewall rule of its own (`Tailscale-In`, present only while connected; its interface is always a private network to Windows). Shields up and the policy in Git are what keeps that closed; Windows allow rules scoped by address are not (see "Away from home" in `pbs.md`). Measured on 2026-10-11 from the phone: connections to ports 8007, 445 and 3389 of the laptop reached the client and were dropped there, each visible in the service log as `Drop: TCP{<phone> > <laptop>:<port>} ... no rules matched`. That log line is the way to see what another device tried.
 - Every login creates a new device. `-Enrol` therefore runs only when the client says `NeedsLogin`.
