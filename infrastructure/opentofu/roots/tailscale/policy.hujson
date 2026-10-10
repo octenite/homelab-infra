@@ -1,10 +1,9 @@
 // Access policy of the tailnet. Source of truth: this file, applied with
 // `just tofu tailscale apply`. Design: docs/adr/0005-administrative-access.md.
 //
-// Phase R, step R.2: nothing may reach anything. A new tailnet starts with a
-// rule that lets every device reach every other; this file replaces it before
-// the first device joins. The grants for the laptop follow in step R.3, when
-// its own address in the tailnet exists.
+// Phase R, step R.3: the laptop may reach the hypervisor's SSH and web
+// interface, and only through the administration container. That container
+// does not exist before step R.8, so until then this grant carries nothing.
 //
 // Rules for this file:
 //   - Grants only. No "acls" and no "ssh" section: Tailscale SSH is not used.
@@ -12,26 +11,79 @@
 //     group of people and never "*".
 //   - Every grant names the one container it passes through.
 //   - No grant names a phone or a container as its destination.
+//   - Every device has a test: what it reaches, and what it must not. A test
+//     by address also catches a grant made to the owner's login; a test by
+//     login does not catch a grant made to an address (measured 2026-10-11),
+//     so the tests here go by address.
 {
-	// Nobody may assign a tag except the owner, by hand in the console.
-	"tagOwners": {},
+	// An address is assigned when a device is enrolled and changes only when
+	// it is enrolled anew.
+	"hosts": {
+		// The workstation (Node 2), enrolled 2026-10-10.
+		"laptop": "100.85.8.57",
+		// The owner's phone, enrolled 2026-10-10. Named for the tests only:
+		// no grant mentions it before the household plan.
+		"phone": "100.88.195.22",
+	},
 
-	"grants": [],
+	// Owned by nobody: no device can take a tag by itself. Only the owner
+	// can assign one, by hand in the console.
+	"tagOwners": {
+		// The administration container remote1 (step R.8).
+		"tag:remote-admin": [],
+	},
 
-	// Checked by Tailscale every time the file changes. A failing test
-	// rejects the file, so a mistake that opens something cannot be applied.
+	"grants": [
+		{
+			// E15 seen from the tailnet: the laptop to the hypervisor's SSH
+			// and web interface, through the container and nothing else.
+			"src": ["laptop"],
+			"dst": ["10.0.10.10/32"],
+			"ip":  ["tcp:22", "tcp:8006"],
+			"via": ["tag:remote-admin"],
+		},
+	],
+
+	// Checked by Tailscale every time the file changes, and by the wrapper
+	// before every plan (scripts/tofu/child.sh). A failing test rejects the
+	// file, so a mistake that opens something cannot be applied.
 	"tests": [
 		{
-			// The owner's login reaches nothing at home by itself: not the
-			// hypervisor, not the router, not the access points.
-			"src": "${owner_login}",
-			"deny": [
+			"src": "laptop",
+			"accept": [
 				"10.0.10.10:22",
 				"10.0.10.10:8006",
+			],
+			"deny": [
+				// nothing else on the hypervisor
+				"10.0.10.10:80",
+				"10.0.10.10:3128",
+				// not the router, not the access points
+				"192.168.1.53:22",
 				"10.0.10.2:22",
 				"10.0.10.3:22",
-				"192.168.1.53:22",
+				// not the container itself, not the cluster's address
+				"10.0.30.10:22",
 				"10.0.50.201:443",
+				// not the phone
+				"100.88.195.22:22",
+				"100.88.195.22:80",
+			],
+		},
+		{
+			"src": "phone",
+			"deny": [
+				// nothing at home
+				"10.0.10.10:22",
+				"10.0.10.10:8006",
+				"192.168.1.53:22",
+				"10.0.30.10:22",
+				// nothing on the laptop: SSH, file sharing, remote desktop,
+				// the forwarded backup port
+				"100.85.8.57:22",
+				"100.85.8.57:445",
+				"100.85.8.57:3389",
+				"100.85.8.57:8007",
 			],
 		},
 	],
