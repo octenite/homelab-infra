@@ -129,7 +129,7 @@ The first lists devices that wait, with their node keys. Compare the key with wh
 
 ## 7. The way out: disabling node signing
 
-Needed when the laptop's Tailscale state is lost (theft, a cleared TPM, a reinstall): no device can then be signed, the laptop included. Rehearsed on 2026-10-11.
+Needed when the laptop's Tailscale state is lost (theft, a cleared TPM, a reinstall): no device can then be signed, the laptop included. Rehearsed on 2026-10-11 by the console path of step 1.
 
 1. In the console, from any browser: **Settings**, **Device management**, **Tailnet lock**, **Disable Tailnet lock**. Paste one disablement secret. On a device that is still signed, `tailscale lock disable <secret>` does the same.
 2. One used secret switches signing off for the whole tailnet and for good: the others are worthless from then on.
