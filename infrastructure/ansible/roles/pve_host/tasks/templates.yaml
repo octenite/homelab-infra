@@ -1,8 +1,11 @@
 ---
 # Container templates on the local storage: the files named in Git, each
 # compared with its pinned checksum on every run. A file that does not match
-# stops the play and is left where it is, for a look; nothing is created from
-# it because OpenTofu refers to a template by name and this play has failed.
+# stops the play and is left where it is, for a look. That alone does not
+# keep OpenTofu from using it: until the wrapper checks the checksum before
+# a plan (backlog B43), do not create a container after this play failed.
+# Run last by playbooks/pve.yaml. The fetch commands report a failed download
+# with exit code 0, so the comparison at the end is what decides.
 - name: Templates on the local storage
   ansible.builtin.stat:
     path: "/var/lib/vz/template/cache/{{ item.file }}"
@@ -42,8 +45,11 @@
   ansible.builtin.assert:
     that: item.stat.exists and item.stat.checksum == item.item.sha512
     fail_msg: >-
-      {{ item.item.file }}: {{ 'checksum ' ~ item.stat.checksum ~ ' is not the pinned one' if item.stat.exists else 'not on the host' }}.
-      Nothing was removed. Compare with the vendor's index (pveam available) before changing the pin.
+      {{ item.item.file }}:
+      {{ 'its checksum ' ~ item.stat.checksum ~ ' is not the pinned one. Nothing was removed; do not create a container from it'
+         if item.stat.exists else
+         'not on the host: the download failed (see /var/log/pveam.log), or the vendor no longer lists this build' }}.
+      The vendor's index is /var/lib/pve-manager/apl-info/download.proxmox.com on the host; a new build is a new pin, by pull request.
     quiet: true
   loop: "{{ pve_host_templates_now.results }}"
   loop_control:

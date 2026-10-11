@@ -60,8 +60,9 @@ pve_admin_user: octenite-admin@pve
 # Realms that require a second factor once all their users have enrolled.
 # Automation users hold no password and log in with tokens only.
 pve_tfa_realms: [pve, pam]
-# Resource pools. The token's rights are granted per pool, so a guest that
-# OpenTofu creates outside these pools is refused.
+# Resource pools. The token's rights are granted per pool, so creating a guest
+# outside these pools is refused. Proxmox does not tie a pool to a VLAN, and
+# the role's Pool.Allocate lets the token move a guest out again (backlog B43).
 pve_pool: talos
 pve_pools:
   - name: "{{ pve_pool }}"

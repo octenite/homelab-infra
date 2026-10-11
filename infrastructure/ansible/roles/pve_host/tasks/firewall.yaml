@@ -1,8 +1,8 @@
 ---
 # pve-firewall: the cluster-wide file sets the policy, the host file adds the
 # rules. Both live on the cluster filesystem under /etc/pve, which refuses
-# permission changes and atomic replacement, so files are compared and, only
-# when they differ, written in place.
+# permission changes, so the copy module cannot manage them: files are
+# compared and, only when they differ, written by a command.
 - name: Firewall directory on the cluster filesystem # noqa: risky-file-permissions
   ansible.builtin.file:
     path: /etc/pve/firewall
@@ -29,17 +29,16 @@
         {% endfor %}
         IN ACCEPT -source {{ pve_router }} -p icmp -log nolog # router may ping
         IN ACCEPT -source {{ pve_workstations | join(',') }} -p icmp -log nolog # workstation may ping
-        # pve-firewall appends built-in rules that admit the host's own subnets
-        # (the "management" set, always extended with every local network) to
-        # SSH, the web interface, the console ports and migration. Host rules
-        # run first, so the rest of the management VLAN and the whole direct
-        # link are dropped here (X10). The console ports stay in this list
-        # although nothing admits them: the web console runs over 8006, and
-        # the built-in rules would otherwise open them to the subnet.
-        # The two remote-access networks are in the list although the host
-        # holds no address in them: if it ever got one by mistake, the
-        # built-in rules would admit the whole network, and these rows
-        # would still stand.
+        # pve-firewall appends built-in rules that admit the "management" set
+        # to SSH, the web interface, the console ports and migration. The
+        # set holds the network of the host's own address, 10.0.10.0/24
+        # (read back 2026-10-11). Host rules run first, so the rest of the
+        # management VLAN is dropped here (X10). The console ports stay in
+        # this list although nothing admits them: the web console runs over
+        # 8006, and the built-in rules would otherwise open them.
+        # The direct link and the two remote-access networks are not in the
+        # set today, so their rows change nothing; they stand in case the
+        # set is ever widened.
         {% for n in [pve_mgmt_network, pve_p2p_network] + pve_remote_networks %}
         IN DROP -source {{ n }} -p tcp -dport 22,8006,3128,5900:5999,60000:60050 -log nolog # X10 no rights by subnet membership
         {% endfor %}
@@ -77,9 +76,12 @@
   loop_control:
     label: "{{ item.item.item.key }}"
 
+# Written under a temporary name and renamed, as Proxmox writes these files
+# itself: the firewall daemon reads them every ten seconds and must never
+# find one half written or empty.
 - name: Write firewall files that differ
   ansible.builtin.shell:
-    cmd: "cat > {{ item.item.key }}"
+    cmd: "cat > {{ item.item.key }}.tmp.ansible && mv {{ item.item.key }}.tmp.ansible {{ item.item.key }}"
     stdin: "{{ item.item.value }}"
     stdin_add_newline: false
   loop: "{{ pve_host_fw_current.results }}"

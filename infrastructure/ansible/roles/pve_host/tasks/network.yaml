@@ -140,12 +140,19 @@
 
     # The checks run on every play, changed or not: they are what a pending
     # revert still waits for, and they cost nothing.
+    # The reload above runs detached and nothing waits for its end: adding
+    # VLANs does not interrupt the session, so the wait returns at once. The
+    # read is repeated until every wanted VLAN is there, well inside the
+    # revert window.
     - name: Read the VLANs of the onboard bridge port
       ansible.builtin.command:
         cmd: bridge vlan show dev {{ pve_nic_lan }}
       register: pve_host_net_vlans
       changed_when: false
       check_mode: false
+      until: ansible_check_mode or (pve_bridge_vlans | map('string') | difference(pve_host_net_vlans.stdout.split()) | length == 0)
+      retries: 10
+      delay: 3
 
     - name: Guest VLANs are on the bridge port
       ansible.builtin.assert:

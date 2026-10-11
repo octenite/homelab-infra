@@ -7,7 +7,7 @@ Node 1 runs Proxmox VE and hosts the Talos VMs. It is the single physical host o
 ## Architecture
 
 - One host, `pve1`, Proxmox VE 9.2, in the management network at 10.0.10.10 on the onboard gigabit port.
-- Bridges: `vmbr0` on the onboard port (`enp3s0`), VLAN-aware, host address untagged and the servers VLAN 50 tagged for guests. `vmbr1` on the 2.5 GbE port (`enp2s0`) with 10.0.99.1/29, the direct link to the workstation for backups, no guests. IP forwarding is off: the host does not route between them.
+- Bridges: `vmbr0` on the onboard port (`enp3s0`), VLAN-aware, host address untagged; tagged for guests: the servers VLAN 50, and since Phase R the two remote-access VLANs 30 and 31. The host holds no address in 30 or 31, and 31 carries nothing until the household plan. `vmbr1` on the 2.5 GbE port (`enp2s0`) with 10.0.99.1/29, the direct link to the workstation for backups, no guests. IP forwarding is off: the host does not route between them.
 - Storage: ext4 root, swap as a safety net, and an LVM thin pool for VM disks and, later, Kubernetes volumes.
 - Time: chrony with the router as the only source. The host serves time to the two Talos node addresses only (E13), from its own clock when the router has none.
 - Metrics: `node_exporter` (9100) and `smartctl_exporter` (9633) from the upstream Ansible collection, bound to the management address. A timer adds thin-pool usage through the textfile collector. The SMART exporter runs with the `disk` group and `CAP_SYS_RAWIO`, nothing else.
@@ -22,9 +22,16 @@ Host firewall (pve-firewall, inbound policy DROP). Exception IDs are those of [A
 | E6 | Talos workers: 10.0.50.21, 10.0.50.22 | TCP 8006 |
 | E7 | Talos workers | TCP 9100 and 9633 |
 | E13 | Talos nodes: 10.0.50.11, 10.0.50.21 | UDP 123 |
+| E15 | The remote-access container: 10.0.30.10 | TCP 22 and 8006 |
 | - | Router 10.0.10.1 | ping |
 
-Nothing else is admitted. No rule admits the console ports: the web console runs over 8006. pve-firewall would admit the host's own subnets to its management ports through a built-in set, so the role drops 10.0.10.0/24 and 10.0.99.0/29 on ports 22, 8006, 3128, 5900 to 5999 and 60000 to 60050 after the accept rules (X10).
+Nothing else is admitted. No rule admits the console ports: the web console runs over 8006. pve-firewall admits the network that holds the host's own address to its management ports through a built-in set (read back on 2026-10-11: the set holds 10.0.10.0/24 and nothing else), so the role drops 10.0.10.0/24 on ports 22, 8006, 3128, 5900 to 5999 and 60000 to 60050 after the accept rules (X10). The same drop rows exist for 10.0.99.0/29, 10.0.30.0/24 and 10.0.31.0/24. Those three are not in the built-in set, so their rows change nothing today; they stand in case the set is ever widened.
+
+Until the container's own network device is filtered by the hypervisor (step R.7), "10.0.30.10" is whoever can put a guest into VLAN 30: the OpenTofu token and root. No guest exists there yet.
+
+Pools: `talos` for the cluster's VMs and `remote` for the remote-access containers. Proxmox does not tie a pool to a VLAN.
+
+Container template: `debian-13-standard_13.6-1_amd64.tar.zst` on the storage `local`, fetched by the play from the vendor and compared with the SHA-512 pinned in `playbooks/group_vars/proxmox.yaml` on every run. The vendor's index lists one build per Debian release, so the pinned build may leave it; the lab keeps no copy of its own yet (backlog B44).
 
 ## Dependencies
 
@@ -167,7 +174,7 @@ The play stops on purpose in these cases. Restarts that earlier tasks requested 
 - The account named by `pve_admin_user` is the only holder of `Administrator`. Its password is set once, through standard input.
 - Second factor: the realms `pve` and `pam` require TOTP. The role switches the requirement on only once every user of the realm who holds a password has enrolled a TOTP, so a rebuilt host first lets the owner enrol. Only TOTP counts: a hardware key or recovery keys alone do not. Automation users hold no password and use tokens, which the requirement never affects.
 - Automation uses privilege-separated API tokens of dedicated users with custom roles (`TerraformProvisioner`, `KubernetesCSI`) or `PVEAuditor`. Tokens live 12 months. Rotation: remove the token on the host, run `just pve-tokens`, update the consumer.
-- `TerraformProvisioner` has no `Sys.Modify`. Its network grant is the single path `/sdn/zones/localnetwork/vmbr0/50`: a grant on the bridge itself would also permit a guest adapter without a tag, which lands in the management VLAN.
+- `TerraformProvisioner` has no `Sys.Modify`. Its network grants are two paths, `/sdn/zones/localnetwork/vmbr0/50` and `/sdn/zones/localnetwork/vmbr0/30`, never the bridge itself and not VLAN 31. The grants do less than they seem to: by the release's own code a device with trunk VLANs and no tag still lands untagged in the management VLAN, a VM device without a bridge needs no network right at all, and either pool may use either VLAN. The token can also replace templates and ISO images on `local`, and hand out its own role on its pools. What stands between a stolen token and the management network is therefore the token's place (the workstation only), the validation in the OpenTofu modules and CI, and the logins of the targets (backlog B43).
 - The CPU receives no microcode updates any more. One vulnerability stays open (X13).
 
 ### Lost second factor
