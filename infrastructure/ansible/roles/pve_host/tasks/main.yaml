@@ -33,6 +33,9 @@
 - name: Roles, users and access control
   ansible.builtin.import_tasks: access.yaml
 
+- name: Container templates
+  ansible.builtin.import_tasks: templates.yaml
+
 - name: Backups
   ansible.builtin.import_tasks: backup.yaml
 

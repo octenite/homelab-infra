@@ -36,7 +36,11 @@
         # link are dropped here (X10). The console ports stay in this list
         # although nothing admits them: the web console runs over 8006, and
         # the built-in rules would otherwise open them to the subnet.
-        {% for n in [pve_mgmt_network, pve_p2p_network] %}
+        # The two remote-access networks are in the list although the host
+        # holds no address in them: if it ever got one by mistake, the
+        # built-in rules would admit the whole network, and these rows
+        # would still stand.
+        {% for n in [pve_mgmt_network, pve_p2p_network] + pve_remote_networks %}
         IN DROP -source {{ n }} -p tcp -dport 22,8006,3128,5900:5999,60000:60050 -log nolog # X10 no rights by subnet membership
         {% endfor %}
 

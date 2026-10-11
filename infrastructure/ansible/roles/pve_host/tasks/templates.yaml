@@ -1,0 +1,51 @@
+---
+# Container templates on the local storage: the files named in Git, each
+# compared with its pinned checksum on every run. A file that does not match
+# stops the play and is left where it is, for a look; nothing is created from
+# it because OpenTofu refers to a template by name and this play has failed.
+- name: Templates on the local storage
+  ansible.builtin.stat:
+    path: "/var/lib/vz/template/cache/{{ item.file }}"
+    checksum_algorithm: sha512
+  loop: "{{ pve_ct_templates }}"
+  loop_control:
+    label: "{{ item.file }}"
+  register: pve_host_templates
+
+- name: Refresh the vendor's template index
+  ansible.builtin.command:
+    cmd: pveam update
+  when: pve_host_templates.results | rejectattr('stat.exists') | list | length > 0
+  changed_when: true
+
+- name: Fetch missing templates
+  ansible.builtin.command:
+    argv: [pveam, download, local, "{{ item.item.file }}"]
+  loop: "{{ pve_host_templates.results }}"
+  loop_control:
+    label: "{{ item.item.file }}"
+  when: not item.stat.exists
+  changed_when: true
+
+- name: Read the templates again
+  ansible.builtin.stat:
+    path: "/var/lib/vz/template/cache/{{ item.file }}"
+    checksum_algorithm: sha512
+  loop: "{{ pve_ct_templates }}"
+  loop_control:
+    label: "{{ item.file }}"
+  register: pve_host_templates_now
+  check_mode: false
+
+# A dry run has fetched nothing, so a missing file is not an error there.
+- name: Every template matches its pinned checksum
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.checksum == item.item.sha512
+    fail_msg: >-
+      {{ item.item.file }}: {{ 'checksum ' ~ item.stat.checksum ~ ' is not the pinned one' if item.stat.exists else 'not on the host' }}.
+      Nothing was removed. Compare with the vendor's index (pveam available) before changing the pin.
+    quiet: true
+  loop: "{{ pve_host_templates_now.results }}"
+  loop_control:
+    label: "{{ item.item.file }}"
+  when: item.stat.exists or not ansible_check_mode

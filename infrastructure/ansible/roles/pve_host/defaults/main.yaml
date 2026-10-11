@@ -43,6 +43,10 @@ pve_host_fw_rules:
     source: "{{ pve_talos_workers | join(',') }}"
     proto: tcp
     dport: "9100,9633"
+  - comment: "E15 remote-access container: SSH and web interface"
+    source: "{{ pve_remote_admin }}"
+    proto: tcp
+    dport: "22,8006"
   - comment: "E13 Talos nodes: time"
     source: "{{ pve_talos_nodes | join(',') }}"
     proto: udp
