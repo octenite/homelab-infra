@@ -46,7 +46,7 @@ Status: a passing run is not recorded yet. The last recorded run, made before th
 
 ## Exceptions register
 
-The register is the table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) section 15, IDs X1 to X26. Firewall exceptions E1 to E14 are in section 6. Exceptions added or changed by Phase 3:
+The register is the table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) section 15, IDs X1 to X26 and X33; X27 to X32 are in the two plans of Phase R until its last step moves them. Firewall exceptions E1 to E17 are in section 6. Exceptions added or changed since Phase 3:
 
 | ID | Exception | State |
 |---|---|---|
@@ -56,6 +56,7 @@ The register is the table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) sectio
 | X23 | No disk encryption on the workstation | accepted by the owner; hardening open (item 2) |
 | X25 | Shared service process on the workstation makes allow rules ineffective for the forwarded ports; block rules compensate | passing fence test open (item 3) |
 | X26 | Management window: a port forward to the backup server's SSH, opened by hand with `pbs-vm.ps1 -Manage` and closed by a plain run | accepted; `just test-fences` shows which state is live |
+| X33 | The OpenTofu token's rights do not confine where a guest lands: with it, a guest can be placed in the management network or behind the hypervisor's own address (found 2026-10-11, Phase R step R.6) | open by the owner's decision of 2026-10-12: work goes on with the one token (item 9) |
 
 ## Open items
 
@@ -68,6 +69,7 @@ The register is the table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) sectio
 | 6 | The healthchecks ping URL appeared once in a session transcript | a new URL, stored with `just secret-set` |
 | 7 | No off-site copy of the backups exists (B25) | the off-site buckets, with the datasets of the later phases |
 | 8 | The backup server's traffic to the internet is not restricted (X7, B33) | an allow-list, or the owner's acceptance as it stands |
+| 9 | A leaked OpenTofu token reaches further than its grants suggest (X33, backlog B43). In normal use nothing changes: the code creates only what it is written to create, and it is validated first. With a stolen token someone could create a guest next to the hypervisor's management address, where SSH is key-only and the web interface needs a password and a second factor. The token is on the workstation only | the owner's decision between a second, narrower token for the remote-access work and keeping the one; until then the validation in the OpenTofu roots and CI, and the tests of step R.7 |
 
 ## Secrets register and rotation
 
