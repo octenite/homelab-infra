@@ -25,14 +25,14 @@ Exceptions in the router's firewall template (`templates/router-m30/firewall.j2`
 | E3 | `E3-workstation-to-talos-api` | Workstation | 10.0.50.11, 10.0.50.21 | TCP 50000 |
 | E3 | `E3-workstation-to-admin-listener` | Workstation | 10.0.50.201 | TCP 443 |
 | E4 | `E4-trusted-to-household-listener` | Trusted network | 10.0.50.200 | TCP 80, 443 |
-| E5 | `E5-servers-to-wan-https` | Servers network | Internet | TCP 443 |
+| E5 | `E5-servers-to-wan-https` | Servers network | Internet, without the provider's side ranges (see E16) | TCP 443 |
 | E5 | `E5-servers-to-public-resolvers` | Servers network | 1.1.1.1, 9.9.9.9 | TCP and UDP 53 |
 | E6 | `E6-workers-to-pve1-api` | 10.0.50.21, 10.0.50.22 | 10.0.10.10 | TCP 8006 |
 | E7 | `E7-workers-to-pve1-exporters` | 10.0.50.21, 10.0.50.22 | 10.0.10.10 | TCP 9100, 9633 |
 | E8 | `e8_iot_to_wan` | IoT network | Internet | everything |
 | E9 | `e9_trusted_to_iot` | Trusted network | IoT network | everything |
 | E10 | Not on the router | | | The direct link between hypervisor and workstation, enforced on those hosts: [pbs.md](pbs.md), Fences |
-| E11 | `E11-mgmt-hosts-to-wan-updates` | 10.0.10.10, 10.0.10.2, 10.0.10.3 | Internet | TCP 80, 443 |
+| E11 | `E11-mgmt-hosts-to-wan-updates` | 10.0.10.10, 10.0.10.2, 10.0.10.3 | Internet, without the provider's side ranges (see E16) | TCP 80, 443 |
 | E12 | `E12-pve1-to-household-listener` | 10.0.10.10 | 10.0.50.200 | TCP 443 |
 | E13 | `E13-talos-to-pve1-ntp` | 10.0.50.11, 10.0.50.21 | 10.0.10.10 | UDP 123 |
 | E14 | `E14-pve1-to-backup-server` | 10.0.10.10 | Workstation | TCP 8007 |
@@ -104,6 +104,7 @@ Firmware updates use the router's `owut` tool, which keeps the installed package
 | A client gets no address | `logread -e dnsmasq` on the router; the pool of its network in `dhcp.j2` |
 | A connection between networks is refused | Expected by default. Find or add the exception in `firewall.j2` and the matrix |
 | What did the last apply do | `logread -e homelab` on the device |
+| Does a change open the router for a moment | No. A firewall change is loaded by a reload, which replaces the rule table in one step (since 2026-10-11; a restart, used before, left the router without rules for about half a second). A change to the network file still restarts the network: clients pause for about ten seconds |
 
 ## Removal
 
