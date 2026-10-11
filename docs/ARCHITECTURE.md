@@ -314,7 +314,8 @@ Levers, in order: trim `talos-cp-1` to 2.5 GiB and give the worker 9.5 (+0.5 GiB
 |---|---|---|---|---|
 | 10 | mgmt | 10.0.10.0/24 | .1 | AP1 .2, AP2 .3, pve1 .10; static only, no DHCP pool |
 | 20 | trusted | **192.168.1.0/24 kept** | .53 (unchanged) | laptops, phones, Node 2 at .196 (dock port) and .197 (Wi-Fi adapter), both MAC-bound static leases and both named in every workstation rule (2026-10-06; one shared address was tried first and deadlocked Windows), SSID `home` |
-| 30 | remote | 10.0.30.0/24 | - | reserved for optional Phase R |
+| 30 | remote | 10.0.30.0/24 | .1 | Phase R: the administration container `remote1` at .10 and nothing else; static only, no DHCP, no IPv6 on the router's side |
+| 31 | home_remote | 10.0.31.0/24 | .1 | Phase R, household path: laid empty in step R.5, in no firewall rule; the container `home1` at .10 arrives with the household plan |
 | 40 | dmz | 10.0.40.0/24 | - | reserved, not built: under CGNAT there is no inbound path to place in a DMZ |
 | 50 | servers | 10.0.50.0/24 | .1 | Talos VMs, API VIP, LoadBalancer pool |
 | 60 | iot | 10.0.60.0/24 | .1 | ESP32 and future devices, SSID `iot` |
@@ -331,7 +332,7 @@ Why this plan: keeping 192.168.1.0/24 as VLAN 20 means no household device is re
 | Port | Mode | VLANs | Peer |
 |---|---|---|---|
 | M30 WAN | routed, outside the bridge | - | ISP modem |
-| M30 lan1 | trunk | PVID 10 untagged, 50 tagged | Node 1 onboard NIC |
+| M30 lan1 | trunk | PVID 10 untagged; 50 tagged; 30 and 31 tagged (Phase R) | Node 1 onboard NIC |
 | M30 lan4 | access | 20 untagged | Node 2 dock NIC; no vSwitch is ever bound to it and no trunk is delivered to the laptop (measured in Phase 4: the workstation is on lan4, not lan2) |
 | M30 lan2, lan3 | trunk | PVID 10 untagged (AP management), 20/60/70 tagged | AP1, AP2 (measured in Phase 4) |
 | M30 radios | - | `home`->20, `iot`->60, `guest`->70 | Wi-Fi clients |
@@ -342,14 +343,17 @@ Why this plan: keeping 192.168.1.0/24 as VLAN 20 means no household device is re
 
 **Firewall matrix (fw4 zones, which apply to IPv4 and IPv6; default `forward=REJECT` and `input=REJECT` on the internal zones, `DROP` on WAN; every non-deny cell is an exception).**
 
-| from \ to | WAN | mgmt 10 | trusted 20 | servers 50 | iot 60 | guest 70 | router input |
-|---|---|---|---|---|---|---|---|
-| mgmt 10 | E11 | - | deny, E14 | deny, E12 | deny | deny | DNS/NTP/ICMP only |
-| trusted 20 | allow | deny, E2 | - | deny, E3, E4 | deny, E9 | deny | DHCP/DNS/NTP/ICMP; tcp 22 only per E1 |
-| servers 50 | E5 | deny, E6, E7, E13 | deny | - | deny | deny | DNS/NTP/ICMP; 9100 per E7 |
-| iot 60 | E8 | deny | deny | deny | - | deny | DHCP/DNS/NTP |
-| guest 70 | allow | deny | deny | deny | deny | - | DHCP/DNS |
-| WAN | - | deny | deny | deny | deny | deny | drop |
+| from \ to | WAN | mgmt 10 | trusted 20 | remote 30 | servers 50 | iot 60 | guest 70 | router input |
+|---|---|---|---|---|---|---|---|---|
+| mgmt 10 | E11 | - | deny, E14 | deny | deny, E12 | deny | deny | DNS/NTP/ICMP only |
+| trusted 20 | allow | deny, E2 | - | deny, E17 | deny, E3, E4 | deny, E9 | deny | DHCP/DNS/NTP/ICMP; tcp 22 only per E1 |
+| remote 30 | E16 | deny, E15 | deny | - | deny | deny | deny | DNS only |
+| servers 50 | E5 | deny, E6, E7, E13 | deny | deny | - | deny | deny | DNS/NTP/ICMP; 9100 per E7 |
+| iot 60 | E8 | deny | deny | deny | deny | - | deny | DHCP/DNS/NTP |
+| guest 70 | allow | deny | deny | deny | deny | deny | - | DHCP/DNS |
+| WAN | - | deny | deny | deny | deny | deny | deny | drop |
+
+The zone `home_remote` (VLAN 31) has no row and no column on purpose: since step R.5 it exists with input and forward set to reject and appears in no rule, so nothing enters it, nothing leaves it, and the router refuses everything that arrives from it, a name lookup included. The household plan gives it its rows (E18 onwards).
 
 Each exception is one commented rule in Git carrying its ID:
 - **E1** workstation (192.168.1.196 and .197, in every workstation rule) -> router input tcp 22. LuCI listens on the router's loopback address only (as built in Phase 2) and is reached through that SSH session (`just luci`), not through a firewall rule.
@@ -370,6 +374,9 @@ Each exception is one commented rule in Git carrying its ID:
 - **E12** pve1 -> 10.0.50.200 tcp 443 (the read-only OIDC realm, from Phase 11). This replaces the earlier blanket "mgmt -> servers" rule.
 - **E13** Talos node addresses 10.0.50.11 and .21 -> pve1 udp 123 (second time source).
 - **E14** pve1 -> workstation addresses 192.168.1.196 and .197, tcp 8007 (owner decision 2026-10-06; as built): the fallback path to the backup server when the direct link is down. The workstation forwards port 8007 to the VM's NAT leg (10.0.98.3). The forward listens on every address of the workstation, so two Windows Firewall rules fence it: `homelab-pbs1-8007` allows 10.0.10.10, and `homelab-pbs1-8007-others` blocks every other source (X25 says why the block rule is needed). On the hypervisor, `/usr/local/bin/pbs-target` picks the path: the direct address 10.0.99.3 first, then .196, then .197. It runs every five minutes from `pbs-failover.timer` and before every backup. This is the former fallback F2 in a form that puts no virtual switch on the workstation's uplink and works over the dock and over Wi-Fi alike.
+- **E15** the administration container 10.0.30.10 -> pve1 tcp 22, 8006 (Phase R, ADR 0005). Every rule of the zone names the one address, the name lookups at 10.0.30.1 included: any other address in VLAN 30 gets nothing from the router. Until the hypervisor's own filter on the container's network device exists (step R.7), that one-address claim rests on the router alone. This is the only path from the remote-access zone into the house.
+- **E16** 10.0.30.10 -> WAN tcp 443: Tailscale's coordination and relay servers and the container's package sources. No UDP (decision D8), so every remote connection is relayed; port 80 stays closed. The rule excludes 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 and 100.64.0.0/10, because "WAN" also means the provider's own private networks and its modem. E5 and E11 have no such exclusion yet (backlog B41).
+- **E17** workstation -> 10.0.30.10 tcp 22: the container is configured from home, never through the tunnel it carries. Like E1 to E3 it goes by source address (X9); the container's SSH is key-only.
 
 E6 and E7 are written for the worker address, but with `bpf.masquerade` every pod's traffic leaves the cluster with that address, so at the router and at `pve-firewall` "the worker" means "any pod". The discriminating control is Cilium egress policy, which is why it is enforced (Phase 6) before the CSI token is installed (Phase 7), and why the tokens themselves are scoped (X16).
 
@@ -382,7 +389,7 @@ Admin exceptions E1-E3 are IP-based and spoofable inside VLAN 20 (X9). They are 
 - Clients that bypass the router's resolver (Android Private DNS, browser DoH, Node 2's dnscrypt-proxy [VERIFIED installed]) would get NXDOMAIN for every lab name. Two DNS-only (not proxied) wildcard records are therefore published in Cloudflare by OpenTofu: `*.<zone>` -> 10.0.50.200 and `*.admin.<zone>` -> 10.0.50.201. They disclose two private addresses and nothing else. The local `address=` entries stay, so names resolve with the WAN down (rule 3), and `list rebind_domain '/<zone>/'` is set because forwarded answers for the zone now contain private addresses [R-v]. Alternative if the owner does not want private addresses in public DNS (Q5): keep the zone local-only, serve the `use-application-dns.net` canary from dnsmasq and document "Private DNS off on the home SSID".
 - cert-manager runs with `--dns01-recursive-nameservers=1.1.1.1:53,9.9.9.9:53` and `-only` [R-v], opened in E5 and in Cilium.
 - Existing DNS policy, kept [VERIFIED present today]: the router redirects all LAN DNS on port 53 to itself, rejects DNS-over-TLS towards the internet, and resolves upstream through a local smartdns instance. The redirect is applied per client VLAN. The servers VLAN is exempt for the two resolvers of E5, otherwise cert-manager's self-check would be answered by the router.
-- NTP: the M30 serves every zone except guest. Its NTP server role is off today [VERIFIED] and is enabled by Ansible; the devices' time zone setting (UTC today) is left alone. The M30 has no battery-backed clock, so after a power cut with the WAN slow or down it has no valid time to serve. The hypervisor, which has an RTC, is therefore the second source for the two Talos nodes (E13, chrony `local stratum 10`); etcd, kubelet certificates and OIDC tokens then agree on one clock even without the internet. Phase 8 gate: power-cycle everything with the WAN unplugged; the cluster returns healthy and clocks agree.
+- NTP: the M30 serves every zone except guest and the two remote-access zones (a container takes its clock from the hypervisor's kernel). Its NTP server role is off today [VERIFIED] and is enabled by Ansible; the devices' time zone setting (UTC today) is left alone. The M30 has no battery-backed clock, so after a power cut with the WAN slow or down it has no valid time to serve. The hypervisor, which has an RTC, is therefore the second source for the two Talos nodes (E13, chrony `local stratum 10`); etcd, kubelet certificates and OIDC tokens then agree on one clock even without the internet. Phase 8 gate: power-cycle everything with the WAN unplugged; the cluster returns healthy and clocks agree.
 
 **The direct link (as built).** Backup traffic only (PVE -> PBS:8007) plus iperf validation. A Hyper-V external vSwitch `p2p` on the UE302C carries a host vNIC (10.0.99.2) and the PBS vNIC (10.0.99.3). The USB adapter powers its PHY down about ten seconds after the last frame and does not bring the link back by itself (B21). `pbs-keepalive.service` on the hypervisor therefore sends one ping a second to 10.0.99.3; five seconds apart was not enough. With it the link has stayed up at 2.5 Gbit/s since 2026-10-06 21:10; the 24 h soak ends 2026-10-07 21:10 and its result is open. Behaviour across sleep and resume of the laptop is not tested. Pods cannot reach this link and nothing depends on that. 2.5 GbE is an optimisation, not a requirement: the source is a SATA 3 Gb/s SSD with SHA-256 computed on Ivy Bridge, and after the first run backups are incremental. **Fallback F1:** move the cable from the UE302C to Node 2's built-in Realtek GbE port (a native PCIe NIC, present and unused [VERIFIED]): same subnet, no router rule, no vSwitch on the laptop's uplink, 1 GbE. `pbs-vm.ps1` knows both adapters and binds `p2p` to the one that has link. **Fallback over the home network:** E14, which replaced the earlier F2 design. The hypervisor switches to it by itself when the direct address does not answer.
 

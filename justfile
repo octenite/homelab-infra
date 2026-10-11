@@ -139,6 +139,10 @@ pbs-media:
 test-fences *args:
     bash scripts/tests/backup-fences.sh "$@"
 
+# Read-back of the router's two remote-access zones after a change (read-only). Fails when one line disagrees.
+test-router-zones:
+    bash scripts/tests/router-remote-zones.sh
+
 # Scope test of the OpenTofu API token: what it may read, and which writes are refused (each a no-op by design).
 test-token:
     bash scripts/tests/token-scope.sh
