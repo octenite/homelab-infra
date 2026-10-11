@@ -1,0 +1,57 @@
+---
+# Container templates on the local storage: the files named in Git, each
+# compared with its pinned checksum on every run. A file that does not match
+# stops the play and is left where it is, for a look. That alone does not
+# keep OpenTofu from using it: until the wrapper checks the checksum before
+# a plan (backlog B43), do not create a container after this play failed.
+# Run last by playbooks/pve.yaml. The fetch commands report a failed download
+# with exit code 0, so the comparison at the end is what decides.
+- name: Templates on the local storage
+  ansible.builtin.stat:
+    path: "/var/lib/vz/template/cache/{{ item.file }}"
+    checksum_algorithm: sha512
+  loop: "{{ pve_ct_templates }}"
+  loop_control:
+    label: "{{ item.file }}"
+  register: pve_host_templates
+
+- name: Refresh the vendor's template index
+  ansible.builtin.command:
+    cmd: pveam update
+  when: pve_host_templates.results | rejectattr('stat.exists') | list | length > 0
+  changed_when: true
+
+- name: Fetch missing templates
+  ansible.builtin.command:
+    argv: [pveam, download, local, "{{ item.item.file }}"]
+  loop: "{{ pve_host_templates.results }}"
+  loop_control:
+    label: "{{ item.item.file }}"
+  when: not item.stat.exists
+  changed_when: true
+
+- name: Read the templates again
+  ansible.builtin.stat:
+    path: "/var/lib/vz/template/cache/{{ item.file }}"
+    checksum_algorithm: sha512
+  loop: "{{ pve_ct_templates }}"
+  loop_control:
+    label: "{{ item.file }}"
+  register: pve_host_templates_now
+  check_mode: false
+
+# A dry run has fetched nothing, so a missing file is not an error there.
+- name: Every template matches its pinned checksum
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.checksum == item.item.sha512
+    fail_msg: >-
+      {{ item.item.file }}:
+      {{ 'its checksum ' ~ item.stat.checksum ~ ' is not the pinned one. Nothing was removed; do not create a container from it'
+         if item.stat.exists else
+         'not on the host: the download failed (see /var/log/pveam.log), or the vendor no longer lists this build' }}.
+      The vendor's index is /var/lib/pve-manager/apl-info/download.proxmox.com on the host; a new build is a new pin, by pull request.
+    quiet: true
+  loop: "{{ pve_host_templates_now.results }}"
+  loop_control:
+    label: "{{ item.item.file }}"
+  when: item.stat.exists or not ansible_check_mode

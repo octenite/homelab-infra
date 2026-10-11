@@ -44,10 +44,13 @@
   when: (pve_host_roles_now[item.key] | default('') | split(',') | reject('eq', '') | sort) != (item.value | split | sort)
   changed_when: true
 
-- name: Resource pool for the cluster VMs
+- name: Resource pools
   ansible.builtin.command:
-    cmd: pveum pool add {{ pve_pool }} --comment "Talos VMs, managed by OpenTofu"
-  when: pve_pool not in pve_host_pools_now
+    argv: [pveum, pool, add, "{{ item.name }}", --comment, "{{ item.comment }}"]
+  loop: "{{ pve_pools }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in pve_host_pools_now
   changed_when: true
 
 - name: Automation users

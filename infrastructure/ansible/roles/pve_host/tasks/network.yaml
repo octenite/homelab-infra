@@ -13,6 +13,20 @@
 # states and handles both: the file already matches Git, so only the checks
 # and the disarming are still owed; or it does not, and nothing may be
 # changed until the timer has restored the last confirmed file.
+# The token may attach a guest only where the bridge carries the VLAN, and
+# never without a tag: VLAN 1 is the bridge's own, where the host lives.
+- name: The two VLAN lists agree
+  ansible.builtin.assert:
+    that:
+      - pve_bridge_vlans | length > 0
+      - pve_token_vlans | difference(pve_bridge_vlans) | length == 0
+      - 1 not in pve_bridge_vlans
+      - pve_bridge_vlans | unique | length == pve_bridge_vlans | length
+    fail_msg: >-
+      pve_token_vlans ({{ pve_token_vlans | join(', ') }}) must be among pve_bridge_vlans
+      ({{ pve_bridge_vlans | join(', ') }}), which holds each VLAN once and never VLAN 1.
+    quiet: true
+
 - name: Wanted interfaces file
   ansible.builtin.set_fact:
     pve_host_net_wanted: "{{ lookup('ansible.builtin.template', 'interfaces.j2') }}"
@@ -126,19 +140,26 @@
 
     # The checks run on every play, changed or not: they are what a pending
     # revert still waits for, and they cost nothing.
+    # The reload above runs detached and nothing waits for its end: adding
+    # VLANs does not interrupt the session, so the wait returns at once. The
+    # read is repeated until every wanted VLAN is there, well inside the
+    # revert window.
     - name: Read the VLANs of the onboard bridge port
       ansible.builtin.command:
         cmd: bridge vlan show dev {{ pve_nic_lan }}
       register: pve_host_net_vlans
       changed_when: false
       check_mode: false
+      until: ansible_check_mode or (pve_bridge_vlans | map('string') | difference(pve_host_net_vlans.stdout.split()) | length == 0)
+      retries: 10
+      delay: 3
 
     - name: Guest VLANs are on the bridge port
       ansible.builtin.assert:
         that: pve_host_net_vlans.stdout is search('(^|\s)' ~ item ~ '(\s|$)')
         fail_msg: "VLAN {{ item }} is missing on {{ pve_nic_lan }}"
         quiet: true
-      loop: "{{ pve_guest_vlans }}"
+      loop: "{{ pve_bridge_vlans }}"
 
     - name: Point-to-point bridge exists with its address
       ansible.builtin.command:

@@ -23,3 +23,11 @@
       ansible.builtin.include_role:
         name: pve_host
         tasks_from: backup-check
+
+    # After everything else: the template comes from the vendor's server, and
+    # a failure there must not keep the host's own configuration, its
+    # exporters or its backups from being applied.
+    - name: Container templates
+      ansible.builtin.include_role:
+        name: pve_host
+        tasks_from: templates

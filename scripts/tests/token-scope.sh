@@ -72,6 +72,66 @@ expect 200 "its own pool" GET /pools/talos
 expect 200 "storage list of its node" GET "/nodes/$NODE/storage"
 expect 200 "next free guest id" GET /cluster/nextid
 
+expect 200 "the pool for remote-access containers" GET /pools/remote
+
+# has <path> <privilege> -> yes | no : the token's own answer about itself.
+# A privilege counts when it is named at all (its value only says whether it
+# is passed down). An answer without the path, or an error, prints nothing,
+# and the caller then reports a failure: "no" is never guessed.
+has() {
+	printf 'header = "Authorization: PVEAPIToken=%s=%s"\n' "$TOKEN_ID" "$secret" |
+		curl --config - --silent --cacert "$CA" --max-time 10 --get --data-urlencode "path=$1" \
+			"https://$HOST:8006/api2/json/access/permissions" |
+		python3 -c 'import json, sys
+d = json.load(sys.stdin)["data"]
+print("yes" if sys.argv[2] in d[sys.argv[1]] else "no")' "$1" "$2" 2>/dev/null
+}
+# may <wanted> <what it shows> <path> <privilege>
+may() {
+	local got
+	got=$(has "$3" "$4")
+	checks=$((checks + 1))
+	if [ "$got" = "$1" ]; then
+		printf '  ok    %-10s %-38s %-3s  %s\n' "$4" "$3" "$got" "$2"
+	else
+		printf '  FAIL  %-10s %-38s %-3s  expected %s: %s\n' "$4" "$3" "${got:-?}" "$1" "$2"
+		fail=$((fail + 1))
+	fi
+}
+
+# These rows read the token's grants. They do not prove that a guest cannot
+# end up elsewhere: Proxmox checks the VLAN of a network device, not the
+# pool it belongs to, so either pool may use either VLAN; and by the source
+# of the release a device with trunk VLANs and no tag, or a VM device with
+# no bridge at all, needs no right on the bridge path (backlog B43). The
+# OpenTofu modules, CI and the drift job are what refuses those.
+echo "== where the token holds the right to attach a guest: the cluster VLAN and the administration container's"
+BR=/sdn/zones/localnetwork/vmbr0
+may yes "the cluster" "$BR/50" SDN.Use
+may yes "remote access, administration" "$BR/30" SDN.Use
+may no "remote access, household: not before its plan" "$BR/31" SDN.Use
+may no "no right on the bridge path itself" "$BR" SDN.Use
+may no "the direct link to the workstation" /sdn/zones/localnetwork/vmbr1 SDN.Use
+may no "nothing at the top" / VM.Allocate
+may yes "guests in the remote-access pool" /pool/remote VM.Allocate
+
+# The whole map of the token: the paths on which it holds anything must be
+# exactly the ones Git grants (plus the guests in its pools, once any exist).
+paths=$(printf 'header = "Authorization: PVEAPIToken=%s=%s"\n' "$TOKEN_ID" "$secret" |
+	curl --config - --silent --cacert "$CA" --max-time 10 "https://$HOST:8006/api2/json/access/permissions" |
+	python3 -c 'import json, sys
+d = json.load(sys.stdin)["data"]
+print(" ".join(sorted(p for p, v in d.items() if v and not p.startswith("/vms/"))))' 2>/dev/null)
+want="/nodes/$NODE /pool/remote /pool/talos $BR/30 $BR/50 /storage/local /storage/local-lvm"
+checks=$((checks + 1))
+if [ "$paths" = "$want" ]; then
+	echo "  ok    the token holds rights on exactly these seven paths and no other"
+else
+	echo "  FAIL  the token's paths are: ${paths:-(no answer)}"
+	echo "        expected:              $want"
+	fail=$((fail + 1))
+fi
+
 echo "== outside the token's scope (each write would be a no-op if it were allowed)"
 expect 403 "host firewall options: it lost Sys.Modify" PUT "/nodes/$NODE/firewall/options" --data 'ndp=0'
 expect 403 "datacenter firewall options" PUT /cluster/firewall/options --data 'enable=1'

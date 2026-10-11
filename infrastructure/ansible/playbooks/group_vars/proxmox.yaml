@@ -23,7 +23,32 @@ pve_servers_network: 10.0.50.0/24
 # is 10.0.99.0/29 (host .1, workstation .2, backup server VM .3).
 pve_nic_lan: enp3s0
 pve_nic_p2p: enp2s0
-pve_guest_vlans: [50]
+# Two lists on purpose. The first is what the bridge carries. The second is
+# where the OpenTofu token may attach a guest: one access entry per VLAN is
+# built from it below. A VLAN can be on the bridge without the token having
+# any right to it. (One list for both, with the access entry taken from its
+# first element, would have moved the token's right from the cluster VLAN to
+# whichever VLAN was written first.)
+#   30  remote access, administration: the container remote1 (Phase R)
+#   31  remote access, household: laid empty; the token gets no right to it
+#       before the household plan
+#   50  the cluster
+pve_bridge_vlans: [30, 31, 50]
+pve_token_vlans: [30, 50]
+
+# Remote access (Phase R, docs/adr/0005-administrative-access.md). The host
+# never holds an address in these two networks. The administration container
+# reaches the host's SSH and web interface through the router (E15), so the
+# host sees its address as the source.
+pve_remote_admin: 10.0.30.10
+pve_remote_networks: [10.0.30.0/24, 10.0.31.0/24]
+
+# Container templates, fetched from the vendor's index and compared with a
+# checksum kept here. The index is signed, but the pin is what makes a rebuilt
+# container start from the same image; a new template is a pull request.
+pve_ct_templates:
+  - file: debian-13-standard_13.6-1_amd64.tar.zst
+    sha512: 4c0c27ca6ceab5ef0b84db57825a00f26157ef1854bafe97297813e1cbe8ecb8cc9c453cab6b3b0efe1ba193a50c47ece1e41d950e411b8730b835b71e9e754b
 pve_p2p_address: 10.0.99.1/29
 pve_p2p_network: 10.0.99.0/29
 
@@ -35,7 +60,15 @@ pve_admin_user: octenite-admin@pve
 # Realms that require a second factor once all their users have enrolled.
 # Automation users hold no password and log in with tokens only.
 pve_tfa_realms: [pve, pam]
+# Resource pools. The token's rights are granted per pool, so creating a guest
+# outside these pools is refused. Proxmox does not tie a pool to a VLAN, and
+# the role's Pool.Allocate lets the token move a guest out again (backlog B43).
 pve_pool: talos
+pve_pools:
+  - name: "{{ pve_pool }}"
+    comment: Talos VMs, managed by OpenTofu
+  - name: remote
+    comment: Remote-access containers, managed by OpenTofu
 # The provisioning role carries no Sys.Modify: on a node path that privilege
 # covers the host firewall, the bridges, DNS and the hosts file, far beyond
 # creating VMs. If the image download of Phase 5 needs a network privilege,
@@ -75,12 +108,23 @@ pve_token_lifetime_days: 365
 # worker VMs are added in Phase 7, when their IDs exist. An entry removed
 # here is removed on the host by the next run. The bridge is granted per
 # VLAN: an entry on the bridge itself would also permit a guest NIC without a
-# tag, which lands in the management VLAN.
-pve_acls:
+# tag, which lands in the management VLAN. Those entries are built from
+# pve_token_vlans.
+pve_acls: "{{ pve_acls_fixed + pve_acls_vlans }}"
+pve_acls_vlans: >-
+  {%- set out = [] -%}
+  {%- for v in pve_token_vlans -%}
+    {%- set _ = out.append({'path': '/sdn/zones/localnetwork/vmbr0/' ~ v, 'role': 'TerraformProvisioner', 'user': 'terraform@pve'}) -%}
+  {%- endfor -%}
+  {{ out }}
+pve_acls_fixed:
   - path: /
     role: Administrator
     user: "{{ pve_admin_user }}"
   - path: "/pool/{{ pve_pool }}"
+    role: TerraformProvisioner
+    user: terraform@pve
+  - path: /pool/remote
     role: TerraformProvisioner
     user: terraform@pve
   - path: /storage/local
@@ -90,9 +134,6 @@ pve_acls:
     role: TerraformProvisioner
     user: terraform@pve
   - path: "/nodes/{{ inventory_hostname_short }}"
-    role: TerraformProvisioner
-    user: terraform@pve
-  - path: "/sdn/zones/localnetwork/vmbr0/{{ pve_guest_vlans | first }}"
     role: TerraformProvisioner
     user: terraform@pve
   - path: /storage/local-lvm
