@@ -30,7 +30,18 @@ if [ "$net" -eq 1 ]; then
 elif [ "$wifi" -eq 1 ]; then
 	wifi reload
 fi
-[ "$fw" -eq 1 ] && /etc/init.d/firewall restart
+if [ "$fw" -eq 1 ]; then
+	# Reload, not restart. On this release a restart deletes the rule table
+	# and then renders and loads the new one, so for the length of one
+	# render (about half a second here) the router filters nothing between
+	# its networks. A reload replaces the table in one step. Chains of a
+	# zone that no longer exists stay behind empty, with nothing jumping to
+	# them, until the next boot.
+	/etc/init.d/firewall reload
+	# A reload needs a firewall that is running. Without a loaded table,
+	# start it.
+	nft list table inet fw4 >/dev/null 2>&1 || /etc/init.d/firewall restart
+fi
 if [ "$dns" -eq 1 ]; then
 	/etc/init.d/dnsmasq restart
 	/etc/init.d/odhcpd restart

@@ -16,6 +16,10 @@
 {# The administration container of Phase R. Its rules name this one address:
    a second address in the zone gets nothing. #}
 {% set remote1 = '10.0.30.10' %}
+{# "wan" as a destination is whatever leaves through the WAN port, and that
+   includes the provider's own private networks and its modem. A rule that
+   means the internet excludes these ranges. #}
+{% set not_internet = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', '100.64.0.0/10'] %}
 config defaults
 	option syn_flood '1'
 	option input 'REJECT'
@@ -220,6 +224,9 @@ config rule
 	option name 'E5-servers-to-wan-https'
 	option src 'servers'
 	option dest 'wan'
+{% for net in not_internet %}
+	list dest_ip '!{{ net }}'
+{% endfor %}
 	option proto 'tcp'
 	option dest_port '443'
 	option target 'ACCEPT'
@@ -266,6 +273,9 @@ config rule
 	list src_ip '{{ a }}'
 {% endfor %}
 	option dest 'wan'
+{% for net in not_internet %}
+	list dest_ip '!{{ net }}'
+{% endfor %}
 	option proto 'tcp'
 	option dest_port '80 443'
 	option target 'ACCEPT'
@@ -323,16 +333,13 @@ config rule
 	option target 'ACCEPT'
 
 {# Tailscale's coordination and relay servers, and the package sources, all
-   over HTTPS. No UDP: every connection is relayed (decision D8).
-   "wan" is whatever leaves through the WAN port, and that includes the
-   provider's own private networks and its modem. The internet is meant, so
-   the private, link-local and carrier ranges are excluded. #}
+   over HTTPS. No UDP: every connection is relayed (decision D8). #}
 config rule
 	option name 'E16-remote1-to-wan-https'
 	option src 'remote'
 	option src_ip '{{ remote1 }}'
 	option dest 'wan'
-{% for net in ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', '100.64.0.0/10'] %}
+{% for net in not_internet %}
 	list dest_ip '!{{ net }}'
 {% endfor %}
 	option proto 'tcp'
