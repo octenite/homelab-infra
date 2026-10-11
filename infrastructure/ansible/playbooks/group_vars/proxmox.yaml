@@ -23,7 +23,14 @@ pve_servers_network: 10.0.50.0/24
 # is 10.0.99.0/29 (host .1, workstation .2, backup server VM .3).
 pve_nic_lan: enp3s0
 pve_nic_p2p: enp2s0
-pve_guest_vlans: [50]
+# Two lists on purpose. The first is what the bridge carries. The second is
+# where the OpenTofu token may attach a guest: one access entry per VLAN is
+# built from it below. A VLAN can be on the bridge without the token having
+# any right to it. (One list for both, with the access entry taken from its
+# first element, would have moved the token's right from the cluster VLAN to
+# whichever VLAN was written first.)
+pve_bridge_vlans: [50]
+pve_token_vlans: [50]
 pve_p2p_address: 10.0.99.1/29
 pve_p2p_network: 10.0.99.0/29
 
@@ -35,7 +42,12 @@ pve_admin_user: octenite-admin@pve
 # Realms that require a second factor once all their users have enrolled.
 # Automation users hold no password and log in with tokens only.
 pve_tfa_realms: [pve, pam]
+# Resource pools. The token's rights are granted per pool, so a guest that
+# OpenTofu creates outside these pools is refused.
 pve_pool: talos
+pve_pools:
+  - name: "{{ pve_pool }}"
+    comment: Talos VMs, managed by OpenTofu
 # The provisioning role carries no Sys.Modify: on a node path that privilege
 # covers the host firewall, the bridges, DNS and the hosts file, far beyond
 # creating VMs. If the image download of Phase 5 needs a network privilege,
@@ -75,8 +87,16 @@ pve_token_lifetime_days: 365
 # worker VMs are added in Phase 7, when their IDs exist. An entry removed
 # here is removed on the host by the next run. The bridge is granted per
 # VLAN: an entry on the bridge itself would also permit a guest NIC without a
-# tag, which lands in the management VLAN.
-pve_acls:
+# tag, which lands in the management VLAN. Those entries are built from
+# pve_token_vlans.
+pve_acls: "{{ pve_acls_fixed + pve_acls_vlans }}"
+pve_acls_vlans: >-
+  {%- set out = [] -%}
+  {%- for v in pve_token_vlans -%}
+    {%- set _ = out.append({'path': '/sdn/zones/localnetwork/vmbr0/' ~ v, 'role': 'TerraformProvisioner', 'user': 'terraform@pve'}) -%}
+  {%- endfor -%}
+  {{ out }}
+pve_acls_fixed:
   - path: /
     role: Administrator
     user: "{{ pve_admin_user }}"
@@ -90,9 +110,6 @@ pve_acls:
     role: TerraformProvisioner
     user: terraform@pve
   - path: "/nodes/{{ inventory_hostname_short }}"
-    role: TerraformProvisioner
-    user: terraform@pve
-  - path: "/sdn/zones/localnetwork/vmbr0/{{ pve_guest_vlans | first }}"
     role: TerraformProvisioner
     user: terraform@pve
   - path: /storage/local-lvm

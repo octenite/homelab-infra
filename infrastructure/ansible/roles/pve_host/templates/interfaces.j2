@@ -16,7 +16,7 @@ iface vmbr0 inet static
 	bridge-ports {{ pve_nic_lan }}
 	bridge-stp off
 	bridge-vlan-aware yes
-	bridge-vids {{ pve_guest_vlans | join(' ') }}
+	bridge-vids {{ pve_bridge_vlans | sort | join(' ') }}
 
 iface {{ pve_nic_p2p }} inet manual
 

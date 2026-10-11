@@ -49,6 +49,30 @@
   register: pve_host_fw_current
   failed_when: false
 
+# The files are written by a shell command, which a dry run skips and which
+# shows no difference of its own. So the difference is computed here, in a
+# dry run too, and printed: nobody should apply a firewall change unseen.
+- name: Difference between the firewall files on the host and Git
+  ansible.builtin.command:
+    cmd: "diff -u --label host:{{ item.item.key }} --label git:{{ item.item.key }} {{ item.item.key }} -"
+    stdin: "{{ item.item.value }}"
+    stdin_add_newline: false
+  loop: "{{ pve_host_fw_current.results }}"
+  loop_control:
+    label: "{{ item.item.key }}"
+  when: (item.content | default('') | b64decode) != item.item.value
+  register: pve_host_fw_diff
+  changed_when: false
+  check_mode: false
+  failed_when: pve_host_fw_diff.rc > 1 and (item.content is defined)
+
+- name: Print the difference
+  ansible.builtin.debug:
+    msg: "{{ item.stdout_lines | default(['the file does not exist on the host yet']) }}"
+  loop: "{{ pve_host_fw_diff.results | rejectattr('skipped', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.item.item.key }}"
+
 - name: Write firewall files that differ
   ansible.builtin.shell:
     cmd: "cat > {{ item.item.key }}"
@@ -60,6 +84,18 @@
   when: (item.content | default('') | b64decode) != item.item.value
   changed_when: true
   notify: Reload pve-firewall
+
+# A rule the firewall cannot parse is dropped with a message on the error
+# stream and exit code 0, and the rest is loaded: a typing error would open
+# or close something silently. The files as they are now on the host must
+# compile without a word.
+- name: The firewall files compile cleanly
+  ansible.builtin.command:
+    cmd: pve-firewall compile
+  register: pve_host_fw_compile
+  changed_when: false
+  check_mode: false
+  failed_when: pve_host_fw_compile.rc != 0 or (pve_host_fw_compile.stderr | trim | length > 0)
 
 - name: Firewall service enabled and running
   ansible.builtin.service:
