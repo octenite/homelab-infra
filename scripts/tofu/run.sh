@@ -55,6 +55,20 @@ EOF
 }
 export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
 
+# The root "remote" builds a container from a template file on the
+# hypervisor. That file is compared with its pin before anything is planned,
+# and before any secret is loaded.
+if [ "$root" = remote ]; then
+	case "$1" in
+	plan | apply | import | refresh)
+		bash "$REPO/scripts/tofu/template-pin.sh" || {
+			echo "nothing was planned or applied" >&2
+			exit 1
+		}
+		;;
+	esac
+fi
+
 # The child runs under bash, named explicitly: sops starts its command with
 # /bin/sh, which is not bash everywhere. The arguments travel shell-quoted.
 TOFU_ARGS=$(printf '%q ' "$@")

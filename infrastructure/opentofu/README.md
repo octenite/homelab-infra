@@ -5,6 +5,10 @@ Roots under `roots/` are applied one at a time, from the workstation, with a ses
 | Root | Holds | Since |
 |---|---|---|
 | `pve` | Everything on the hypervisor: a marker today, the Talos VMs from Phase 5 | Phase 3.6 |
+| `tailscale` | The tailnet's policy file and settings | Phase R, step R.2 |
+| `remote` | The remote-access containers on the hypervisor, through the module `modules/pve-lxc` | Phase R, step R.7 |
+
+Guests are declared through modules only. A module's variables carry the placement rule: which pool, which VLAN. `refused/` holds configurations that `tofu validate` must refuse.
 
 Status: the backend was initialised on 2026-10-07 and the state round trip passed (init, apply, encrypted copy kept, second plan without changes; `docs/phases/phase-3.md`). The root `pve` holds only its marker. Without `private/opentofu/backend.hcl` the wrapper stops and prints the keys the file needs.
 
@@ -49,6 +53,13 @@ For example `just tofu pve plan`. The recipe runs `scripts/tofu/run.sh`, which s
 
 The wrapper refuses to start without the root's directory, without `backend.hcl`, or without an open session.
 
+Per root, beyond that:
+
+| Root | What the wrapper adds |
+|---|---|
+| `tailscale` | Before `plan` and `apply` it sends the policy file to Tailscale's validation and stops when a test of the policy fails; the provider's own plan does not |
+| `remote` | Before `plan`, `apply`, `import` and `refresh` it compares the container template on the hypervisor with its pin, over the operator's SSH login, and again after an `apply`. It passes the operator's public keys from the private inventory. It refuses `destroy`, `-destroy` and `-replace`, a plan when the state holds the container and `main.tf` no longer declares it, and a plan when guest id 3010 is taken by something that is not in the state. After an `apply` it checks that the hypervisor's firewall file for the guest exists. A rebuild is `docs/runbooks/rebuild-remote1.md` |
+
 `tofu state pull` prints the state in the clear. Never redirect it into a file.
 
 ## The state copy
@@ -65,4 +76,4 @@ After every command that can change state, the wrapper fetches the object from t
 just tofu-lint
 ```
 
-It runs `scripts/tofu/lint.sh`: it fails when a backend override file exists anywhere under `infrastructure/opentofu` (a tool of the offline runbook that must never be committed), then `tofu fmt -check -recursive` over `infrastructure/opentofu`, then `tofu init -backend=false` and `tofu validate` in every root. It needs no backend, no session and no secret. It is part of `just lint`, which the CI lint job runs. The pre-commit hook runs only `tofu fmt -check` on the changed `.tf` files.
+It runs `scripts/tofu/lint.sh`: it fails when a backend override file exists anywhere under `infrastructure/opentofu` (a tool of the offline runbook that must never be committed), then `tofu fmt -check -recursive` over `infrastructure/opentofu`, then `tofu init -backend=false` and `tofu validate` in every root. It also fails when a root declares a Proxmox resource directly instead of through a module; when the template pin of the root `remote` differs from the hypervisor play's; when the guest id or the address of `remote1` differ between the root, the wrapper, the play and the test; when a root's `tofu test` fails (the provider is a mock, no API is called); and when a configuration under `refused/` validates, or fails for another reason than the placement rule. It needs no backend, no session and no secret. It is part of `just lint`, which the CI lint job runs. The pre-commit hook runs only `tofu fmt -check` on the changed `.tf` files.

@@ -120,13 +120,113 @@ if answer:
 	}
 }
 
+# The root "remote": root's keys for a new container, and three guards.
+#   - A container is never destroyed or replaced by a plan. The hypervisor
+#     refuses to delete a protected one, but only after the provider has
+#     stopped it. A rebuild is a runbook (docs/runbooks/rebuild-remote1.md).
+#   - A guest id that is taken is never planned onto: the provider would
+#     adopt whatever guest holds the id and report it as created.
+#   - The template is compared with its pin by run.sh before, and here after.
+REMOTE_VMID=3010
+REMOTE_ADDRESS=module.remote1.proxmox_virtual_environment_container.this
+
+pve_api() { # <METHOD> <path below /api2/json> ; prints the body, fails on an HTTP error
+	printf 'header = "Authorization: PVEAPIToken=%s"\n' "$PROXMOX_VE_API_TOKEN" |
+		curl --fail --silent --show-error --config - --cacert "$PVE_CA" --max-time 20 \
+			--request "$1" "https://10.0.10.10:8006/api2/json$2"
+}
+
+remote_inputs() {
+	local keys="$TOFU_REPO/private/ansible/inventory/group_vars/all/ssh.yaml"
+	# The operator's public keys: a plain list in the private inventory, the
+	# same one the hosts receive. Read without a YAML library, strictly: a
+	# list item that is not one public key on one line stops the command,
+	# because a key dropped here is missing in the container for good (the
+	# key list is written at creation only).
+	TF_VAR_ssh_public_keys=$(
+		python3 - "$keys" <<'PY'
+import json
+import re
+import sys
+
+ITEM = re.compile(r"^\s+-\s")
+KEY = re.compile(
+    r"^\s+-\s+(?:"
+    r"'((?:ssh-|ecdsa-|sk-)\S+ \S+(?: [^'\"#]*)?)'"
+    r"|\"((?:ssh-|ecdsa-|sk-)\S+ \S+(?: [^'\"#]*)?)\""
+    r"|((?:ssh-|ecdsa-|sk-)\S+ \S+(?: [^'\"#]*?)?)"
+    r")\s*(?:\s#.*)?$"
+)
+keys, inside = [], False
+for number, line in enumerate(open(sys.argv[1], encoding="utf-8"), 1):
+    if re.match(r"^openwrt_ssh_authorized_keys:\s*(?:#.*)?$", line):
+        inside = True
+        continue
+    if not inside or not line.strip() or line.lstrip().startswith("#"):
+        continue
+    if not ITEM.match(line):
+        break
+    m = KEY.match(line.rstrip("\n"))
+    if not m:
+        sys.exit(f"line {number} of the key list: a list item that is not one public key on one line")
+    keys.append(next(g for g in m.groups() if g is not None).strip())
+if len(keys) < 2:
+    sys.exit("fewer than two public keys found in the private inventory")
+print(f"{len(keys)} public keys read from the private inventory", file=sys.stderr)
+print(json.dumps(keys))
+PY
+	)
+	export TF_VAR_ssh_public_keys
+}
+
+remote_guards() { # <tofu arguments...>
+	case "$1" in
+	destroy)
+		echo "refused: a remote-access container is rebuilt by its runbook only (docs/runbooks/rebuild-remote1.md)" >&2
+		exit 2
+		;;
+	plan | apply)
+		local a listed free
+		for a in "$@"; do
+			case "$a" in
+			-destroy | --destroy | -destroy=* | --destroy=* | -replace | --replace | -replace=* | --replace=*)
+				echo "refused: -destroy and -replace are not used on this root (docs/runbooks/rebuild-remote1.md)" >&2
+				exit 2
+				;;
+			esac
+		done
+		if listed=$(tofu state list 2>/dev/null) && grep -qxF "$REMOTE_ADDRESS" <<<"$listed"; then
+			# The guest is this root's own. Without its block in the
+			# configuration a plan would stop it and try to delete it;
+			# prevent_destroy is gone with the block.
+			grep -q '^module "remote1" {' "$TOFU_ROOT_DIR/main.tf" || {
+				echo "refused: the state holds remote1 and main.tf no longer declares it; a plan would stop and try to delete the container (docs/runbooks/rebuild-remote1.md)" >&2
+				exit 2
+			}
+		else
+			free=$(pve_api GET "/cluster/nextid?vmid=$REMOTE_VMID" | python3 -c 'import json, sys; print(json.load(sys.stdin)["data"])') || free=''
+			[ "$free" = "$REMOTE_VMID" ] || {
+				echo "guest id $REMOTE_VMID is taken or could not be checked, and it is not in this root's state (or the state could not be read): the provider would adopt the guest that holds it. Nothing was planned (docs/runbooks/rebuild-remote1.md, 'The guest exists and the state does not hold it')." >&2
+				exit 1
+			}
+		fi
+		;;
+	esac
+}
+
 case "$TOFU_ROOT" in
-pve | remote) proxmox_credentials ;;
+pve) proxmox_credentials ;;
+remote)
+	proxmox_credentials
+	remote_inputs
+	;;
 tailscale) tailscale_credentials ;;
 esac
 
 eval "set -- $TOFU_ARGS"
 cd "$TOFU_ROOT_DIR"
+
+if [ "$TOFU_ROOT" = remote ]; then remote_guards "$@"; fi
 
 if [ "$TOFU_ROOT" = tailscale ]; then
 	case "$1" in
@@ -180,6 +280,32 @@ apply | destroy | import | state | taint | untaint | refresh)
 	# Anything here may have changed the state, even when it fails half-way.
 	rc=0
 	tofu "$@" || rc=$?
+	if [ "$TOFU_ROOT" = remote ] && [ "$1" = apply ]; then
+		# Without the secrets of this environment: the check needs the
+		# operator's SSH agent and nothing else.
+		pin=0
+		env -i HOME="$HOME" PATH="$PATH" SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-}" bash "$TOFU_REPO/scripts/tofu/template-pin.sh" || pin=$?
+		case "$pin" in
+		0) ;;
+		3)
+			echo "the template could not be checked after the apply; nothing says it changed. Before the container is started, run: bash scripts/tofu/template-pin.sh" >&2
+			rc=1
+			;;
+		*)
+			echo "the template differs from its pin after the apply: do not use a container created by this apply; rebuild it once the hypervisor play has restored the template" >&2
+			rc=1
+			;;
+		esac
+		# A creation that fails half-way removes the guest's firewall file on
+		# the hypervisor, and a second apply then succeeds without it.
+		if [ "$rc" -eq 0 ]; then
+			fw=$(pve_api GET "/nodes/pve1/lxc/$REMOTE_VMID/firewall/options" | python3 -c 'import json, sys; print((json.load(sys.stdin).get("data") or {}).get("enable", ""))') || fw=''
+			[ "$fw" = 1 ] || {
+				echo "the hypervisor's firewall file for guest $REMOTE_VMID is missing or switched off: run 'just pve-apply' and 'just test-remote' before any start" >&2
+				rc=1
+			}
+		fi
+	fi
 	case "$1:${2:-}" in
 	state:list | state:show | state:pull) ;;
 	*) copy_state ;;

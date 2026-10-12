@@ -41,7 +41,16 @@ pve_token_vlans: [30, 50]
 # reaches the host's SSH and web interface through the router (E15), so the
 # host sees its address as the source.
 pve_remote_admin: 10.0.30.10
+pve_remote_router: 10.0.30.1
 pve_remote_networks: [10.0.30.0/24, 10.0.31.0/24]
+# What "the internet" excludes, as in the router's rule E16.
+pve_not_internet: [10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16]
+# The hypervisor's own firewall for a guest's network device: one file per
+# guest id, /etc/pve/firewall/<id>.fw, from a template of the host role. The
+# id is the one OpenTofu creates the guest with (roots/remote/main.tf).
+pve_guest_firewalls:
+  - vmid: 3010
+    template: guest-remote-admin.fw.j2
 
 # Container templates, fetched from the vendor's index and compared with a
 # checksum kept here. The index is signed, but the pin is what makes a rebuilt

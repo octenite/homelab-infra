@@ -1,0 +1,56 @@
+{# The hypervisor's firewall for the network device of the administration
+   container (Phase R, docs/adr/0005-administrative-access.md). Written by
+   the hypervisor play, not by OpenTofu: the token that builds the container
+   could switch this file's rules off either way, and the play compares the
+   file with Git using a credential that a stolen token does not give.
+   Rules of this file:
+     - policy DROP in both directions and ACCEPT rules only. A rule that the
+       firewall cannot parse is skipped without an error, so a DROP rule in
+       front of a wider ACCEPT would fail open; a missing ACCEPT fails closed.
+     - every option is written out. With the guest firewall on, DHCP and
+       neighbour discovery are let through unless the file says 0.
+     - numeric ports, no 0.0.0.0/0 (release 6.0.4 mishandles both).
+     - layer2_protocols: ARP. The rules below see IPv4 frames without a VLAN
+       tag only. A frame that the container tags itself would pass the
+       bridge unfiltered (the bridge does not hand tagged frames to the
+       packet filter); with this option every frame type but IPv4, IPv6 and
+       ARP is dropped at the device, tagged frames among them.
+     - an entry of a set that cannot be parsed is skipped without an error,
+       and for the excluded ranges of "internet" that widens the set: the
+       test reads every entry back (scripts/tests/remote.sh).
+   Proxmox reads this file only once the guest exists, and deletes it when
+   the guest is destroyed and when a creation fails: run the play again
+   after either, and read the result back before the container is started. #}
+[OPTIONS]
+
+enable: 1
+policy_in: DROP
+policy_out: DROP
+ipfilter: 1
+macfilter: 1
+dhcp: 0
+ndp: 0
+radv: 0
+layer2_protocols: ARP
+log_level_in: nolog
+log_level_out: nolog
+
+[IPSET internet] # IPv4 without private, link-local and carrier ranges (E16)
+
+{% for n in pve_not_internet %}
+!{{ n }}
+{% endfor %}
+0.0.0.0/1
+128.0.0.0/1
+
+[IPSET ipfilter-net0] # the only address the device may send from
+
+{{ pve_remote_admin }}
+
+[RULES]
+
+IN ACCEPT -source {{ pve_workstations | join(',') }} -dest {{ pve_remote_admin }} -p tcp -dport 22 -log nolog # E17 workstation to the container, SSH
+OUT ACCEPT -dest {{ pve_remote_router }} -p udp -dport 53 -log nolog # name lookups at the router
+OUT ACCEPT -dest {{ pve_remote_router }} -p tcp -dport 53 -log nolog # name lookups at the router
+OUT ACCEPT -dest {{ pve_mgmt_address }} -p tcp -dport 22,8006 -log nolog # E15 hypervisor, SSH and web interface
+OUT ACCEPT -dest +internet -p tcp -dport 443 -log nolog # E16 HTTPS to the internet
