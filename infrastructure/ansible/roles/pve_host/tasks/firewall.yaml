@@ -43,6 +43,14 @@
         IN DROP -source {{ n }} -p tcp -dport 22,8006,3128,5900:5999,60000:60050 -log nolog # X10 no rights by subnet membership
         {% endfor %}
 
+- name: Wanted firewall files of the guests
+  ansible.builtin.set_fact:
+    pve_host_fw_files: >-
+      {{ pve_host_fw_files | combine({'/etc/pve/firewall/' ~ item.vmid ~ '.fw': lookup('ansible.builtin.template', item.template)}) }}
+  loop: "{{ pve_guest_firewalls | default([]) }}"
+  loop_control:
+    label: "{{ item.vmid }}"
+
 - name: Read the current firewall files
   ansible.builtin.slurp:
     src: "{{ item.key }}"
@@ -71,7 +79,9 @@
 
 - name: Print the difference
   ansible.builtin.debug:
-    msg: "{{ item.stdout_lines | default(['the file does not exist on the host yet']) }}"
+    msg: >-
+      {{ item.stdout_lines if (item.stdout_lines | default([]) | length > 0)
+         else (['the file does not exist on the host yet; it would be written as:'] + item.item.item.value.splitlines()) }}
   loop: "{{ pve_host_fw_diff.results | rejectattr('skipped', 'defined') | list }}"
   loop_control:
     label: "{{ item.item.item.key }}"

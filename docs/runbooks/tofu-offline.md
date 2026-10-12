@@ -21,7 +21,7 @@ The wrapper (`just tofu`) has no offline or restore command. It always talks to 
 - The repository in WSL with the private repository on `main`, and an open session (`just session-start`).
 - The state copy of the root. If `private/opentofu/state-copies/<root>.state.json` is missing, stop: see "No copy" at the end.
 - Provider plugins already downloaded in the root's `.terraform` directory, if the internet is down. The `pve` root needs none today.
-- From Phase 5 the root also needs the hypervisor's API token. The wrapper passes none yet. Extend the commands of part A when it does.
+- This runbook is written for the root `pve`. The root `remote` is not worked on offline: its container is built and rebuilt with `docs/runbooks/rebuild-remote1.md`, and the wrapper's guards for it do not run when OpenTofu is started directly. From Phase 5 the root `pve` also needs the hypervisor's API token in part A; extend the commands then.
 
 The examples use the root `pve` and start in the repository's top directory.
 

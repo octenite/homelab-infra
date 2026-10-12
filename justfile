@@ -143,6 +143,22 @@ test-fences *args:
 test-router-zones:
     bash scripts/tests/router-remote-zones.sh
 
+# The administration container read back and probed from inside (read-only). `just test-remote layers` also switches its filter off and on.
+[positional-arguments]
+test-remote *args:
+    bash scripts/tests/remote.sh "$@"
+
+# Start the administration container, only after its stored configuration and the hypervisor's filter read back as designed.
+remote-start:
+    bash scripts/tests/remote.sh
+    ssh -o BatchMode=yes ops@10.0.10.10 sudo pct start 3010
+    sleep 8
+    bash scripts/tests/remote.sh
+
+# Does the pinned container template run without the nesting feature? Creates a throwaway container (id 9909) and destroys it.
+nesting-probe:
+    bash scripts/tests/nesting-probe.sh
+
 # Scope test of the OpenTofu API token: what it may read, and which writes are refused (each a no-op by design).
 test-token:
     bash scripts/tests/token-scope.sh
