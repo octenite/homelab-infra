@@ -3,6 +3,12 @@
   ansible.builtin.apt:
     update_cache: true
 
+# Unit-file changes are loaded before any service is (re)started below, so a
+# new drop-in is in effect at the restart in the same run.
+- name: Reload systemd units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
 - name: Restart sshd
   ansible.builtin.service:
     name: ssh
@@ -24,10 +30,6 @@
   ansible.builtin.service:
     name: nftables
     state: reloaded
-
-- name: Reload systemd units
-  ansible.builtin.systemd_service:
-    daemon_reload: true
 
 - name: Restart tailscaled
   ansible.builtin.systemd_service:

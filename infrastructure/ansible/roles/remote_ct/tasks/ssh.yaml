@@ -21,6 +21,35 @@
     name: ssh.service
     enabled: true
 
+- name: Directory for the ssh.service drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/system/ssh.service.d
+    state: directory
+    mode: "0755"
+
+# sshd binds the one address (ListenAddress below), which exists only once the
+# network is configured. On a cold boot sshd can start before that and fail to
+# bind; Debian makes that failure (exit 255) non-retryable, so without this it
+# stays down after every reboot (and travel.ps1 reboots the container each
+# trip). Wait for the network, and retry a failed bind.
+- name: SSH waits for the network and retries a bind failure
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ssh.service.d/10-homelab.conf
+    mode: "0644"
+    content: |
+      [Unit]
+      After=network-online.target
+      Wants=network-online.target
+      StartLimitIntervalSec=0
+
+      [Service]
+      RestartPreventExitStatus=
+      Restart=on-failure
+      RestartSec=2s
+  notify:
+    - Reload systemd units
+    - Restart sshd
+
 - name: SSH is key-only, operator account only, on the container's address only
   ansible.builtin.copy:
     dest: "{{ remote_ct_sshd_dropin }}"
