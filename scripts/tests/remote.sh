@@ -195,7 +195,7 @@ echo "masked=\$(systemctl is-enabled dev-mqueue.mount run-lock.mount tmp.mount 2
 echo "forward=\$(sysctl -n net.ipv4.ip_forward)"
 echo "v6=\$(ip -6 -o addr show dev eth0 | wc -l)"
 echo "listen=\$(ss -H -ltn | awk '{print \$4}' | sort | xargs)"
-echo "tsuser=\$(ps -o user= -p \$(systemctl show -p MainPID --value tailscaled 2>/dev/null) 2>/dev/null | xargs)"
+echo "tsuser=\$(stat -c %U /proc/\$(systemctl show -p MainPID --value tailscaled 2>/dev/null) 2>/dev/null)"
 echo "tscap=\$(grep CapBnd /proc/\$(systemctl show -p MainPID --value tailscaled 2>/dev/null)/status 2>/dev/null | awk '{print \$2}')"
 echo "tun=\$(test -e /dev/net/tun && echo present || echo absent)"
 echo "version=\$(dpkg-query -W -f='\${Version}' tailscale 2>/dev/null)"
