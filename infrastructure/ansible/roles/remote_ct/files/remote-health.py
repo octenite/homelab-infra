@@ -7,6 +7,7 @@
 import http.client
 import json
 import os
+import ssl
 import subprocess
 import sys
 import urllib.parse
@@ -40,8 +41,13 @@ if url.scheme != "https" or not url.hostname:
 ok, text = status()
 path = url.path if ok else url.path + "/fail"
 try:
-    # An HTTPS connection only, whatever the address says: no other scheme can be reached.
-    conn = http.client.HTTPSConnection(url.hostname, url.port, timeout=10)
+    # An HTTPS connection only, whatever the address says: no other scheme can
+    # be reached. The default context verifies the certificate and the host
+    # name (Python 3.13 on the container; the audit rule below is about
+    # releases before 3.4.3).
+    conn = http.client.HTTPSConnection(  # nosemgrep: python.lang.security.audit.httpsconnection-detected.httpsconnection-detected
+        url.hostname, url.port, timeout=10, context=ssl.create_default_context()
+    )
     conn.request("POST", path, body=text.encode()[:1000])
     code = conn.getresponse().status
     if code != 200:
