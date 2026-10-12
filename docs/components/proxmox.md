@@ -27,7 +27,7 @@ Host firewall (pve-firewall, inbound policy DROP). Exception IDs are those of [A
 
 Nothing else is admitted. No rule admits the console ports: the web console runs over 8006. pve-firewall admits the network that holds the host's own address to its management ports through a built-in set (read back on 2026-10-11: the set holds 10.0.10.0/24 and nothing else), so the role drops 10.0.10.0/24 on ports 22, 8006, 3128, 5900 to 5999 and 60000 to 60050 after the accept rules (X10). The same drop rows exist for 10.0.99.0/29, 10.0.30.0/24 and 10.0.31.0/24. Those three are not in the built-in set, so their rows change nothing today; they stand in case the set is ever widened.
 
-Until the container's own network device is filtered by the hypervisor (step R.7), "10.0.30.10" is whoever can put a guest into VLAN 30: the OpenTofu token and root. No guest exists there yet.
+The container `remote1` (guest 3010, pool `remote`) lives in VLAN 30 since 2026-10-12. The hypervisor filters its network device with the file `/etc/pve/firewall/3010.fw`, written by the play from `templates/guest-remote-admin.fw.j2` and read back by `just test-remote`: it may send from its one address only, in come SSH from the workstation, out go name lookups at the router, the hypervisor's SSH and web interface, and HTTPS to the internet without private ranges; every frame type but IPv4, IPv6 and ARP is dropped. Whoever holds the OpenTofu token can switch that file off (exception X33); the router's zone rules do not depend on the token.
 
 Pools: `talos` for the cluster's VMs and `remote` for the remote-access containers. Proxmox does not tie a pool to a VLAN.
 

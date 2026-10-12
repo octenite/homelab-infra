@@ -116,11 +116,49 @@ pct exec $ID -- journalctl -b --no-pager -p warning 2>/dev/null | tail -n 12 | s
 EOF
 )
 f() { sed -n "s/^$1=//p" <<<"$facts" | head -n 1; }
-printf '   %-34s %s\n' "systemd's own verdict" "$(f state)" "failed units" "$(f failed | sed 's/^$/none/')" \
-	"sandbox failures in the journal" "$(f sandbox)" "login service" "$(f logind)" "SSH service" "$(f ssh)" \
-	"a login through PAM, milliseconds" "$(f login_ms)" "virtualisation seen inside" "$(f virt)" \
-	"tools in the template" "$(f tools)" "systemd" "$(f systemd)"
-sed -n 's/^log: /   | /p' <<<"$facts"
+show() {
+	printf '   %-34s %s\n' "systemd's own verdict" "$(f state)" "failed units" "$(f failed | sed 's/^$/none/')" \
+		"sandbox failures in the journal" "$(f sandbox)" "login service" "$(f logind)" "SSH service" "$(f ssh)" \
+		"a login through PAM, milliseconds" "$(f login_ms)" "virtualisation seen inside" "$(f virt)" \
+		"tools in the template" "$(f tools)" "systemd" "$(f systemd)"
+	sed -n 's/^log: /   | /p' <<<"$facts"
+}
+show
+
+# The default profile of an unprivileged container refuses the tmpfs mounts
+# of /tmp, /dev/mqueue and /run/lock, so systemd reports "degraded" with
+# exactly those units failed. None of them is needed here: /tmp and
+# /run/lock are directories on a filesystem already, and nothing uses POSIX
+# message queues. Masking them is what the container role does (step R.8);
+# the probe does the same and looks again, so the verdict is about what is
+# left.
+MOUNT_UNITS='dev-mqueue.mount run-lock.mount tmp.mount'
+masked=no
+if [ "$(f state)" != running ] && [ -n "$(f failed)" ]; then
+	other=$(tr ' ' '\n' <<<"$(f failed)" | grep -v -x -F -e dev-mqueue.mount -e run-lock.mount -e tmp.mount | xargs)
+	if [ -z "$other" ]; then
+		echo "== only the three tmpfs mount units failed: masking them and looking again"
+		facts=$(
+			on_host <<EOF
+pct exec $ID -- systemctl mask $MOUNT_UNITS >/dev/null 2>&1
+pct reboot $ID >/dev/null 2>&1; sleep 5
+echo "state=\$(timeout 150 pct exec $ID -- systemctl is-system-running --wait 2>/dev/null | tail -n 1)"
+echo "failed=\$(pct exec $ID -- systemctl --failed --no-legend --plain 2>/dev/null | awk '{print \$1}' | xargs)"
+echo "sandbox=\$(pct exec $ID -- journalctl -b --no-pager 2>/dev/null | grep -c -E 'status=226/NAMESPACE|status=243/CREDENTIALS')"
+echo "logind=\$(pct exec $ID -- systemctl is-active systemd-logind 2>/dev/null)"
+echo "ssh=\$(pct exec $ID -- systemctl is-active ssh 2>/dev/null)"
+s=\$(date +%s%N); pct exec $ID -- su -l root -c true >/dev/null 2>&1; e=\$(date +%s%N)
+echo "login_ms=\$(( (e - s) / 1000000 ))"
+echo "virt=\$(pct exec $ID -- systemd-detect-virt 2>/dev/null)"
+echo "tools=masked: $MOUNT_UNITS"
+echo "systemd=\$(pct exec $ID -- systemctl --version 2>/dev/null | head -n 1)"
+pct exec $ID -- journalctl -b --no-pager -p warning 2>/dev/null | tail -n 12 | sed 's/^/log: /'
+EOF
+		)
+		masked=yes
+		show
+	fi
+fi
 
 needed=no
 [ "$(f state)" = running ] || needed=yes
@@ -129,8 +167,10 @@ needed=no
 [ "$(f ssh)" = active ] || needed=yes
 [ "$(f login_ms)" -lt 5000 ] 2>/dev/null || needed=yes
 echo
-if [ "$needed" = no ]; then
+if [ "$needed" = no ] && [ "$masked" = no ]; then
 	echo "VERDICT: the template runs properly without nesting. Keep nesting = false."
+elif [ "$needed" = no ]; then
+	echo "VERDICT: the template runs properly without nesting once the units $MOUNT_UNITS are masked, which the container role does. Keep nesting = false."
 else
 	echo "VERDICT: nesting is needed (or the probe could not tell). This is a deviation from decision D2: put it to the owner before setting nesting = true."
 fi
