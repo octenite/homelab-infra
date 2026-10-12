@@ -188,25 +188,26 @@ else
 	if [ "$role" = yes ]; then
 		echo "== what the role left inside (step R.8)"
 		inside=$(
-			ct <<EOF 2>/dev/null
-echo "state=\$(systemctl is-system-running)"
-echo "failed=\$(systemctl --failed --no-legend --plain | awk '{print \$1}' | xargs)"
-echo "masked=\$(systemctl is-enabled dev-mqueue.mount run-lock.mount tmp.mount 2>/dev/null | grep -c '^masked\$')"
-echo "forward=\$(sysctl -n net.ipv4.ip_forward)"
-echo "v6=\$(ip -6 -o addr show dev eth0 | wc -l)"
-echo "listen=\$(ss -H -ltn | awk '{print \$4}' | sort | xargs)"
-echo "tsuser=\$(stat -c %U /proc/\$(systemctl show -p MainPID --value tailscaled 2>/dev/null) 2>/dev/null)"
-echo "tscap=\$(grep CapBnd /proc/\$(systemctl show -p MainPID --value tailscaled 2>/dev/null)/status 2>/dev/null | awk '{print \$2}')"
-echo "tun=\$(test -e /dev/net/tun && echo present || echo absent)"
-echo "version=\$(dpkg-query -W -f='\${Version}' tailscale 2>/dev/null)"
-echo "hold=\$(apt-mark showhold 2>/dev/null | grep -c '^tailscale\$')"
-echo "nftrules=\$(nft list ruleset 2>/dev/null | grep -c skuid)"
-echo "lodrop=\$(nft list chain inet homelab output 2>/dev/null | grep 'oif \"lo\" meta skuid' | sed -n 's/.*packets \([0-9]*\).*/\1/p')"
-echo "backend=\$(tailscale status --json --peers=false 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); s=d.get(\"Self\") or {}; print(d.get(\"BackendState\"), \"tags=\" + \",\".join(s.get(\"Tags\") or []), \"routes=\" + \",\".join(s.get(\"PrimaryRoutes\") or []), \"health=\" + str(len(d.get(\"Health\") or [])))')"
-echo "lock=\$(tailscale lock status 2>/dev/null | grep -c 'accessible under Tailnet Lock')"
-echo "prefs=\$(tailscale debug prefs 2>/dev/null | python3 -c 'import json,sys; p=json.load(sys.stdin); print(p.get(\"CorpDNS\"), p.get(\"RouteAll\"), p.get(\"RunSSH\"), p.get(\"RunWebClient\"), \",\".join(p.get(\"AdvertiseRoutes\") or []), (p.get(\"AutoUpdate\") or {}).get(\"Check\"), (p.get(\"AutoUpdate\") or {}).get(\"Apply\"))')"
-echo "timer=\$(systemctl is-active remote-health.timer 2>/dev/null)"
-echo "health=\$(systemctl show -p ExecMainStatus --value remote-health.service 2>/dev/null)"
+			# A quoted heredoc: nothing here is expanded on this side, and the
+			# python one-liners keep their double quotes as written.
+			ct <<'EOF' 2>/dev/null
+echo "state=$(systemctl is-system-running)"
+echo "failed=$(systemctl --failed --no-legend --plain | awk '{print $1}' | xargs)"
+echo "masked=$(systemctl is-enabled dev-mqueue.mount run-lock.mount tmp.mount 2>/dev/null | grep -c '^masked$')"
+echo "forward=$(sysctl -n net.ipv4.ip_forward)"
+echo "v6=$(ip -6 -o addr show dev eth0 | wc -l)"
+echo "listen=$(ss -H -ltn | awk '{print $4}' | sort | xargs)"
+echo "tsuser=$(stat -c %U /proc/$(systemctl show -p MainPID --value tailscaled 2>/dev/null) 2>/dev/null)"
+echo "tscap=$(grep CapBnd /proc/$(systemctl show -p MainPID --value tailscaled 2>/dev/null)/status 2>/dev/null | awk '{print $2}')"
+echo "tun=$(test -e /dev/net/tun && echo present || echo absent)"
+echo "version=$(dpkg-query -W -f='${Version}' tailscale 2>/dev/null)"
+echo "hold=$(apt-mark showhold 2>/dev/null | grep -c '^tailscale$')"
+echo "nftrules=$(nft list ruleset 2>/dev/null | grep -c skuid)"
+echo "lodrop=$(nft list chain inet homelab output 2>/dev/null | grep 'oif "lo" meta skuid' | sed -n 's/.*packets \([0-9]*\).*/\1/p')"
+echo "backend=$(tailscale status --json --peers=false 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); s=d.get("Self") or {}; print(d.get("BackendState"), "tags=" + ",".join(s.get("Tags") or []), "routes=" + ",".join(s.get("PrimaryRoutes") or []), "health=" + str(len(d.get("Health") or [])))')"
+echo "lock=$(tailscale lock status 2>/dev/null | grep -c 'accessible under Tailnet Lock')"
+echo "prefs=$(tailscale debug prefs 2>/dev/null | python3 -c 'import json,sys; p=json.load(sys.stdin); print(p.get("CorpDNS"), p.get("RouteAll"), p.get("RunSSH"), p.get("RunWebClient"), ",".join(p.get("AdvertiseRoutes") or []), (p.get("AutoUpdate") or {}).get("Check"), (p.get("AutoUpdate") or {}).get("Apply"))')"
+echo "timer=$(test -f /etc/systemd/system/remote-health.timer && systemctl is-active remote-health.timer 2>/dev/null)"
 EOF
 		)
 		inf() { sed -n "s/^$1=//p" <<<"$inside" | head -n 1; }
@@ -233,11 +234,18 @@ EOF
 			ok "preferences" "False False False False 10.0.10.10/32 False False" "$(inf prefs)"
 			;;
 		NeedsLogin*) echo "        not logged in yet: the owner's step (just remote-login)" ;;
+		NoState* | Starting*) echo "        the daemon is still connecting: run the test again in a few seconds" ;;
 		*) ok "the daemon answers" "Running or NeedsLogin" "$(inf backend)" ;;
 		esac
 		if [ -n "$(inf timer)" ]; then
 			ok "the health timer" active "$(inf timer)"
-			ok "the last health report" 0 "$(inf health)"
+			case "$(inf backend)" in
+			Running*)
+				# A report made now, not the last one: the timer's last run may predate the signature.
+				ok "a health report made now" 0 "$(ct <<<'systemctl start remote-health.service >/dev/null 2>&1; systemctl show -p ExecMainStatus --value remote-health.service' 2>/dev/null)"
+				;;
+			*) echo "        the health report says failure until the node is logged in and signed" ;;
+			esac
 		else
 			echo "        no health timer yet (the dead-man's switch is not stored)"
 		fi
@@ -384,14 +392,20 @@ EOF
 			[ "$role" = yes ] && restore_ct
 			restore_host
 		}
+		trap both_back EXIT
 		if [ "$role" = yes ]; then
-			ct <<'EOF' >/dev/null 2>&1
+			if ! ct >/dev/null 2>&1 <<'EOF'
 systemctl stop homelab-nft-rearm.timer 2>/dev/null
 systemd-run --unit homelab-nft-rearm --collect --on-active=300 --timer-property=AccuracySec=1s systemctl restart nftables
-nft delete table inet homelab
 EOF
+			then
+				echo "  FAIL  the timer that reloads the container's filter could not be armed; the hypervisor's filter stays on"
+				trap - EXIT
+				echo "systemctl stop homelab-fw$VMID-rearm.timer" | host >/dev/null 2>&1
+				exit 1
+			fi
+			ct <<<'nft delete table inet homelab' >/dev/null 2>&1
 		fi
-		trap both_back EXIT
 		api PUT "/nodes/$NODE/lxc/$VMID/firewall/options" --data 'enable=0' >/dev/null
 		for _ in $(seq 1 20); do
 			[ "$(chain)" -eq 0 ] && break

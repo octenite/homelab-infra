@@ -44,7 +44,9 @@ In this order, at home, with a session open (`docs/runbooks/rebuild-remote1.md` 
 | 5 | `just tofu tailscale apply` | the tag's owner and the route's approval in the policy (once; already in Git) |
 | 6 | `just remote-login` | the owner's login at a browser; the container is a member but locked out |
 | 7 | on the laptop, connected | `tailscale lock sign nodekey:... tlpub:...` as the script printed it |
-| 8 | `just remote-apply`, `just test-remote layers`, `just pve-apply`, `just test-remote` | the preferences read back; the probes with each layer off in turn; the hypervisor's file restored; the final read-back |
+| 8 | `just secret-set ... remote_ct_health_ping_url`, then `just remote-apply`, `just test-remote layers`, `just pve-apply`, `just test-remote` | the switch's address stored; the preferences set once and read back, the health timer installed; the probes with each layer off in turn; the hypervisor's file restored; the final read-back. A further `just remote-apply` must change nothing |
+| 9 | `ssh ops@10.0.10.10 sudo pct reboot 3010`, then `just test-remote` | one boot observed: the filter, the masked units, the sysctls and the SSH listener come back by themselves |
+| 10 | `ssh ops@10.0.10.10 sudo pct stop 3010`; the check paused in the console | the container runs only while the laptop travels (decision D12) |
 
 A rebuild starts with section 3 of the runbook: the old device removed in the console, the guest deleted on the hypervisor, the state entry removed.
 
@@ -55,7 +57,8 @@ A rebuild starts with section 3 of the runbook: the old device removed in the co
 | Guest id, address, size, template pin | `infrastructure/opentofu/roots/remote/main.tf`, `template.auto.tfvars.json` |
 | The hypervisor's filter for the guest | `infrastructure/ansible/roles/pve_host/templates/guest-remote-admin.fw.j2` |
 | Everything inside: addresses, sources, the Tailscale version and key checksum, the tag, the route, the health interval | `infrastructure/ansible/playbooks/group_vars/remote.yaml` |
-| The dead-man's switch address | `private/ansible/inventory/host_vars/remote1/secrets.sops.yaml`, key `remote_ct_health_ping_url` |
+| The dead-man's switch address | `private/ansible/inventory/host_vars/remote1/secrets.sops.yaml`, key `remote_ct_health_ping_url`; stored after the login and the signature, since the timer reports failure until then and the service alerts on a failure report at once |
+| The check at healthchecks.io | created by the owner: period 5 minutes, grace 10 minutes (the timer runs every 5 minutes plus up to 30 s; a run takes up to 30 s). Paused by hand in the console whenever the container is stopped on purpose, until `travel.ps1` (step R.9) does it |
 | What the tag may do | `infrastructure/opentofu/roots/tailscale/policy.hujson` |
 
 A new Tailscale version is a pull request on `remote_ct_tailscale_version`; the role lifts the hold, installs that version, holds again. Security updates from Debian apply unattended; the pinned package is outside their scope twice over (origin and blacklist). No automatic reboot: the container is restarted by `travel.ps1 -Home` and `-Away`, so every trip starts with fresh processes; an update of a library a running daemon holds reaches it at the next restart.

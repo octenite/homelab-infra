@@ -63,5 +63,6 @@ cat <<'EOF'
    2. compare that key with the one printed above
    3. run the `tailscale lock sign nodekey:... tlpub:...` line printed above
    4. tailscale down
-Then, back here: just remote-apply (it must change nothing), just test-remote layers.
+Then, back here: just remote-apply (it sets the remaining preferences once; a further run must change nothing),
+then just test-remote layers.
 EOF

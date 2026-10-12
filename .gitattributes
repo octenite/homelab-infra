@@ -7,3 +7,5 @@
 *.toml text eol=lf
 *.tofu text eol=lf
 *.md text eol=lf
+*.py text eol=lf
+*.j2 text eol=lf

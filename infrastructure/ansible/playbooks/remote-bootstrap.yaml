@@ -6,6 +6,10 @@
 # The container may reach the internet on tcp 443 only, so the template's
 # package sources, which use plain HTTP, are replaced before anything is
 # installed.
+#
+# The group sets ansible_become, and the template has no sudo yet: that is
+# safe because Ansible skips escalation when the become user is the login
+# user (root here), unless BECOME_ALLOW_SAME_USER is set. It never is.
 - name: Bootstrap a freshly created remote-access container
   hosts: "{{ target | default('remote') }}"
   gather_facts: true

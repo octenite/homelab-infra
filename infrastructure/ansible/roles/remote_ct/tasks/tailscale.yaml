@@ -76,13 +76,24 @@
     selection: hold
 
 # Belt and braces for a daemon that ran as root before the drop-in existed.
-- name: The state belongs to the daemon's user
+# The mode goes on the directory only: the daemon gives its files their own
+# modes (0600 for the state, 0644 under tka-profiles) and rewrites them with
+# every change, so a mode forced on the files would read as drift on every
+# run after a login or a signature.
+- name: The state directory belongs to the daemon's user
   ansible.builtin.file:
     path: /var/lib/tailscale
     state: directory
     owner: "{{ remote_ct_tailscale_user }}"
     group: "{{ remote_ct_tailscale_user }}"
     mode: "0700"
+
+- name: What is in it belongs to the daemon's user too
+  ansible.builtin.file:
+    path: /var/lib/tailscale
+    state: directory
+    owner: "{{ remote_ct_tailscale_user }}"
+    group: "{{ remote_ct_tailscale_user }}"
     recurse: true
 
 - name: Units reloaded before the daemon is started
@@ -119,13 +130,18 @@
 # The preferences that the login did not set, or that someone changed by
 # hand, put back on every run. Each is read back before and after so the
 # task reports a change only when there was one. The login itself and the
-# tag are never touched here.
+# tag are never touched here. The first run after the login changes them
+# once (`tailscale up` leaves the update check on); every later run must
+# change nothing. The read-back carries the node's private keys under
+# "Config", so it is never printed: no_log on both reads, and the assert
+# names the compared fields only.
 - name: Preferences before
   ansible.builtin.command:
     cmd: tailscale debug prefs
   register: remote_ct_prefs_before
   changed_when: false
   check_mode: false
+  no_log: true
   when: remote_ct_backend != 'NeedsLogin'
 
 - name: Preferences
@@ -144,6 +160,7 @@
   register: remote_ct_prefs_after
   changed_when: remote_ct_prefs_after.stdout != remote_ct_prefs_before.stdout
   check_mode: false
+  no_log: true
   when: remote_ct_backend != 'NeedsLogin'
 
 - name: What the daemon holds once logged in
@@ -159,7 +176,12 @@
       - prefs.AutoUpdate.Check == false
       - prefs.AutoUpdate.Apply == false
       - prefs.ExitNodeID | default('') == ''
-    fail_msg: "tailscaled's preferences differ from the design: {{ prefs }}"
+    fail_msg: >-
+      tailscaled's preferences differ from the design:
+      CorpDNS={{ prefs.CorpDNS }} RouteAll={{ prefs.RouteAll }} RunSSH={{ prefs.RunSSH }}
+      RunWebClient={{ prefs.RunWebClient | default(false) }} AdvertiseRoutes={{ prefs.AdvertiseRoutes }}
+      AdvertiseTags={{ prefs.AdvertiseTags }} Hostname={{ prefs.Hostname }}
+      AutoUpdate={{ prefs.AutoUpdate }} ExitNodeID={{ prefs.ExitNodeID | default('') }}
     quiet: true
   vars:
     prefs: "{{ remote_ct_prefs_after.stdout | from_json }}"
