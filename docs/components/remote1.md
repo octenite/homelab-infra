@@ -8,7 +8,7 @@ The home end of the administration path (`docs/adr/0005-administrative-access.md
 
 ## Architecture
 
-- An unprivileged Debian 13 container, guest 3010, pool `remote`, on the hypervisor's bridge in VLAN 30 with the one address 10.0.30.10/24; 1 core, a 256 MiB limit, 4 GiB thin disk. Created by OpenTofu through the module `pve-lxc` (`infrastructure/opentofu/roots/remote`), which refuses any other pool or VLAN. No nesting feature: the template runs cleanly once three tmpfs mount units are masked.
+- An unprivileged Debian 13 container, guest 3010, pool `remote`, on the hypervisor's bridge in VLAN 30 with the one address 10.0.30.10/24; 1 core, a 768 MiB limit (256 MiB was the plan's ceiling; measured on 2026-10-12, the hypervisor killed Ansible's apt module at that limit and a configure run peaked at 509 MiB at 512, so 768 leaves headroom for an unattended rebuild; steady-state use is about 40 MB and the limit reserves nothing), 4 GiB thin disk. Created by OpenTofu through the module `pve-lxc` (`infrastructure/opentofu/roots/remote`), which refuses any other pool or VLAN. No nesting feature: the template runs cleanly once three tmpfs mount units are masked.
 - Configured by the Ansible role `remote_ct` (`just remote-apply`), after a one-time `just remote-bootstrap` that creates the operator account and closes root's SSH login.
 - Tailscale, Linux build pinned by version, runs as the unprivileged user `tailscaled` in userspace-networking mode: no TUN device, no capability, no rule of its own in the kernel, no forwarding. It advertises the one route 10.0.10.10/32 and carries the tag `tag:remote-admin`. A connection from the laptop to the hypervisor is terminated by the daemon and dialled anew from the container's own address, so the hypervisor and the router see 10.0.30.10.
 - Four layers stand between the internet and the house, from the inside out:
@@ -88,7 +88,7 @@ None (decision D9). A rebuild from Git takes the owner about ten minutes at home
 | The route shows as not approved in the console | It was advertised before the policy held the approval: `sudo tailscale set --advertise-routes=` then `sudo tailscale set --advertise-routes=10.0.10.10/32` |
 | `systemctl is-system-running` says degraded | `systemctl --failed`; the three tmpfs mount units are masked by the role, anything else is new |
 | The health check reports failure | `journalctl -u remote-health -u tailscaled` in the container; `sudo tailscale status --json` |
-| A probe of `just test-remote` says `forbidden` where the design says open | The container's own filter refuses the user that tried: as root only 443 and name lookups are open; the hypervisor's two ports are the tunnel user's |
+| A probe of `just test-remote` says `filtered` where the design says open | The container's own filter stopped the user that tried (a silent drop, so it times out): as root only 443 and name lookups are open; the hypervisor's two ports are the tunnel user's. A local TCP drop never returns "permission denied", so the container's layer reads as `filtered`, the same as the hypervisor's; a layers run tells them apart by root reaching the hypervisor's ports only once the container's filter is off |
 
 ## Removal
 

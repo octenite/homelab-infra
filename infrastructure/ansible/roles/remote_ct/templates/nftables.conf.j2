@@ -21,9 +21,13 @@ table inet homelab {
     meta nfproto ipv6 drop
     iif "lo" accept
     ct state established,related accept
+    # The operator's SSH, stateless (no ct state), so this filter's first load
+    # cannot cut the very session that applies it: a connection opened before
+    # the filter existed has no conntrack entry and would otherwise be dropped
+    # as invalid. The matching reply rule is in the output chain.
+    ip saddr { {{ remote_ct_ssh_sources | join(', ') }} } ip daddr {{ remote_ct_address }} tcp dport 22 accept comment "E17 the workstation (stateless)"
     ct state invalid drop
     ip saddr { {{ remote_ct_ssh_sources | join(', ') }} } ip daddr {{ remote_ct_address }} icmp type echo-request accept
-    ip saddr { {{ remote_ct_ssh_sources | join(', ') }} } ip daddr {{ remote_ct_address }} tcp dport 22 accept comment "E17 the workstation"
   }
   chain forward {
     type filter hook forward priority filter; policy drop;
@@ -36,6 +40,8 @@ table inet homelab {
     oif "lo" meta skuid "{{ remote_ct_tailscale_user }}" counter drop comment "no tunnel traffic to this host's own services"
     oif "lo" accept
     ct state established,related accept
+    # The reply side of the stateless input rule above, for the same reason.
+    tcp sport 22 ip daddr { {{ remote_ct_ssh_sources | join(', ') }} } accept comment "E17 replies to the operator (stateless)"
     ct state invalid drop
     ip daddr {{ remote_ct_router }} udp dport 53 accept comment "name lookups at the router"
     ip daddr {{ remote_ct_router }} tcp dport 53 accept comment "name lookups at the router"

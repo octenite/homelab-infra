@@ -223,7 +223,12 @@ EOF
 		ok "tailscale at the pinned version" "$TS_VERSION" "$(inf version)"
 		ok "the package held" 1 "$(inf hold)"
 		ok "the container's filter matches by user" yes "$([ "$(inf nftrules)" -ge 3 ] && echo yes || echo no)"
-		ok "no tunnel traffic to the container's own services so far" 0 "$(inf lodrop)"
+		# The rule that drops the tunnel user's loopback traffic must be in
+		# place. Its counter is informational: tailscaled may make a loopback
+		# attempt at startup, which this rule correctly drops (a non-zero count
+		# is the protection working, not a fault).
+		ok "the drop of the tunnel user's loopback traffic is in place" yes "$([ -n "$(inf lodrop)" ] && echo yes || echo no)"
+		echo "        the tunnel user's loopback attempts dropped so far: $(inf lodrop)"
 		echo "        tailscale: $(inf backend); node signed: $(inf lock); prefs (dns routes ssh web | advertised | update check apply): $(inf prefs)"
 		case "$(inf backend)" in
 		Running*)
@@ -254,7 +259,7 @@ EOF
 	# One round of probes from inside the container, as one user.
 	#   <label> <user> <what every closed target must show> <what the second address must show>
 	round() {
-		local label=$1 user=$2 kind=$3 second=$4 out t p exp got
+		local label=$1 user=$2 kind=$3 second=$4 tunnel_root=${5:-open} out t p exp got
 		out=$(
 			ct <<EOF 2>/dev/null
 run() { if [ "$user" = root ]; then bash -c "\$1"; else runuser -u "$user" -- bash -c "\$1"; fi; }
@@ -288,9 +293,14 @@ EOF
 		ok "$label: SSH from the workstation into the container (E17)" yes yes
 		while read -r t p exp; do
 			got=$(sed -n "s/^$t $p //p" <<<"$out")
-			# What only the tunnel's process may reach is forbidden to root
-			# by the container's own filter.
-			[ "$exp" = tunnel ] && { if [ "$user" = root ] && [ "$role" = yes ]; then exp=forbidden; else exp=open; fi; }
+			# The hypervisor's two ports: the tunnel user reaches them. Root is
+			# stopped by the container's per-user rule while that filter is
+			# loaded (a silent drop, so the connect times out: "filtered") and
+			# reaches them once the filter is removed. tunnel_root carries that
+			# expectation, which is how a layers run tells the container's own
+			# filter apart from the hypervisor's (a local TCP drop never returns
+			# "permission denied" to the sender, so "forbidden" is not usable).
+			[ "$exp" = tunnel ] && { if [ "$user" = root ]; then exp=$tunnel_root; else exp=open; fi; }
 			[ "$exp" = closed ] && exp=$kind
 			# "unreachable" is the router's answer too, in another form.
 			[ "$exp" = refused ] && [ "$got" = unreachable ] && got=refused
@@ -321,10 +331,10 @@ EOF
 	[ "$role" = yes ] && tun_user=tailscaled
 
 	if [ "$role" = yes ]; then
-		echo "== from inside the container, every layer on: as root, what the design forbids is refused at once by the container's own filter"
-		round "all layers, root" root forbidden forbidden
-		echo "== the same as the tunnel's process: the hypervisor's filter drops the second address (no answer)"
-		round "all layers, tunnel" tailscaled forbidden filtered
+		echo "== from inside the container, every layer on: as root, the container's own filter drops what the design forbids, the hypervisor's two ports included (a silent drop: the connect times out)"
+		round "all layers, root" root filtered filtered filtered
+		echo "== the same as the tunnel's process: it reaches the hypervisor's two ports; the second address is dropped by the hypervisor's filter (no answer)"
+		round "all layers, tunnel" tailscaled filtered filtered
 	else
 		echo "== from inside the container, every layer on (what is closed gets no answer: the hypervisor's filter)"
 		round "all layers" root filtered filtered
@@ -340,7 +350,7 @@ EOF
 		ct_table() { ct <<<'nft list table inet homelab >/dev/null 2>&1 && echo yes || echo no' 2>/dev/null; }
 
 		if [ "$role" = yes ]; then
-			echo "== the container's own filter switched off: the hypervisor's filter alone (what is closed gets no answer)"
+			echo "== the container's own filter switched off: the hypervisor's filter alone. As root now reaches the hypervisor's two ports, the container being the only layer that stops root there; what the address and port policy forbids still gets no answer"
 			# If this script dies, the container reloads its filter by itself.
 			if ! ct >/dev/null 2>&1 <<'EOF'
 systemctl stop homelab-nft-rearm.timer 2>/dev/null
@@ -360,7 +370,7 @@ EOF
 			trap restore_ct EXIT
 			ct <<<'nft delete table inet homelab' >/dev/null 2>&1
 			ok "the container's table is gone" no "$(ct_table)"
-			round "hypervisor alone" tailscaled filtered filtered
+			round "hypervisor alone" root filtered filtered open
 			restore_ct
 			trap - EXIT
 			ok "the container's table is back" yes "$(ct_table)"

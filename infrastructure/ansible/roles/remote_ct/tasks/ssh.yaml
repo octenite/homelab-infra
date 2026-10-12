@@ -3,6 +3,24 @@
 # in userspace mode the tunnel delivers a connection addressed to the
 # container's own tailnet address by dialling the local service on loopback,
 # so a listener on 127.0.0.1 would be reachable through a mistaken grant.
+# Debian ships ssh.socket as well as ssh.service. Under socket activation
+# systemd owns the listening socket (every address, port 22) and sshd runs
+# per connection, which ignores ListenAddress in the config below. The one
+# address is a security property here, so SSH runs as a plain service and the
+# socket is masked.
+- name: SSH is a standalone service, never socket-activated
+  ansible.builtin.systemd_service:
+    name: ssh.socket
+    state: stopped
+    enabled: false
+    masked: true
+  notify: Restart sshd
+
+- name: The SSH service is enabled on its own
+  ansible.builtin.systemd_service:
+    name: ssh.service
+    enabled: true
+
 - name: SSH is key-only, operator account only, on the container's address only
   ansible.builtin.copy:
     dest: "{{ remote_ct_sshd_dropin }}"
