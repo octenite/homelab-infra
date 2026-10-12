@@ -196,7 +196,12 @@ echo "failed=$(systemctl --failed --no-legend --plain | awk '{print $1}' | xargs
 echo "masked=$(systemctl is-enabled dev-mqueue.mount run-lock.mount tmp.mount 2>/dev/null | grep -c '^masked$')"
 echo "forward=$(sysctl -n net.ipv4.ip_forward)"
 echo "v6=$(ip -6 -o addr show dev eth0 | wc -l)"
-echo "listen=$(ss -H -ltn | awk '{print $4}' | sort | xargs)"
+# Listeners we manage: tailscaled's own peerapi binds a random high port on
+# every address (userspace mode has no tun, so netstack reaches it through a
+# real socket); it is unreachable off-box (the input chain drops it) and its
+# port changes each start, so it is set aside here and reported on its own.
+echo "listen=$(ss -H -ltnp | grep -v tailscaled | awk '{print $4}' | sort | xargs)"
+echo "tslisten=$(ss -H -ltnp | grep tailscaled | awk '{print $4}' | sort | xargs)"
 echo "tsuser=$(stat -c %U /proc/$(systemctl show -p MainPID --value tailscaled 2>/dev/null) 2>/dev/null)"
 echo "tscap=$(grep CapBnd /proc/$(systemctl show -p MainPID --value tailscaled 2>/dev/null)/status 2>/dev/null | awk '{print $2}')"
 echo "tun=$(test -e /dev/net/tun && echo present || echo absent)"
@@ -216,7 +221,8 @@ EOF
 		ok "the three tmpfs mount units masked" 3 "$(inf masked)"
 		ok "kernel forwarding off" 0 "$(inf forward)"
 		ok "no IPv6 address on the device at all" 0 "$(inf v6)"
-		ok "listeners: SSH on the container's address only" "$ADDR:22" "$(inf listen)"
+		ok "listeners we manage: SSH on the container's address only" "$ADDR:22" "$(inf listen)"
+		echo "        tailscaled's own peerapi listener (unreachable off-box, the input chain drops it): $(inf tslisten)"
 		ok "tailscaled runs as its own user" tailscaled "$(inf tsuser)"
 		ok "tailscaled holds no capability" 0000000000000000 "$(inf tscap)"
 		ok "no TUN device" absent "$(inf tun)"

@@ -67,6 +67,7 @@ A new Tailscale version is a pull request on `remote_ct_tailscale_version`; the 
 
 - The tunnel's process is the one that faces the internet. It runs without privileges and under the container's filter, which lets it dial exactly two addresses; the hypervisor's and the router's filters repeat that from outside.
 - A connection from the tailnet addressed to the container itself is dialled to loopback by the daemon; the filter drops the daemon's loopback output and sshd listens on 10.0.30.10 only. The policy grants nothing towards the tag in any case.
+- In userspace mode the daemon has no tunnel device, so it serves its peer API on a real socket bound to a random high port on every address (it changes at each start). There is no supported flag to bind it elsewhere, and it does not matter: the container's input chain drops everything but SSH from the workstation, so the port answers to nothing off-box. The test sets this listener aside by owner and reports it on its own; the one listener the design pins is sshd, on the container's address.
 - The node's key does not expire (tagged devices, exception X27). It lives in `/var/lib/tailscale`, readable by root and the daemon's user; a rebuild gets a new key, and the old device must be removed in the console.
 - Root has no SSH path; the two operator keys are the only way in, from the workstation only.
 - The container's SSH host key changes with every rebuild; the workstation remembers it under the name `remote1` (`ssh-keygen -R remote1` after a rebuild).

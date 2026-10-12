@@ -24,6 +24,11 @@
 		// The owner's phone, enrolled 2026-10-10. Named for the tests only:
 		// no grant mentions it before the household plan.
 		"phone": "100.88.195.22",
+		// The administration container, enrolled 2026-10-12 (step R.8). Named
+		// for the tests only: it is a destination of no grant. The laptop
+		// reaches the hypervisor *through* it (the `via` above), which does not
+		// grant access to the container's own services.
+		"remote1": "100.124.202.58",
 	},
 
 	// A device takes a tag at its login, and only a login listed here may
@@ -74,8 +79,10 @@
 				"192.168.1.53:22",
 				"10.0.10.2:22",
 				"10.0.10.3:22",
-				// not the container itself, not the cluster's address
+				// not the container itself, by either address: the grant above
+				// routes *through* it (via), which is not access to it
 				"10.0.30.10:22",
+				"remote1:22",
 				"10.0.50.201:443",
 				// not the phone
 				"100.88.195.22:22",
@@ -103,6 +110,7 @@
 				"10.0.10.10:8006",
 				"192.168.1.53:22",
 				"10.0.30.10:22",
+				"remote1:22",
 				// nothing on the laptop: SSH, file sharing, remote desktop,
 				// the forwarded backup port
 				"100.85.8.57:22",
