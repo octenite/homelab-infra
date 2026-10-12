@@ -1,0 +1,46 @@
+---
+# The remote-access containers (Phase R, docs/adr/0005-administrative-access.md).
+# Addresses of the operator come from the private inventory; everything here
+# is policy. The container itself is created by OpenTofu (roots/remote); this
+# is what runs inside it.
+ansible_user: ops
+ansible_become: true
+remote_ct_ops_user: ops
+remote_ct_ssh_authorized_keys: "{{ openwrt_ssh_authorized_keys }}"
+
+# The container's own address and what it may talk to, as the router (E15 to
+# E17) and the hypervisor's filter already enforce from outside. The
+# container's own filter repeats them and adds what those two cannot see:
+# which process sends.
+remote_ct_address: 10.0.30.10
+remote_ct_router: 10.0.30.1
+remote_ct_hypervisor: 10.0.10.10
+remote_ct_ssh_sources: [192.168.1.196, 192.168.1.197]
+remote_ct_not_internet: [10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16]
+
+# Tailscale: the Linux build of the version the plan pins; the Windows client
+# of the laptop is 1.102.4 because 1.102.5 has no Windows build. A bump is a
+# pull request: the role unholds, installs the exact version, holds again.
+remote_ct_tailscale_version: 1.102.5
+# The vendor's apt signing key, fetched over HTTPS and compared with this
+# checksum (read twice on 2026-10-12; key 2596 A99E AAB3 3821 893C 0A79 458C
+# A832 957F 5868, "Tailscale Inc. (Package repository signing key)").
+remote_ct_tailscale_keyring_sha256: 3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
+remote_ct_tailscale_user: tailscaled
+remote_ct_tailscale_tag: tag:remote-admin
+remote_ct_tailscale_routes: [10.0.10.10/32]
+remote_ct_tailscale_hostname: remote1
+# Sandboxing keys for the tailscaled unit beyond the user change. Empty until
+# each key has been proven to start in this container (an unprivileged LXC
+# refuses some mount namespaces); then filled by pull request.
+remote_ct_tailscaled_sandbox: []
+
+# The dead-man's switch: a healthchecks.io check the owner creates; its URL
+# is the secret remote_ct_health_ping_url in the private inventory
+# (host_vars/remote1/secrets.sops.yaml). Without it the health timer is not
+# installed and the play says so.
+remote_ct_health_user: health
+remote_ct_health_interval: 5min
+
+remote_ct_journal_max_use: 64M
+remote_ct_unattended_reboot: false

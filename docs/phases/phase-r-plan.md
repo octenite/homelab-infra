@@ -225,7 +225,7 @@ If the phone is lost: the household plan has the procedure. The phone holds no s
 | OAuth client for the policy root | Change the policy and the settings | Private repository, SOPS | On suspicion, and yearly | The Tailscale console |
 | Laptop: network key and signing key | Join as the laptop; sign devices | The laptop, sealed per D5 | Network key every 90 days per D7; signing key on loss | Removing the device; the signing key by disabling and enabling node signing |
 | Phone: network key | Join as the phone | The phone | Every 90 days per D7 | Removing the device |
-| Container: network key | Join as the tagged router. No expiry | The container, readable by root only; in no backup | With every rebuild | Removing the device |
+| Container: network key | Join as the tagged router. No expiry | The container, readable by root and by the daemon's own unprivileged user (it runs as `tailscaled`, step R.8); in no backup | With every rebuild | Removing the device |
 | Disablement secrets, three | Switch node signing off for the whole network | Password manager and one printed copy. Never Git, never Tailscale support | Used once, then new ones | Not revocable; a used one is public |
 | Health-check address of the container | Report "alive" | Private repository, SOPS | On suspicion | The healthchecks.io console |
 | The existing Proxmox API token, first real use | Create and change guests in its pool and VLANs | Private repository, SOPS | As in the secrets register | `just pve-tokens` |

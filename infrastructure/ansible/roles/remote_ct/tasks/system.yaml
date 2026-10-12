@@ -1,0 +1,47 @@
+---
+# The default profile of an unprivileged container refuses the tmpfs mounts
+# of /tmp, /dev/mqueue and /run/lock (measured 2026-10-12: a mount denied by
+# the hypervisor's profile), so systemd reports "degraded" with exactly these
+# units failed. None is needed here: /tmp and /run/lock are directories on a
+# filesystem already, and nothing uses POSIX message queues. Masked, systemd
+# is "running". The alternative, the nesting feature, would open a blanket
+# mount rule and the hypervisor's own /proc and /sys to the container.
+- name: Mount units the container profile refuses
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    masked: true
+  loop:
+    - dev-mqueue.mount
+    - run-lock.mount
+    - tmp.mount
+  notify: Reset the masked units
+
+# IPv6 off inside: the zone has no IPv6 and the device would otherwise carry
+# a link-local address that the hypervisor's filter has to drop. Forwarding
+# stays off: the tunnel runs in userspace mode and forwards nothing in the
+# kernel. The network settings are writable in an unprivileged container
+# (they belong to its own network namespace, measured 2026-10-12).
+- name: Kernel network settings
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/90-homelab.conf
+    sysctl_set: true
+    reload: true
+  loop:
+    - {name: net.ipv6.conf.all.disable_ipv6, value: "1"}
+    - {name: net.ipv6.conf.default.disable_ipv6, value: "1"}
+    - {name: net.ipv4.ip_forward, value: "0"}
+    - {name: net.ipv6.conf.all.forwarding, value: "0"}
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Journal size cap
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/homelab.conf
+    mode: "0644"
+    content: |
+      [Journal]
+      SystemMaxUse={{ remote_ct_journal_max_use }}
+      RuntimeMaxUse=32M
+  notify: Restart journald

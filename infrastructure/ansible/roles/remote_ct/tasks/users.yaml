@@ -1,0 +1,18 @@
+---
+# The filter matches on the sending user, and the units run as these users,
+# so they exist before either is written. Neither can log in.
+- name: The tunnel's user
+  ansible.builtin.user:
+    name: "{{ remote_ct_tailscale_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: /var/lib/tailscale
+    create_home: false
+
+- name: The health check's user
+  ansible.builtin.user:
+    name: "{{ remote_ct_health_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false

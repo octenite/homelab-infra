@@ -82,6 +82,14 @@ What this credential can do if it leaks: change the policy among the devices tha
 
 The laptop: `docs/components/tailscale-client.md`, "Deployment". The phone: the Tailscale app, signed in with GitHub. Each new device's address goes into `policy.hujson` under `hosts`, with a test of its own, by pull request.
 
+The administration container (step R.8), after `just remote-bootstrap` and `just remote-apply` have configured it and the policy holds the tag's owner and the route's approval (both in `policy.hujson` since step R.8):
+
+```sh
+just remote-login
+```
+
+It runs `tailscale up` on the container with every setting named, the tag `tag:remote-admin` and the route 10.0.10.10/32 among them, and prints a browser address: open it on the laptop and sign in with GitHub. The container is then a member but locked out, and the script prints the signing command for section 6. It refuses when the container is already logged in: every login creates a new device. The tag makes the device the tag's, not the owner's, and switches its key expiry off (exception X27).
+
 While node signing is off, a new device waits for approval in the console (**Machines**). While it is on, it waits for a signature: section 6.
 
 ## 5. Node signing
@@ -125,7 +133,7 @@ tailscale lock status
 tailscale lock sign nodekey:<the new device's node key>
 ```
 
-The first lists devices that wait, with their node keys. Compare the key with what the new device itself shows before signing it. A device can also be signed before it is approved by anything else; without a signature it stays cut off.
+The first lists devices that wait, with their node keys. Compare the key with what the new device itself shows before signing it: on the container, `sudo tailscale lock status` prints its key and the whole signing command (`just remote-login` shows it at the end); on the phone, **Settings**, **Tailnet lock**. A device can also be signed before it is approved by anything else; without a signature it stays cut off. Disconnect the laptop afterwards (`tailscale down`): at home it stays off.
 
 ## 7. The way out: disabling node signing
 

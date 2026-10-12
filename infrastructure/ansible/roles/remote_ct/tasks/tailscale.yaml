@@ -1,0 +1,166 @@
+---
+# Tailscale as an unprivileged user in userspace mode: no TUN device, no
+# capability, no rule in the kernel, no forwarding. Everything the daemon
+# needs it gets from its unit: the state and runtime directories belong to
+# the user named there.
+#
+# Order matters: the package starts its daemon the moment it is installed,
+# and a daemon that ran as root once leaves a state file the user cannot
+# read. So the flags and the drop-in come first, the package last.
+- name: Daemon flags
+  ansible.builtin.copy:
+    dest: /etc/default/tailscaled
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/remote_ct).
+      PORT="41641"
+      FLAGS="--tun=userspace-networking"
+  notify: Restart tailscaled
+
+- name: Drop-in directory of the unit
+  ansible.builtin.file:
+    path: /etc/systemd/system/tailscaled.service.d
+    state: directory
+    mode: "0755"
+
+- name: The daemon runs as its own user, with nothing more than a process needs
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/tailscaled.service.d/10-homelab.conf
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/remote_ct).
+      [Service]
+      User={{ remote_ct_tailscale_user }}
+      Group={{ remote_ct_tailscale_user }}
+      NoNewPrivileges=yes
+      CapabilityBoundingSet=
+      AmbientCapabilities=
+      RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+      RestrictSUIDSGID=yes
+      LockPersonality=yes
+      SystemCallArchitectures=native
+      {% for line in remote_ct_tailscaled_sandbox %}
+      {{ line }}
+      {% endfor %}
+  notify:
+    - Reload systemd units
+    - Restart tailscaled
+
+- name: Installed version
+  ansible.builtin.command:
+    cmd: dpkg-query -W -f='${Version}' tailscale
+  register: remote_ct_tailscale_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# A bump by pull request: the hold is lifted for the install of the exact
+# version and put back at once.
+- name: Hold lifted for a version change
+  ansible.builtin.dpkg_selections:
+    name: tailscale
+    selection: install
+  when: remote_ct_tailscale_installed.stdout != remote_ct_tailscale_version and remote_ct_tailscale_installed.rc == 0
+
+- name: Tailscale at the pinned version
+  ansible.builtin.apt:
+    name: "tailscale={{ remote_ct_tailscale_version }}"
+    state: present
+    allow_downgrade: true
+    install_recommends: false
+    cache_valid_time: 3600
+
+- name: Tailscale held at that version
+  ansible.builtin.dpkg_selections:
+    name: tailscale
+    selection: hold
+
+# Belt and braces for a daemon that ran as root before the drop-in existed.
+- name: The state belongs to the daemon's user
+  ansible.builtin.file:
+    path: /var/lib/tailscale
+    state: directory
+    owner: "{{ remote_ct_tailscale_user }}"
+    group: "{{ remote_ct_tailscale_user }}"
+    mode: "0700"
+    recurse: true
+
+- name: Units reloaded before the daemon is started
+  ansible.builtin.meta: flush_handlers
+
+- name: Daemon enabled and running
+  ansible.builtin.systemd_service:
+    name: tailscaled
+    enabled: true
+    state: started
+
+- name: The daemon's state
+  ansible.builtin.command:
+    cmd: tailscale status --json --peers=false
+  register: remote_ct_tailscale_status
+  changed_when: false
+  check_mode: false
+  retries: 5
+  delay: 2
+  until: remote_ct_tailscale_status.rc == 0
+
+- name: Facts about the daemon
+  ansible.builtin.set_fact:
+    remote_ct_backend: "{{ (remote_ct_tailscale_status.stdout | from_json).BackendState }}"
+
+- name: Not logged in yet
+  ansible.builtin.debug:
+    msg: >-
+      The daemon runs but is not logged in to the tailnet. That is the owner's step, at home:
+      `just remote-login` prints the browser address, and the laptop then signs the node
+      (docs/runbooks/tailnet-setup.md, section 4).
+  when: remote_ct_backend == 'NeedsLogin'
+
+# The preferences that the login did not set, or that someone changed by
+# hand, put back on every run. Each is read back before and after so the
+# task reports a change only when there was one. The login itself and the
+# tag are never touched here.
+- name: Preferences before
+  ansible.builtin.command:
+    cmd: tailscale debug prefs
+  register: remote_ct_prefs_before
+  changed_when: false
+  check_mode: false
+  when: remote_ct_backend != 'NeedsLogin'
+
+- name: Preferences
+  ansible.builtin.command:
+    cmd: >-
+      tailscale set --accept-dns=false --accept-routes=false
+      --advertise-routes={{ remote_ct_tailscale_routes | join(',') }}
+      --hostname={{ remote_ct_tailscale_hostname }} --ssh=false --webclient=false
+      --advertise-exit-node=false --report-posture=false --auto-update=false --update-check=false
+  when: remote_ct_backend != 'NeedsLogin'
+  changed_when: false
+
+- name: Preferences after
+  ansible.builtin.command:
+    cmd: tailscale debug prefs
+  register: remote_ct_prefs_after
+  changed_when: remote_ct_prefs_after.stdout != remote_ct_prefs_before.stdout
+  check_mode: false
+  when: remote_ct_backend != 'NeedsLogin'
+
+- name: What the daemon holds once logged in
+  ansible.builtin.assert:
+    that:
+      - prefs.CorpDNS == false
+      - prefs.RouteAll == false
+      - prefs.RunSSH == false
+      - prefs.RunWebClient | default(false) == false
+      - prefs.AdvertiseRoutes == remote_ct_tailscale_routes
+      - prefs.AdvertiseTags == [remote_ct_tailscale_tag]
+      - prefs.Hostname == remote_ct_tailscale_hostname
+      - prefs.AutoUpdate.Check == false
+      - prefs.AutoUpdate.Apply == false
+      - prefs.ExitNodeID | default('') == ''
+    fail_msg: "tailscaled's preferences differ from the design: {{ prefs }}"
+    quiet: true
+  vars:
+    prefs: "{{ remote_ct_prefs_after.stdout | from_json }}"
+  when: remote_ct_backend != 'NeedsLogin'

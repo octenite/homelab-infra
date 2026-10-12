@@ -1,28 +1,29 @@
 #!/bin/bash
-# The administration container of Phase R, read back and probed (step R.7;
-# docs/phases/phase-r-plan.md, docs/ARCHITECTURE.md section 6, E15 to E17).
+# The administration container of Phase R, read back and probed (steps R.7
+# and R.8; docs/phases/phase-r-plan.md, docs/ARCHITECTURE.md section 6, E15
+# to E17).
 #
 #   scripts/tests/remote.sh             (or: just test-remote)
-#   scripts/tests/remote.sh layers      also switches the hypervisor's filter
-#                                       for the container off and on again,
-#                                       to show which layer refuses what
+#   scripts/tests/remote.sh layers      also switches the layers off one by
+#                                       one, to show which layer refuses what
 #
-# Runs at home, in WSL, with a session open. Read-only, with three exceptions:
-# inside the container it adds a second address for one probe and removes it
-# again; the "layers" form switches the guest firewall off for the time of
-# one round of probes (through the API, with the OpenTofu token, which is
-# exactly the right a thief of that token would have) and on again, with a
-# timer on the hypervisor that switches it on if this script dies; and that
-# API write leaves the firewall file in Proxmox's own layout, which the next
-# `just pve-apply` puts back.
+# Runs at home, in WSL, with a session open. Read-only, with these exceptions,
+# each undone by the script: inside the container it adds a second address
+# for one probe; the "layers" form switches the container's own filter and
+# then the hypervisor's off for one round of probes each (each under a timer
+# on that host that switches it on again if this script dies); and the API
+# write to the hypervisor's filter leaves its file in Proxmox's own layout,
+# which the next `just pve-apply` puts back.
 #
-# With the container stopped, the read-back runs alone: the container is
-# created stopped and is checked before its first start. In the "layers"
-# form a stopped container is a failure.
+# Three layers answer differently to a connection the design forbids:
+#   the container's own filter   refuses at once, "Operation not permitted"
+#   the hypervisor's filter      drops: no answer within the time limit
+#   the router                   rejects: an answer comes back
+# The container's filter exists once its role has run (step R.8); before that
+# the first layer is absent and the expectations say so.
 #
-# What the probes do not show: frames that the container tags itself with a
-# VLAN (see the firewall template of the hypervisor play), UDP and ICMP.
-# Those rest on the stored rules, which are compared field by field.
+# With the container stopped, the read-back runs alone. In the "layers" form
+# a stopped container is a failure.
 set -uo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -38,15 +39,13 @@ VMID=3010
 ADDR=10.0.30.10
 ROUTER30=10.0.30.1
 WORKSTATIONS=192.168.1.196,192.168.1.197
+TS_VERSION=$(sed -n 's/^remote_ct_tailscale_version:[[:space:]]*//p' "$REPO/infrastructure/ansible/playbooks/group_vars/remote.yaml")
 TOKEN_ID='terraform@pve!tofu'
 CA="$REPO/private/proxmox/pve1-ca.crt"
 TOKENS="$REPO/private/proxmox/tokens.sops.yaml"
 export SOPS_AGE_KEY_FILE="${SOPS_AGE_KEY_FILE:-/dev/shm/homelab-session/age.key}"
 export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8)
-# The container's host key changes with every rebuild; its own entry, under
-# a name, keeps a changed key from being mistaken for another host's.
-CT_SSH=(ssh "${SSH_OPTS[@]}" -o HostKeyAlias=remote1 -o StrictHostKeyChecking=accept-new "root@$ADDR")
 
 [ -r "$SOPS_AGE_KEY_FILE" ] || {
 	echo "No key session open. Run 'just session-start' first." >&2
@@ -171,32 +170,105 @@ else
 	ok "the filtering bridge of the device exists" 1 "$(hf fwbr)"
 	ok "its port carries VLAN 30 only" 30 "$(hf port)"
 
-	# One round of probes from inside the container.
-	#   <label> <what every closed target must show> <what the second address must show>
-	# The two layers answer differently: the hypervisor's filter drops (no
-	# answer: "filtered"), the router rejects (an answer: "refused").
+	# Into the container: as the operator account once the role has run, as
+	# root before (a fresh container holds root's keys only). The host key
+	# is remembered under a name, because a rebuild changes it.
+	CT_SSH=(ssh "${SSH_OPTS[@]}" -o HostKeyAlias=remote1 -o StrictHostKeyChecking=accept-new)
+	if "${CT_SSH[@]}" "ops@$ADDR" true 2>/dev/null; then
+		ct() { "${CT_SSH[@]}" "ops@$ADDR" sudo bash -s; }
+		ct_user=ops
+	else
+		ct() { "${CT_SSH[@]}" "root@$ADDR" bash -s; }
+		ct_user=root
+	fi
+	# The container's own filter exists once the role has run.
+	role=$(ct <<<'nft list table inet homelab >/dev/null 2>&1 && echo yes || echo no' 2>/dev/null)
+	echo "        login as $ct_user; the container's own filter: ${role:-unknown}"
+
+	if [ "$role" = yes ]; then
+		echo "== what the role left inside (step R.8)"
+		inside=$(
+			ct <<EOF 2>/dev/null
+echo "state=\$(systemctl is-system-running)"
+echo "failed=\$(systemctl --failed --no-legend --plain | awk '{print \$1}' | xargs)"
+echo "masked=\$(systemctl is-enabled dev-mqueue.mount run-lock.mount tmp.mount 2>/dev/null | grep -c '^masked\$')"
+echo "forward=\$(sysctl -n net.ipv4.ip_forward)"
+echo "v6=\$(ip -6 -o addr show dev eth0 | wc -l)"
+echo "listen=\$(ss -H -ltn | awk '{print \$4}' | sort | xargs)"
+echo "tsuser=\$(ps -o user= -p \$(systemctl show -p MainPID --value tailscaled 2>/dev/null) 2>/dev/null | xargs)"
+echo "tscap=\$(grep CapBnd /proc/\$(systemctl show -p MainPID --value tailscaled 2>/dev/null)/status 2>/dev/null | awk '{print \$2}')"
+echo "tun=\$(test -e /dev/net/tun && echo present || echo absent)"
+echo "version=\$(dpkg-query -W -f='\${Version}' tailscale 2>/dev/null)"
+echo "hold=\$(apt-mark showhold 2>/dev/null | grep -c '^tailscale\$')"
+echo "nftrules=\$(nft list ruleset 2>/dev/null | grep -c skuid)"
+echo "lodrop=\$(nft list chain inet homelab output 2>/dev/null | grep 'oif \"lo\" meta skuid' | sed -n 's/.*packets \([0-9]*\).*/\1/p')"
+echo "backend=\$(tailscale status --json --peers=false 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); s=d.get(\"Self\") or {}; print(d.get(\"BackendState\"), \"tags=\" + \",\".join(s.get(\"Tags\") or []), \"routes=\" + \",\".join(s.get(\"PrimaryRoutes\") or []), \"health=\" + str(len(d.get(\"Health\") or [])))')"
+echo "lock=\$(tailscale lock status 2>/dev/null | grep -c 'accessible under Tailnet Lock')"
+echo "prefs=\$(tailscale debug prefs 2>/dev/null | python3 -c 'import json,sys; p=json.load(sys.stdin); print(p.get(\"CorpDNS\"), p.get(\"RouteAll\"), p.get(\"RunSSH\"), p.get(\"RunWebClient\"), \",\".join(p.get(\"AdvertiseRoutes\") or []), (p.get(\"AutoUpdate\") or {}).get(\"Check\"), (p.get(\"AutoUpdate\") or {}).get(\"Apply\"))')"
+echo "timer=\$(systemctl is-active remote-health.timer 2>/dev/null)"
+echo "health=\$(systemctl show -p ExecMainStatus --value remote-health.service 2>/dev/null)"
+EOF
+		)
+		inf() { sed -n "s/^$1=//p" <<<"$inside" | head -n 1; }
+		ok "systemd's own verdict" running "$(inf state)"
+		ok "failed units" "" "$(inf failed)"
+		ok "the three tmpfs mount units masked" 3 "$(inf masked)"
+		ok "kernel forwarding off" 0 "$(inf forward)"
+		ok "no IPv6 address on the device at all" 0 "$(inf v6)"
+		ok "listeners: SSH on the container's address only" "$ADDR:22" "$(inf listen)"
+		ok "tailscaled runs as its own user" tailscaled "$(inf tsuser)"
+		ok "tailscaled holds no capability" 0000000000000000 "$(inf tscap)"
+		ok "no TUN device" absent "$(inf tun)"
+		ok "tailscale at the pinned version" "$TS_VERSION" "$(inf version)"
+		ok "the package held" 1 "$(inf hold)"
+		ok "the container's filter matches by user" yes "$([ "$(inf nftrules)" -ge 3 ] && echo yes || echo no)"
+		ok "no tunnel traffic to the container's own services so far" 0 "$(inf lodrop)"
+		echo "        tailscale: $(inf backend); node signed: $(inf lock); prefs (dns routes ssh web | advertised | update check apply): $(inf prefs)"
+		case "$(inf backend)" in
+		Running*)
+			ok "the node carries its tag" yes "$(grep -q 'tags=tag:remote-admin' <<<"$(inf backend)" && echo yes || echo no)"
+			ok "the one route is approved" yes "$(grep -q 'routes=10.0.10.10/32' <<<"$(inf backend)" && echo yes || echo no)"
+			ok "no health warning" yes "$(grep -q 'health=0' <<<"$(inf backend)" && echo yes || echo no)"
+			ok "the node is signed" 1 "$(inf lock)"
+			ok "preferences" "False False False False 10.0.10.10/32 False False" "$(inf prefs)"
+			;;
+		NeedsLogin*) echo "        not logged in yet: the owner's step (just remote-login)" ;;
+		*) ok "the daemon answers" "Running or NeedsLogin" "$(inf backend)" ;;
+		esac
+		if [ -n "$(inf timer)" ]; then
+			ok "the health timer" active "$(inf timer)"
+			ok "the last health report" 0 "$(inf health)"
+		else
+			echo "        no health timer yet (the dead-man's switch is not stored)"
+		fi
+	fi
+
+	# One round of probes from inside the container, as one user.
+	#   <label> <user> <what every closed target must show> <what the second address must show>
 	round() {
-		local label=$1 kind=$2 second=$3 out t p exp got
+		local label=$1 user=$2 kind=$3 second=$4 out t p exp got
 		out=$(
-			"${CT_SSH[@]}" bash -s <<'EOF' 2>/dev/null
+			ct <<EOF 2>/dev/null
+run() { if [ "$user" = root ]; then bash -c "\$1"; else runuser -u "$user" -- bash -c "\$1"; fi; }
 probe() {
 	local o rc
-	o=$(timeout 4 bash -c "exec 3<>/dev/tcp/$1/$2" 2>&1); rc=$?
-	case $rc in 0) r=open ;; 124) r=filtered ;; *) case "$o" in *refused*) r=refused ;; *) r=unreachable ;; esac ;; esac
-	echo "$1 $2 $r"
+	o=\$(run "timeout 4 bash -c 'exec 3<>/dev/tcp/\$1/\$2'" 2>&1); rc=\$?
+	case \$rc in 0) r=open ;; 124) r=filtered ;; *) case "\$o" in *"not permitted"* | *"Permission denied"*) r=forbidden ;; *refused*) r=refused ;; *nreachable* | *"No route"*) r=unreachable ;; *) r=error ;; esac ;; esac
+	echo "\$1 \$2 \$r"
 }
 for t in "10.0.10.10 22" "10.0.10.10 8006" "10.0.10.10 9100" "10.0.10.10 3128" "10.0.10.1 22" "10.0.10.2 22" \
 	"192.168.1.53 22" "192.168.1.196 8007" "10.0.50.201 443" "10.0.31.1 53" "10.0.30.1 22" "1.1.1.1 443" "1.1.1.1 80" "9.9.9.9 53"; do
-	probe $t
+	probe \$t
 done
-echo "dns $(getent hosts deb.debian.org >/dev/null 2>&1 && echo answered || echo silent)"
-echo "v6 $(ip -6 -o addr show dev eth0 scope global 2>/dev/null | wc -l) $(ip -6 route show default 2>/dev/null | wc -l)"
-# A second address in the network: who refuses it? The address is removed
-# before anything is written, so a lost session cannot leave it behind.
+echo "dns \$(run 'getent hosts deb.debian.org' >/dev/null 2>&1 && echo answered || echo silent)"
+echo "v6 \$(ip -6 -o addr show dev eth0 scope global 2>/dev/null | wc -l) \$(ip -6 route show default 2>/dev/null | wc -l)"
+# A second address in the network: who refuses it? Added and removed by
+# root; the connection is tried by the user of this round. The address is
+# removed before anything is written, so a lost session cannot leave it.
 ip addr add 10.0.30.11/24 dev eth0 2>/dev/null
-o=$(ssh -b 10.0.30.11 -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null nobody@10.0.10.10 true 2>&1)
+o=\$(run "ssh -b 10.0.30.11 -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null nobody@10.0.10.10 true" 2>&1)
 ip addr del 10.0.30.11/24 dev eth0 2>/dev/null
-case "$o" in *"timed out"*) echo "second filtered" ;; *refused* | *nreachable* | *"No route"*) echo "second refused" ;; *denied* | *"Host key"*) echo "second open" ;; *) echo "second unknown" ;; esac
+case "\$o" in *"timed out"*) echo "second filtered" ;; *"not permitted"* | *"Permission denied"*) echo "second forbidden" ;; *refused* | *nreachable* | *"No route"*) echo "second refused" ;; *denied* | *"Host key"*) echo "second open" ;; *) echo "second unknown" ;; esac
 exit 0
 EOF
 		) || {
@@ -208,13 +280,16 @@ EOF
 		ok "$label: SSH from the workstation into the container (E17)" yes yes
 		while read -r t p exp; do
 			got=$(sed -n "s/^$t $p //p" <<<"$out")
+			# What only the tunnel's process may reach is forbidden to root
+			# by the container's own filter.
+			[ "$exp" = tunnel ] && { if [ "$user" = root ] && [ "$role" = yes ]; then exp=forbidden; else exp=open; fi; }
 			[ "$exp" = closed ] && exp=$kind
 			# "unreachable" is the router's answer too, in another form.
 			[ "$exp" = refused ] && [ "$got" = unreachable ] && got=refused
 			ok "$label: $t port $p" "$exp" "$got"
 		done <<'EOF'
-10.0.10.10 22 open
-10.0.10.10 8006 open
+10.0.10.10 22 tunnel
+10.0.10.10 8006 tunnel
 10.0.10.10 9100 closed
 10.0.10.10 3128 closed
 10.0.10.1 22 closed
@@ -233,30 +308,67 @@ EOF
 		ok "$label: a second address in the network, towards the hypervisor" "$second" "$(sed -n 's/^second //p' <<<"$out")"
 	}
 
-	echo "== from inside the container, every layer on (what is closed gets no answer: the hypervisor's filter)"
-	# The second address is dropped at the device and never reaches the
-	# router. This holds for frames without a VLAN tag; tagged frames are
-	# dropped by the frame-type rule read back above, not probed here.
-	round "all layers" filtered filtered
+	# The user that stands for the tunnel's process once the role has run.
+	tun_user=root
+	[ "$role" = yes ] && tun_user=tailscaled
+
+	if [ "$role" = yes ]; then
+		echo "== from inside the container, every layer on: as root, what the design forbids is refused at once by the container's own filter"
+		round "all layers, root" root forbidden forbidden
+		echo "== the same as the tunnel's process: the hypervisor's filter drops the second address (no answer)"
+		round "all layers, tunnel" tailscaled forbidden filtered
+	else
+		echo "== from inside the container, every layer on (what is closed gets no answer: the hypervisor's filter)"
+		round "all layers" root filtered filtered
+	fi
 
 	if [ "$MODE" = layers ] && [ "$fail" -ne 0 ]; then
-		echo "  FAIL  the layers round is skipped: the first round failed, and the filter is not switched off on a container that is not as designed"
+		echo "  FAIL  the layers round is skipped: the first round failed, and no filter is switched off on a container that is not as designed"
 		fail=$((fail + 1))
 		checks=$((checks + 1))
 	elif [ "$MODE" = layers ]; then
-		echo "== the hypervisor's filter switched off: the router alone (what is closed is refused with an answer)"
 		# shellcheck disable=SC2029  # the guest id is expanded here on purpose
 		chain() { ssh "${SSH_OPTS[@]}" "ops@$HOST" "sudo iptables -S veth${VMID}i0-OUT 2>/dev/null | wc -l"; }
-		# If this script dies, the hypervisor switches the filter on by itself.
+		ct_table() { ct <<<'nft list table inet homelab >/dev/null 2>&1 && echo yes || echo no' 2>/dev/null; }
+
+		if [ "$role" = yes ]; then
+			echo "== the container's own filter switched off: the hypervisor's filter alone (what is closed gets no answer)"
+			# If this script dies, the container reloads its filter by itself.
+			if ! ct >/dev/null 2>&1 <<'EOF'
+systemctl stop homelab-nft-rearm.timer 2>/dev/null
+systemd-run --unit homelab-nft-rearm --collect --on-active=300 --timer-property=AccuracySec=1s systemctl restart nftables
+EOF
+			then
+				echo "  FAIL  the timer that reloads the container's filter could not be armed; nothing was switched off"
+				exit 1
+			fi
+			restore_ct() {
+				ct <<<'systemctl restart nftables; systemctl stop homelab-nft-rearm.timer 2>/dev/null' >/dev/null 2>&1
+				[ "$(ct_table)" = yes ] || {
+					echo "  FAIL  the container's filter did not come back: run 'just remote-apply'" >&2
+					fail=$((fail + 1))
+				}
+			}
+			trap restore_ct EXIT
+			ct <<<'nft delete table inet homelab' >/dev/null 2>&1
+			ok "the container's table is gone" no "$(ct_table)"
+			round "hypervisor alone" tailscaled filtered filtered
+			restore_ct
+			trap - EXIT
+			ok "the container's table is back" yes "$(ct_table)"
+		fi
+
+		echo "== the hypervisor's filter switched off too: the router alone (what is closed is refused with an answer)"
+		# If this script dies, the hypervisor switches its filter on by itself.
 		if ! host >/dev/null 2>&1 <<EOF
 systemctl stop homelab-fw$VMID-rearm.timer 2>/dev/null
 systemd-run --unit homelab-fw$VMID-rearm --collect --on-active=600 --timer-property=AccuracySec=1s /usr/bin/pvesh set /nodes/$NODE/lxc/$VMID/firewall/options --enable 1
 EOF
 		then
-			echo "  FAIL  the timer that switches the filter back on could not be armed; nothing was switched off"
+			echo "  FAIL  the timer that switches the hypervisor's filter back on could not be armed; nothing was switched off"
 			exit 1
 		fi
-		restore() {
+		restore_host() {
 			api PUT "/nodes/$NODE/lxc/$VMID/firewall/options" --data 'enable=1' >/dev/null
 			for _ in $(seq 1 20); do
 				if [ "$(chain)" -gt 5 ]; then
@@ -265,23 +377,35 @@ EOF
 				fi
 				sleep 2
 			done
-			echo "  FAIL  the filter did not come back within 40 seconds: run 'just pve-apply' (the hypervisor also switches it on by itself within ten minutes)" >&2
+			echo "  FAIL  the hypervisor's filter did not come back within 40 seconds: run 'just pve-apply' (the hypervisor also switches it on by itself within ten minutes)" >&2
 			fail=$((fail + 1))
 		}
-		trap restore EXIT
+		both_back() {
+			[ "$role" = yes ] && restore_ct
+			restore_host
+		}
+		if [ "$role" = yes ]; then
+			ct <<'EOF' >/dev/null 2>&1
+systemctl stop homelab-nft-rearm.timer 2>/dev/null
+systemd-run --unit homelab-nft-rearm --collect --on-active=300 --timer-property=AccuracySec=1s systemctl restart nftables
+nft delete table inet homelab
+EOF
+		fi
+		trap both_back EXIT
 		api PUT "/nodes/$NODE/lxc/$VMID/firewall/options" --data 'enable=0' >/dev/null
 		for _ in $(seq 1 20); do
 			[ "$(chain)" -eq 0 ] && break
 			sleep 2
 		done
-		ok "the device's chain is gone" 0 "$(chain)"
+		ok "the device's chain on the hypervisor is gone" 0 "$(chain)"
 		# The router's rules name the one address, so it refuses the second
 		# one with an answer.
-		round "router alone" refused refused
-		restore
+		round "router alone" "$tun_user" refused refused
+		both_back
 		trap - EXIT
-		ok "the device's chain is back" yes "$([ "$(chain)" -gt 5 ] && echo yes || echo no)"
-		echo "        the API rewrote the firewall file in its own layout: run 'just pve-apply' once, then 'just test-remote' again" >&2
+		ok "the device's chain on the hypervisor is back" yes "$([ "$(chain)" -gt 5 ] && echo yes || echo no)"
+		[ "$role" = yes ] && ok "the container's table is back" yes "$(ct_table)"
+		echo "        the API rewrote the hypervisor's firewall file in its own layout: run 'just pve-apply' once, then 'just test-remote' again" >&2
 	fi
 fi
 

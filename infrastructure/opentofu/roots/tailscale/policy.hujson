@@ -2,8 +2,8 @@
 // `just tofu tailscale apply`. Design: docs/adr/0005-administrative-access.md.
 //
 // Phase R, step R.3: the laptop may reach the hypervisor's SSH and web
-// interface, and only through the administration container. That container
-// does not exist before step R.8, so until then this grant carries nothing.
+// interface, and only through the administration container. Step R.8 gives
+// the container its tag and approves its one route.
 //
 // Rules for this file:
 //   - Grants only. No "acls" and no "ssh" section: Tailscale SSH is not used.
@@ -26,11 +26,23 @@
 		"phone": "100.88.195.22",
 	},
 
-	// Owned by nobody: no device can take a tag by itself. Only the owner
-	// can assign one, by hand in the console.
+	// A device takes a tag at its login, and only a login listed here may
+	// give it. The owner logs the container in at a browser (step R.8), so
+	// the owner's own login is the one owner of the tag; no device can take
+	// it by itself. (An empty list would mean the administrators, which is
+	// the same person today and every administrator later.)
 	"tagOwners": {
-		// The administration container remote1 (step R.8).
-		"tag:remote-admin": [],
+		// The administration container remote1.
+		"tag:remote-admin": ["${owner_login}"],
+	},
+
+	// A route the tagged container advertises is approved without a click,
+	// and only this one. Approval is decided when a route is first
+	// advertised, so this is in place before the container logs in.
+	"autoApprovers": {
+		"routes": {
+			"10.0.10.10/32": ["tag:remote-admin"],
+		},
 	},
 
 	"grants": [
@@ -68,6 +80,19 @@
 				// not the phone
 				"100.88.195.22:22",
 				"100.88.195.22:80",
+			],
+		},
+		{
+			// The container's tag as a source reaches nothing: not its own
+			// target, not the laptop, not the phone. It carries traffic; it
+			// starts none.
+			"src": "tag:remote-admin",
+			"deny": [
+				"10.0.10.10:22",
+				"10.0.10.10:8006",
+				"100.85.8.57:22",
+				"100.85.8.57:3389",
+				"100.88.195.22:22",
 			],
 		},
 		{

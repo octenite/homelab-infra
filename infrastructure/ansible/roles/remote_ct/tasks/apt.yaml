@@ -1,0 +1,107 @@
+---
+# Only tcp 443 leaves the container, so every source is HTTPS. The Debian
+# sources were written at bootstrap; they are kept here so a drift is put back.
+- name: Debian sources over HTTPS
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/debian.sources
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: https://deb.debian.org/debian
+      Suites: {{ ansible_distribution_release }} {{ ansible_distribution_release }}-updates
+      Components: main
+      Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+      Types: deb
+      URIs: https://security.debian.org/debian-security
+      Suites: {{ ansible_distribution_release }}-security
+      Components: main
+      Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+  notify: Update apt cache
+
+# The vendor's signing key, pinned by checksum: a key that does not match is
+# not written and the play stops.
+- name: Tailscale's apt signing key
+  ansible.builtin.get_url:
+    url: https://pkgs.tailscale.com/stable/debian/{{ ansible_distribution_release }}.noarmor.gpg
+    dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+    checksum: "sha256:{{ remote_ct_tailscale_keyring_sha256 }}"
+    mode: "0644"
+  notify: Update apt cache
+
+- name: Tailscale's repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/tailscale.sources
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: https://pkgs.tailscale.com/stable/debian
+      Suites: {{ ansible_distribution_release }}
+      Components: main
+      Signed-By: /usr/share/keyrings/tailscale-archive-keyring.gpg
+  notify: Update apt cache
+
+# The pin names the exact version; every other version of the package is
+# refused. Security updates come from Debian only (below), so this repository
+# is never in their scope.
+- name: Tailscale pinned to one version
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/tailscale
+    mode: "0644"
+    content: |
+      Package: tailscale
+      Pin: version {{ remote_ct_tailscale_version }}
+      Pin-Priority: 1001
+
+      Package: tailscale
+      Pin: release o=Tailscale
+      Pin-Priority: -1
+
+- name: Flush handlers so the cache is current before installing
+  ansible.builtin.meta: flush_handlers
+
+- name: Host packages
+  ansible.builtin.apt:
+    name:
+      - nftables
+      - unattended-upgrades
+      - sudo
+    state: present
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 3600
+
+# A mail system has no business here (it listened on loopback), and the time
+# service cannot set a container's clock: the kernel's is the hypervisor's.
+- name: Packages the template brought that the container does not need
+  ansible.builtin.apt:
+    name:
+      - postfix
+      - systemd-timesyncd
+    state: absent
+    purge: true
+
+# A list in a later apt.conf file is appended to the list of an earlier one.
+# Debian's own 50unattended-upgrades names the main archive as well, so the
+# list is cleared first. The pinned package is named once more, as a guard
+# that costs nothing.
+- name: Unattended upgrades, Debian security origins only
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52-homelab-unattended.conf
+    mode: "0644"
+    content: |
+      #clear Unattended-Upgrade::Origins-Pattern;
+      Unattended-Upgrade::Origins-Pattern {
+          "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+      };
+      Unattended-Upgrade::Package-Blacklist {
+          "^tailscale$";
+      };
+      Unattended-Upgrade::Automatic-Reboot "{{ 'true' if remote_ct_unattended_reboot else 'false' }}";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+# The package starts its daemon the moment it is installed, so the user, the
+# flags and the unit's drop-in are in place first (tailscale.yaml runs the
+# install itself, after writing them).
