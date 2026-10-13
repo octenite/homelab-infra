@@ -24,8 +24,14 @@ module "remote1" {
   template_file_id = "local:vztmpl/${var.template_file}"
   ssh_public_keys  = var.ssh_public_keys
 
-  cores      = 1
-  memory_mib = 256
+  cores = 1
+  # Measured 2026-10-12: at 256 MiB the hypervisor killed Ansible's apt module
+  # (python, 133 MB of its own) while it loaded Debian's package cache; at 512
+  # the configure run peaked at 509 MiB, too close for an unattended rebuild
+  # that installs everything in one pass. 768 leaves headroom. A limit, not a
+  # reservation: steady-state use is about 40 MB, and the container runs only
+  # while the laptop travels.
+  memory_mib = 768
   swap_mib   = 0
   disk_gib   = 4
 

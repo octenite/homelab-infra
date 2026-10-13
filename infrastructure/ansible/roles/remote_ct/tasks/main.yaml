@@ -1,0 +1,30 @@
+---
+- name: Users the filter and the units name
+  ansible.builtin.import_tasks: users.yaml
+
+- name: Packages and repositories
+  ansible.builtin.import_tasks: apt.yaml
+
+- name: Units, kernel settings and logs
+  ansible.builtin.import_tasks: system.yaml
+
+- name: SSH
+  ansible.builtin.import_tasks: ssh.yaml
+
+- name: The container's own filter
+  ansible.builtin.import_tasks: firewall.yaml
+
+# sshd and the filter are restarted before the tunnel is touched: a failure
+# in the tasks below would otherwise lose those restarts, because on the next
+# run the files are already in place and nothing asks for them again.
+- name: Apply pending service restarts before the tunnel
+  ansible.builtin.meta: flush_handlers
+
+- name: Tailscale
+  ansible.builtin.import_tasks: tailscale.yaml
+
+- name: Health check
+  ansible.builtin.import_tasks: health.yaml
+
+- name: Apply pending service restarts
+  ansible.builtin.meta: flush_handlers

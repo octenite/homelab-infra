@@ -1,0 +1,86 @@
+---
+# First contact with a freshly created remote-access container. Runs once as
+# root with the keys OpenTofu wrote at creation, creates the operator account,
+# and closes root login. Every later play connects as that account.
+#
+# The container may reach the internet on tcp 443 only, so the template's
+# package sources, which use plain HTTP, are replaced before anything is
+# installed.
+#
+# The group sets ansible_become, and the template has no sudo yet: that is
+# safe because Ansible skips escalation when the become user is the login
+# user (root here), unless BECOME_ALLOW_SAME_USER is set. It never is.
+- name: Bootstrap a freshly created remote-access container
+  hosts: "{{ target | default('remote') }}"
+  gather_facts: true
+  become: false
+  vars:
+    ansible_user: root
+  tasks:
+    - name: Package sources over HTTPS (only tcp 443 leaves the container)
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/debian.sources
+        mode: "0644"
+        content: |
+          Types: deb
+          URIs: https://deb.debian.org/debian
+          Suites: {{ ansible_distribution_release }} {{ ansible_distribution_release }}-updates
+          Components: main
+          Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+          Types: deb
+          URIs: https://security.debian.org/debian-security
+          Suites: {{ ansible_distribution_release }}-security
+          Components: main
+          Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+    - name: Install sudo
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+        update_cache: true
+
+    - name: Create the operator account
+      ansible.builtin.user:
+        name: "{{ remote_ct_ops_user }}"
+        shell: /bin/bash
+        groups: [sudo]
+        append: true
+        create_home: true
+
+    - name: Authorise the same keys for the operator account
+      ansible.posix.authorized_key:
+        user: "{{ remote_ct_ops_user }}"
+        key: "{{ remote_ct_ssh_authorized_keys | join('\n') }}"
+        exclusive: true
+
+    - name: Let the operator account administer without a password (it has none)
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/90-ops
+        content: "{{ remote_ct_ops_user }} ALL=(ALL) NOPASSWD: ALL\n"
+        mode: "0440"
+        validate: /usr/sbin/visudo -cf %s
+
+    - name: Prove the operator account works before root is closed
+      ansible.builtin.command:
+        cmd: >-
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new {{ ansible_ssh_extra_args | default('') }}
+          {{ remote_ct_ops_user }}@{{ ansible_host }} sudo -n true
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Close root login over SSH
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/10-homelab-bootstrap.conf
+        content: |
+          PermitRootLogin no
+          PasswordAuthentication no
+        mode: "0644"
+        validate: /usr/sbin/sshd -t -f %s
+      notify: Restart sshd
+
+  handlers:
+    - name: Restart sshd
+      ansible.builtin.service:
+        name: ssh
+        state: restarted

@@ -1,0 +1,14 @@
+---
+- name: Firewall rules
+  ansible.builtin.template:
+    src: nftables.conf.j2
+    dest: /etc/nftables.conf
+    mode: "0755"
+    validate: /usr/sbin/nft -c -f %s
+  notify: Reload nftables
+
+- name: Firewall enabled
+  ansible.builtin.service:
+    name: nftables
+    enabled: true
+    state: started

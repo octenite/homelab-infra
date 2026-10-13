@@ -1,0 +1,52 @@
+#!/usr/sbin/nft -f
+# Managed by Ansible (roles/remote_ct): the container's own layer (Phase R,
+# docs/adr/0005-administrative-access.md). The router and the hypervisor's
+# filter see addresses and ports; this layer also sees which process sends.
+# The tunnel's process may reach the hypervisor's two ports and the internet
+# on 443; the package tool and the health check the internet on 443; nothing
+# else leaves. Root inside the container can change this file; the process
+# that faces the internet cannot.
+#
+# The tunnel runs in userspace mode and writes no rule of its own, so
+# flushing the ruleset is safe.
+flush ruleset
+table inet homelab {
+  set not_internet {
+    type ipv4_addr
+    flags interval
+    elements = { {{ remote_ct_not_internet | join(', ') }} }
+  }
+  chain input {
+    type filter hook input priority filter; policy drop;
+    meta nfproto ipv6 drop
+    iif "lo" accept
+    ct state established,related accept
+    # The operator's SSH, stateless (no ct state), so this filter's first load
+    # cannot cut the very session that applies it: a connection opened before
+    # the filter existed has no conntrack entry and would otherwise be dropped
+    # as invalid. The matching reply rule is in the output chain.
+    ip saddr { {{ remote_ct_ssh_sources | join(', ') }} } ip daddr {{ remote_ct_address }} tcp dport 22 accept comment "E17 the workstation (stateless)"
+    ct state invalid drop
+    ip saddr { {{ remote_ct_ssh_sources | join(', ') }} } ip daddr {{ remote_ct_address }} icmp type echo-request accept
+  }
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+  }
+  chain output {
+    type filter hook output priority filter; policy drop;
+    meta nfproto ipv6 drop
+    # A connection from the tailnet to this container's own tailnet address
+    # becomes a dial by the tunnel's process to loopback. Never.
+    oif "lo" meta skuid "{{ remote_ct_tailscale_user }}" counter drop comment "no tunnel traffic to this host's own services"
+    oif "lo" accept
+    ct state established,related accept
+    # The reply side of the stateless input rule above, for the same reason.
+    tcp sport 22 ip daddr { {{ remote_ct_ssh_sources | join(', ') }} } accept comment "E17 replies to the operator (stateless)"
+    ct state invalid drop
+    ip daddr {{ remote_ct_router }} udp dport 53 accept comment "name lookups at the router"
+    ip daddr {{ remote_ct_router }} tcp dport 53 accept comment "name lookups at the router"
+    ip daddr {{ remote_ct_hypervisor }} tcp dport { 22, 8006 } meta skuid "{{ remote_ct_tailscale_user }}" accept comment "E15 the tunnel only"
+    ip daddr != @not_internet tcp dport 443 meta skuid { "{{ remote_ct_tailscale_user }}", "_apt", "{{ remote_ct_health_user }}", "root" } accept comment "E16 control plane and relays, package sources, the health check, the role's own fetches"
+    counter comment "dropped"
+  }
+}

@@ -61,7 +61,22 @@ Any other change to the root `remote` is applied at home or with the container s
    The play puts the firewall file back into the layout Git has, after the test switched the filter off and on through the API. It must report that one file changed, and nothing on a further run. The last command reads the loaded filter once more, after the last write to it.
 4. `just tofu remote plan` must show no changes. Commit the private repository: the state copy of the root `remote`.
 
-The steps that follow for a container that is to carry the tunnel (its own configuration, the Tailscale login in a browser, the signature from the laptop) are in `docs/runbooks/tailnet-setup.md`, sections 4 and 6, and in step R.8 of the plan.
+Then the inside of the container (step R.8; `docs/components/remote1.md`):
+
+```sh
+just remote-bootstrap      # once, as root: answer "yes" to the one host-key question
+just remote-apply          # the role; a second run must change nothing
+just remote-login          # the owner: a browser login, then the signing command for the laptop
+just secret-set private/ansible/inventory/host_vars/remote1/secrets.sops.yaml remote_ct_health_ping_url
+                           # the dead-man's switch, after the signature (the timer reports failure before it)
+just remote-apply          # after the signature: the remaining preferences set once, the health timer installed
+just remote-apply          # must change nothing
+just test-remote layers    # the probes with each layer off in turn, then just pve-apply and just test-remote
+```
+
+Then one reboot (`ssh ops@10.0.10.10 sudo pct reboot 3010`) and `just test-remote` once more: the filter, the masked units, the kernel settings and the SSH listener must come back by themselves. When the container is stopped on purpose (decision D12), pause the check in the healthchecks.io console until `travel.ps1` (step R.9) does it.
+
+After a rebuild the container has a new SSH host key: `ssh-keygen -R remote1` on the workstation first, and the old device removed in the Tailscale console (**Machines**) before the login, or the new one is named `remote1-1`.
 
 ## 3. Remove the old container first (a rebuild only)
 

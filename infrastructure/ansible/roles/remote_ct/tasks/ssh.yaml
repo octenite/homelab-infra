@@ -1,0 +1,111 @@
+---
+# SSH listens on the container's one address only. That is not hygiene alone:
+# in userspace mode the tunnel delivers a connection addressed to the
+# container's own tailnet address by dialling the local service on loopback,
+# so a listener on 127.0.0.1 would be reachable through a mistaken grant.
+# Debian ships ssh.socket as well as ssh.service. Under socket activation
+# systemd owns the listening socket (every address, port 22) and sshd runs
+# per connection, which ignores ListenAddress in the config below. The one
+# address is a security property here, so SSH runs as a plain service and the
+# socket is masked.
+- name: SSH is a standalone service, never socket-activated
+  ansible.builtin.systemd_service:
+    name: ssh.socket
+    state: stopped
+    enabled: false
+    masked: true
+  notify: Restart sshd
+
+- name: The SSH service is enabled on its own
+  ansible.builtin.systemd_service:
+    name: ssh.service
+    enabled: true
+
+- name: Directory for the ssh.service drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/system/ssh.service.d
+    state: directory
+    mode: "0755"
+
+# sshd binds the one address (ListenAddress below), which exists only once the
+# network is configured. On a cold boot sshd can start before that and fail to
+# bind; Debian makes that failure (exit 255) non-retryable, so without this it
+# stays down after every reboot (and travel.ps1 reboots the container each
+# trip). Wait for the network, and retry a failed bind.
+- name: SSH waits for the network and retries a bind failure
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/ssh.service.d/10-homelab.conf
+    mode: "0644"
+    content: |
+      [Unit]
+      After=network-online.target
+      Wants=network-online.target
+      StartLimitIntervalSec=0
+
+      [Service]
+      RestartPreventExitStatus=
+      Restart=on-failure
+      RestartSec=2s
+  notify:
+    - Reload systemd units
+    - Restart sshd
+
+- name: SSH is key-only, operator account only, on the container's address only
+  ansible.builtin.copy:
+    dest: "{{ remote_ct_sshd_dropin }}"
+    mode: "0644"
+    content: |
+      AddressFamily inet
+      ListenAddress {{ remote_ct_address }}
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      AllowUsers {{ remote_ct_ops_user }}
+      X11Forwarding no
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Restart sshd
+
+- name: Remove the bootstrap drop-in, superseded by the one above
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/10-homelab-bootstrap.conf
+    state: absent
+  notify: Restart sshd
+
+# The operator account's keys follow the inventory on every run. Guarded like
+# the other hosts: the list must hold at least two keys, one of them loaded
+# in the operator's agent, so that a bad edit cannot lock the operator out.
+- name: Read the public keys held by the operator's agent
+  ansible.builtin.command:
+    cmd: ssh-add -L
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+  register: remote_ct_agent_keys
+
+- name: Refuse a key list that would lock the operator out
+  ansible.builtin.assert:
+    that:
+      - remote_ct_ssh_authorized_keys | length >= 2
+      - >-
+        (remote_ct_agent_keys.stdout_lines | map('split') | map(attribute=1) | list)
+        | intersect(remote_ct_ssh_authorized_keys | map('split') | map(attribute=1) | list)
+        | length > 0
+    fail_msg: "The key list must hold at least two keys, one of them loaded in the agent."
+    quiet: true
+
+- name: Operator account's authorised keys follow the inventory
+  ansible.posix.authorized_key:
+    user: "{{ remote_ct_ops_user }}"
+    key: "{{ remote_ct_ssh_authorized_keys | join('\n') }}"
+    exclusive: true
+
+# Root's keys were written by OpenTofu at creation, for the bootstrap only.
+# Root has no SSH path afterwards (PermitRootLogin no, AllowUsers above); its
+# way in is `pct enter` on the hypervisor.
+- name: No key is authorised for root
+  ansible.builtin.file:
+    path: /root/.ssh/authorized_keys
+    state: absent

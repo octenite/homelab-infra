@@ -1,0 +1,6 @@
+---
+# Everything that is policy lives in playbooks/group_vars/remote.yaml. Here:
+# names and paths the tasks share.
+remote_ct_sshd_dropin: /etc/ssh/sshd_config.d/20-homelab.conf
+remote_ct_health_dir: /etc/homelab
+remote_ct_health_env: /etc/homelab/health.env

@@ -1,0 +1,20 @@
+---
+# The dead-man's switch for the container (docs/phases/phase-r-plan.md,
+# decision D12 and the drills): a timer reports the tunnel's state to a
+# healthchecks.io check every few minutes. The check's address is a secret of
+# its own kind (whoever has it can report success), so it lives in the private
+# inventory and in a root-only file here; the service manager hands it to the
+# unprivileged health user as an environment variable.
+- name: No dead-man's switch yet
+  ansible.builtin.debug:
+    msg: >-
+      remote_ct_health_ping_url is not set: the owner creates a check at healthchecks.io (period 5
+      minutes, grace 10 minutes) and stores its address with `just secret-set
+      private/ansible/inventory/host_vars/remote1/secrets.sops.yaml remote_ct_health_ping_url`,
+      after the node is logged in and signed: the timer reports failure until then. The health
+      timer is not installed until the address is stored.
+  when: remote_ct_health_ping_url is not defined
+
+- name: Health timer
+  ansible.builtin.include_tasks: health-timer.yaml
+  when: remote_ct_health_ping_url is defined

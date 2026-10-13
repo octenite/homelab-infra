@@ -1,0 +1,12 @@
+---
+# Configure a remote-access container. Idempotent; connects as the operator
+# account. The Tailscale login itself is the owner's step (just remote-login).
+- name: Configure remote-access containers
+  hosts: "{{ target | default('remote') }}"
+  gather_facts: true
+  become: true
+  # A restart that an earlier task requested must happen even when a later
+  # task stops the play on purpose: on the next run nothing asks for it again.
+  force_handlers: true
+  roles:
+    - role: remote_ct

@@ -148,6 +148,19 @@ test-router-zones:
 test-remote *args:
     bash scripts/tests/remote.sh "$@"
 
+# First contact with a freshly created remote-access container (as root, once): operator account, keys, root login closed.
+remote-bootstrap:
+    bash scripts/ops/play.sh remote-bootstrap
+
+# Configure the remote-access container from Git (idempotent). Dry run: just remote-apply --check --diff
+[positional-arguments]
+remote-apply *args:
+    bash scripts/ops/play.sh remote "$@"
+
+# The container's one login to the tailnet, by the owner at a browser; prints the signing command for the laptop.
+remote-login:
+    bash scripts/ops/remote-login.sh
+
 # Start the administration container, only after its stored configuration and the hypervisor's filter read back as designed.
 remote-start:
     bash scripts/tests/remote.sh

@@ -1,0 +1,37 @@
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+
+# Unit-file changes are loaded before any service is (re)started below, so a
+# new drop-in is in effect at the restart in the same run.
+- name: Reload systemd units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Restart sshd
+  ansible.builtin.service:
+    name: ssh
+    state: restarted
+
+- name: Restart journald
+  ansible.builtin.service:
+    name: systemd-journald
+    state: restarted
+
+# The three tmpfs mount units failed at boot before they were masked; without
+# this the state reads "degraded" until the next restart.
+- name: Reset the masked units
+  ansible.builtin.command:
+    cmd: systemctl reset-failed dev-mqueue.mount run-lock.mount tmp.mount
+  changed_when: true
+
+- name: Reload nftables
+  ansible.builtin.service:
+    name: nftables
+    state: reloaded
+
+- name: Restart tailscaled
+  ansible.builtin.systemd_service:
+    name: tailscaled
+    state: restarted
