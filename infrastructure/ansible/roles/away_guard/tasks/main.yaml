@@ -1,0 +1,46 @@
+---
+# A real run that reaches the host through the away tunnel is refused; a dry
+# run (--check) is allowed (docs/phases/phase-r-plan.md, "Home and away";
+# docs/components/travel-mode.md). No mode is stored: the address sshd saw
+# for this very connection is read.
+#
+# It is read as the connection user, because sudo clears the variable from
+# the environment. The group sets ansible_become, and a connection variable
+# outranks the become keyword, so the task turns it off with the variable
+# (task vars outrank group vars); the keyword alone would still run it under
+# sudo, read nothing, and refuse every run. An empty answer is refused too,
+# since it proves nothing.
+#
+# Tagged always and away-guard: it runs whatever --tags selects, and
+# `--tags away-guard` runs the facts, these two tasks and the roles' argument
+# checks (on the workstation), and nothing else on the host. That is how
+# scripts/tests/travel-guards.sh shows the refusal of a real run. Flags that
+# skip a play's first tasks on purpose (--start-at-task, --skip-tags always)
+# skip this guard too: it stops a run started by habit, not a decision.
+- name: The address this run arrives from
+  ansible.builtin.command:
+    cmd: printenv SSH_CONNECTION
+  vars:
+    ansible_become: false
+  become: false
+  changed_when: false
+  failed_when: false
+  register: away_guard_connection
+  when: not ansible_check_mode
+  tags: [always, away-guard]
+
+- name: No real run through the away tunnel
+  ansible.builtin.assert:
+    that:
+      - away_guard_connection.stdout | trim | length > 0
+      - ((away_guard_connection.stdout | trim).split() | first) != away_guard_tunnel_source
+    fail_msg: >-
+      This run reaches {{ inventory_hostname }} from
+      '{{ (away_guard_connection.stdout | trim).split() | first | default('an address that could not be read') }}'.
+      A real run of this play is refused through the away tunnel ({{ away_guard_tunnel_source }}), and when
+      the address cannot be read. A dry run is allowed: add --check. At home with Tailscale still connected
+      and the route accepted, the connection goes through the tunnel too: run scripts\node2\travel.ps1 -Home
+      (or -Disconnect) first.
+    quiet: true
+  when: not ansible_check_mode
+  tags: [always, away-guard]

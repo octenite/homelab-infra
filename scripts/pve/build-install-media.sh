@@ -227,6 +227,21 @@ do_reboot() {
 	on_builder 'sudo sh -c '"'"'efibootmgr | grep -q "^BootNext:" || { echo "no one-time boot entry armed"; exit 1; }; echo "rebooting into the installer at $(date +%T)"; (sleep 2; reboot) >/dev/null 2>&1 &'"'"''
 }
 
+# Install media is built and written at home. Refused only when pve1 itself
+# says the run comes through the away tunnel. When pve1 does not answer the
+# check cannot tell, and that is the disaster-recovery case: `iso` builds the
+# image on the backup VM because pve1 is dead. Unlike the other guards, this
+# one lets "unknown" through, or it would block the rebuild
+# (docs/phases/phase-r-plan.md, "Home and away").
+case "${1:-}" in
+validate | iso | prepare | reboot)
+	if [ "$(bash "$REPO/scripts/ops/away-check.sh")" = away ]; then
+		printf '%s\n' "refused: install media is built and written at home, not through the away tunnel. At home with Tailscale still connected: scripts\\node2\\travel.ps1 -Home (or -Disconnect) first." >&2
+		exit 2
+	fi
+	;;
+esac
+
 case "${1:-}" in
 validate) validate ;;
 iso) iso ;;

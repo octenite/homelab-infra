@@ -1,0 +1,4 @@
+---
+# The address the away tunnel arrives from: the administration container
+# (remote1). A real run that reaches the host from it is refused.
+away_guard_tunnel_source: "{{ pve_remote_admin }}"

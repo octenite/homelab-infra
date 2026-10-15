@@ -8,6 +8,12 @@
   become: false
   vars:
     ansible_user: root
+  pre_tasks:
+    # First: a real run through the away tunnel stops here (R.9). Connected
+    # as root, the guard reads root's own session, which has the variable.
+    - name: Refuse a real run through the away tunnel
+      ansible.builtin.import_role:
+        name: away_guard
   tasks:
     # A fresh Proxmox host has no sudo and only the subscription repository,
     # whose index cannot be fetched. Fix the repositories first, then install

@@ -31,6 +31,12 @@ export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
 	echo "No key session open. Run 'just session-start' first." >&2
 	exit 1
 }
+# It creates a guest on pve1: at home only, never through the away tunnel
+# (docs/components/travel-mode.md).
+[ "$(bash "$REPO/scripts/ops/away-check.sh")" = home ] || {
+	echo "refused: the nesting probe creates a guest on pve1; run it at home with Tailscale disconnected" >&2
+	exit 2
+}
 secret=$(sops decrypt --extract "[\"$TOKEN_ID\"][\"secret\"]" "$TOKENS") || exit 1
 TEMPLATE="local:vztmpl/$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["template_file"])' \
 	"$REPO/infrastructure/opentofu/roots/remote/template.auto.tfvars.json")"

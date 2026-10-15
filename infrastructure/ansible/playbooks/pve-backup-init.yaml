@@ -30,6 +30,11 @@
     pve_backup_keys_file: "{{ playbook_dir }}/../../../private/proxmox/backup-keys.sops.yaml"
     pve_backup_pbs_host: "{{ groups['pbs'] | first }}"
     pve_backup_key_tmp: "/root/.{{ pve_backup_storage }}.enc.tmp"
+  pre_tasks:
+    # First: a real run through the away tunnel stops here (R.9).
+    - name: Refuse a real run through the away tunnel
+      ansible.builtin.import_role:
+        name: away_guard
   tasks:
     # ---- what the private repository already records -------------------------
     - name: Recorded secret files

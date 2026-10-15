@@ -45,7 +45,7 @@ ansible-deps:
 ansible-lint: ansible-deps
     cd infrastructure/ansible && ANSIBLE_CONFIG="$PWD/ansible.cfg" ansible-lint --profile production --offline playbooks roles
 
-# Open an operator session: SSH agent and decrypted age key, both in memory only, both gone after 12 hours.
+# Open an operator session: SSH agent and decrypted age key, both in memory only, both gone after 12 hours at home or 2 hours away.
 session-start:
     bash scripts/ops/session.sh start
 
@@ -147,6 +147,11 @@ test-router-zones:
 [positional-arguments]
 test-remote *args:
     bash scripts/tests/remote.sh "$@"
+
+# The R.9 gate, at home: real runs refused through the away tunnel, the short away session, the backup fences with Tailscale disconnected and connected. Connects and disconnects the tunnel itself, changes nothing on pve1, and ends the session last. `just test-travel --with-session-start` also opens a real away session.
+[positional-arguments]
+test-travel *args:
+    bash scripts/tests/travel-guards.sh "$@"
 
 # First contact with a freshly created remote-access container (as root, once): operator account, keys, root login closed.
 remote-bootstrap:

@@ -11,6 +11,11 @@
   vars:
     pve_tokens_file: "{{ playbook_dir }}/../../../private/proxmox/tokens.sops.yaml"
     pve_tokens_expire_epoch: "{{ (ansible_date_time.epoch | int) + pve_token_lifetime_days * 86400 }}"
+  pre_tasks:
+    # First: a real run through the away tunnel stops here (R.9).
+    - name: Refuse a real run through the away tunnel
+      ansible.builtin.import_role:
+        name: away_guard
   tasks:
     - name: Read the tokens of each automation user
       ansible.builtin.command:
