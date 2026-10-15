@@ -1,6 +1,6 @@
 # Component: travel mode
 
-Status: written in Phase R step R.9 (2026-10-15); proven at home by `just test-travel` and one owner-run cycle of `-Away` and `-Home`, from the road in R.10. This document is completed with the R.9 gate record.
+Status: built in Phase R step R.9 and passed its gate on 2026-10-16: `just test-travel`, 38 checks, and one owner-run cycle of `-Away` and `-Home` (the record is the R.9 row of `docs/phases/phase-r-plan.md`). The same from an outside network is step R.10.
 
 ## Purpose
 
@@ -98,7 +98,7 @@ If `travel-state.json` is lost between `-Away` and `-Home`, `-Home` leaves the b
 |---|---|
 | A real run at home is refused "through the away tunnel" | Tailscale is still connected with the route accepted: `travel.ps1 -Home` (or `-Disconnect`), then run again |
 | A guarded recipe is refused because pve1 "did not answer" | pve1, or the SSH key in the session's agent: `just session-status`, `ssh ops@10.0.10.10 true` |
-| `-Away`: an operator session is open | `just session-end`, then `-Away` again. The session of a normal terminal should be visible to the elevated PowerShell, both reaching one WSL; this is measured at the R.9 gate |
+| `-Away`: an operator session is open | `just session-end`, then `-Away` again. The session of a normal terminal is visible to the elevated PowerShell: both reach one WSL (measured at the R.9 gate, 2026-10-16) |
 | A play hangs, or is refused, right after `-Home`, `-Connect` or `-Disconnect` | Ansible reuses an SSH connection for 60 seconds, and one opened on the other path stalls: wait a minute, or remove `~/.ansible/cp/*` |
 | `just session-status` shows what the timer said | The last session ended at its deadline; a WARNING there means its Tailscale disconnect did not hold: `travel.ps1 -Disconnect` |
 | `-Away`: Windows waits for a restart | Restart at home and run `-Away` again |
