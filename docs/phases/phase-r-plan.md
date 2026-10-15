@@ -124,7 +124,7 @@ Tailscale accepts the route to pve1 only while away. If it did so at home, Windo
 
 One script owns the forward and the firewall rules: `pbs-vm.ps1`. `travel.ps1` only calls it.
 
-**Amended in R.9 (2026-10-15)**, from the step's research and its review (`docs/components/travel-mode.md`). `-Home` does not pause the health check itself: the stored address can report to the check but cannot pause it, and pausing needs a management key of the healthchecks.io project, a standing secret this design does not take (backlog B46). `-Home` reminds you instead, and `-Away` sends a report, which resumes a paused check. `-Away` and `-Home` run only where the laptop holds one of its home addresses. "No firmware update pending" is read as: Windows does not wait for a restart it may start by itself (Windows Update, servicing, the update orchestrator), because a firmware update arrives that way; file renames an installer left for the next start are reported, not refused. `-Away` makes every refusal before its first change, and on a failed proof leaves the tunnel and the container as they are. `-Connect` and `-Disconnect` switch the tunnel alone. When pve1 cannot be asked, the guards that can change pve1 refuse and a session is short; the media script lets that case through, because it is the disaster-recovery case.
+**Amended in R.9 (2026-10-15)**, from the step's research and its review (`docs/components/travel-mode.md`). `-Home` does not pause the health check itself: the stored address can report to the check but cannot pause it, and pausing needs a management key of the healthchecks.io project, a standing secret this design does not take (backlog B46). `-Home` reminds you instead, and `-Away` sends a report, which resumes a paused check. `-Away` and `-Home` run only where the laptop holds one of its home addresses. "No firmware update pending" is read as: Windows does not wait for a restart it may start by itself (Windows Update, servicing, the update orchestrator), because a firmware update arrives that way; file renames an installer left for the next start are reported, not refused. `-Away` makes every refusal before its first change, and on a failed proof leaves the tunnel and the container as they are. `-Connect` and `-Disconnect` switch the tunnel alone. When pve1 cannot be asked, the guards that can change pve1 refuse and a session is short; the media script lets that case through, because it is the disaster-recovery case. The Windows firewall rules are converged by `pbs-vm.ps1 -Away`, not checked separately. `just nesting-probe`, which creates a guest, is refused away as well.
 
 No mode is stored anywhere. The tooling asks pve1 which address it sees:
 
@@ -135,7 +135,7 @@ No mode is stored anywhere. The tooling asks pve1 which address it sees:
 | `just pve-apply`, `pve-tokens`, `pve-backup-init`, `pve-bootstrap`, `pve-media` | allowed | refused by a first task in each play, and by the media script |
 | `just tofu pve ...`, the cluster from Phase 5 | allowed | allowed |
 | `just tofu remote plan` | allowed | allowed |
-| `just tofu remote apply`, `destroy` and every other verb | allowed | refused by the wrapper |
+| `just tofu remote apply`, `destroy` and every other verb that can write | allowed | refused by the wrapper (reading verbs run) |
 | `just tofu tailscale ...` | allowed | allowed; the policy's own tests refuse a policy that cuts the laptop off |
 | Container play, `openwrt-*`, `pbs-*`, `just luci` | allowed | not reachable |
 

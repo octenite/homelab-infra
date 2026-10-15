@@ -121,9 +121,12 @@ function Invoke-TravelVerb {
 }
 function Invoke-Sibling {
     # tailscale.ps1 and pbs-vm.ps1 run as child processes, so that their
-    # exit code is theirs. An elevated parent gives an elevated child.
+    # exit code is theirs. An elevated parent gives an elevated child. Their
+    # lines go to the console: inside a function, the output of a native
+    # command that is not sent anywhere becomes part of the return value, and
+    # `-ne 0` would then always hold.
     param([string]$Script, [string[]]$Arguments)
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot $Script) @Arguments
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot $Script) @Arguments | Out-Host
     return $LASTEXITCODE
 }
 
@@ -140,6 +143,8 @@ function Get-RebootReason {
     $r = @()
     if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { $r += 'Windows Update has installed updates that need a restart' }
     if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { $r += 'component servicing waits for a restart' }
+    # A heuristic: no Microsoft reference documents this key. A check that
+    # never fires costs nothing; it is kept for an orchestrator that uses it.
     if (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\Orchestrator\RebootRequired') { $r += 'the update orchestrator has scheduled a restart' }
     return $r
 }
@@ -172,11 +177,15 @@ function Get-KeyExpiryLine {
 }
 
 function Get-ContainerPeer {
+    # A host name need not be unique: an old device left in the tailnet after
+    # a rebuild keeps it. The one that is online with its tag and route wins.
     $st = Get-Json 'status', '--json'
     if (-not $st.Peer) { return $null }
-    foreach ($p in $st.Peer.PSObject.Properties) {
-        if ("$($p.Value.HostName)" -eq $ContainerName) { return $p.Value }
-    }
+    $named = @($st.Peer.PSObject.Properties | ForEach-Object { $_.Value } | Where-Object { "$($_.HostName)" -eq $ContainerName })
+    $good = @($named | Where-Object { $_.Online -and (@($_.Tags) -contains $ContainerTag) -and (@($_.PrimaryRoutes) -contains $Route) })
+    if ($good.Count -gt 0) { return $good[0] }
+    if ($named.Count -gt 1) { Note "$($named.Count) devices are named ${ContainerName}: remove the old one in the Tailscale console (docs/runbooks/rebuild-remote1.md, section 3)" }
+    if ($named.Count -gt 0) { return $named[0] }
     return $null
 }
 function Wait-ContainerPeer([int]$Seconds) {
@@ -258,6 +267,11 @@ function Restore-BackupVm {
     if (-not (Test-Path -LiteralPath $StateFile)) { Note "no record of a trip: $VmName is left as it is"; return 'left as it is (no record of a trip)' }
     $rec = Get-Content -LiteralPath $StateFile -Raw | ConvertFrom-Json
     $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
+    if ($rec.pbs1WasRunning -and -not $vm) {
+        # The record is kept, so that a run after the VM is back starts it.
+        Problem "the record says $VmName ran before the trip, but there is no VM $VmName"
+        return 'absent (it ran before the trip)'
+    }
     $result = 'off, as before the trip'
     if ($rec.pbs1WasRunning) {
         if ($vm -and $vm.State -ne 'Running') {
@@ -288,6 +302,14 @@ if (-not (Test-Path -LiteralPath $Exe)) { throw "Tailscale is not installed at $
 
 # ---- -Connect, -Disconnect: the tunnel only -----------------------------------
 if ($Connect) {
+    # A session opened on the direct path lasts 12 hours and does not take the
+    # tunnel with it when it ends; one opened after -Connect is an away
+    # session. Asked of WSL on a best-effort basis: a failure says nothing.
+    $sh = ("$(& wsl.exe -e wslpath -u (Join-Path $PSScriptRoot 'travel.sh'))").Trim()
+    if ($LASTEXITCODE -eq 0 -and $sh) {
+        & wsl.exe -e bash $sh session-home | Out-Null
+        if ($LASTEXITCODE -eq 0) { Note 'an operator session opened on the direct path is open: it lasts 12 hours and its end does not disconnect Tailscale. For an away session: just session-end, then just session-start after this.' }
+    }
     Connect-Tunnel
     if ($problems.Count -eq 0) {
         if (Wait-ContainerPeer 60) { Note "$ContainerName is online and carries the route $Route" }
@@ -302,7 +324,11 @@ if ($Away) {
     if (-not (Test-HomeAddress)) { throw "-Away runs at home, before leaving: this laptop holds neither of its home addresses ($($HomeAddresses -join ', ')). Away from home, use -Connect. Nothing was changed." }
     $TravelSh = ("$(& wsl.exe -e wslpath -u (Join-Path $PSScriptRoot 'travel.sh'))").Trim()
     if ($LASTEXITCODE -ne 0 -or -not $TravelSh) { throw 'WSL could not translate the path of travel.sh: is the Debian distribution the default one? Nothing was changed.' }
-    if ((Invoke-TravelVerb 'session-open' -Quiet).Code -eq 0) { throw 'An operator session is open: close it first (just session-end), so that the laptop does not leave with the decrypted key and a loaded SSH key in memory. Nothing was changed.' }
+    # 0: a session is open; 1: none. Anything else is WSL failing to answer,
+    # which must not pass for "none".
+    $session = (Invoke-TravelVerb 'session-open' -Quiet).Code
+    if ($session -eq 0) { throw 'An operator session is open: close it first (just session-end), so that the laptop does not leave with the decrypted key and a loaded SSH key in memory. Nothing was changed.' }
+    if ($session -ne 1) { throw "Could not tell whether an operator session is open (WSL answered with exit code $session). Nothing was changed." }
     if (Get-NetFirewallRule -Name $ManageRule -ErrorAction SilentlyContinue) { throw "The backup VM's management window is open: close it first with a plain run of pbs-vm.ps1. Nothing was changed." }
     $reboot = @(Get-RebootReason)
     if ($reboot.Count -gt 0) { throw "Windows waits for a restart ($($reboot -join '; ')). Restart now, at home, and run -Away again: Windows may otherwise restart by itself on the road. Nothing was changed." }
@@ -313,10 +339,12 @@ if ($Away) {
     if ($problems.Count -gt 0) { throw "Not travelling: $($problems.Count) check(s) failed (above). Nothing was changed." }
 
     $ready = $false
+    $touched = $false   # set once the backup VM, the forward or the container may have changed
     try {
         if ((Get-Json 'debug', 'prefs').WantRunning) {
             Note 'Tailscale is connected: disconnected first, so that the direct path to pve1 can be checked'
             Disconnect-Tunnel
+            if ($problems.Count -gt 0) { throw 'Tailscale was not disconnected cleanly (above): nothing else was changed' }
         }
         Write-Host ''
         # Run here, with this console, so that the passphrase prompt reaches you.
@@ -327,6 +355,7 @@ if ($Away) {
         Note 'pve1 sees this laptop on the direct path'
 
         # ---- changes ------------------------------------------------------------
+        $touched = $true
         $backupVm = Save-BackupVmState
         if ((Invoke-Sibling 'pbs-vm.ps1' @('-Away')) -ne 0) { throw 'pbs-vm.ps1 -Away failed (above); the backup VM is shut down: a plain run of pbs-vm.ps1 and Start-VM pbs1 undo it' }
         Step 'pbs-vm.ps1 -Away converged: no backup port forward while away'
@@ -353,14 +382,16 @@ if ($Away) {
             default { Problem "the container's health report failed (exit code $($health.Code)): the check will alert" }
         }
         $ready = ($problems.Count -eq 0)
-        $summary = @(
-            "AWAY: the tunnel is up with the route accepted; $ContainerName is online and pve1 sees this laptop arrive from $TunnelSource.",
-            "  backup VM: $backupVm. The backup port is closed: pve1 has no backup target until -Home, and its dead-man's switch reports the nights it misses.",
-            '  From now on, also while still at home, real runs against pve1 are refused (pve-apply, tokens, backup init, bootstrap, install media, tofu remote apply); dry runs and plans are allowed.',
-            '  A session started now lasts 2 hours, and ending it disconnects Tailscale. To work again after that: travel.ps1 -Connect, then just session-start.',
-            '  Limits: nothing repairs this path from the road. If pve1 restarts, the container stays stopped (it does not start with the host) and the path is gone until you are home. Large copies are slow: the connection is relayed (D8).',
-            "  $keyLine"
-        )
+        if ($ready) {
+            $summary = @(
+                "AWAY: the tunnel is up with the route accepted; $ContainerName is online and pve1 sees this laptop arrive from $TunnelSource.",
+                "  backup VM: $backupVm. The backup port is closed: pve1 has no backup target until -Home, and its dead-man's switch reports the nights it misses.",
+                '  From now on, also while still at home, real runs against pve1 are refused (pve-apply, tokens, backup init, bootstrap, install media, tofu remote apply); dry runs and plans are allowed.',
+                '  A session started now lasts 2 hours, and ending it disconnects Tailscale. To work again after that: travel.ps1 -Connect, then just session-start.',
+                '  Limits: nothing repairs this path from the road. If pve1 restarts, the container stays stopped (it does not start with the host) and the path is gone until you are home. Large copies are slow: the connection is relayed (D8).',
+                "  $keyLine"
+            )
+        }
     }
     catch {
         Problem "$($_.Exception.Message)"
@@ -371,8 +402,9 @@ if ($Away) {
     if (-not $ready) {
         Write-Host ''
         Write-Host '*** NOT READY TO TRAVEL ***'
-        if ($changes.Count -eq 0) { Write-Host 'Nothing was changed.' }
-        else { Write-Host 'The tunnel, the container and the backup VM were left as they are, so that you can look: undo with travel.ps1 -Home, or fix and run -Away again.' }
+        if ($touched) { Write-Host 'The tunnel, the container and the backup VM were left as they are, so that you can look: undo with travel.ps1 -Home, or fix and run -Away again.' }
+        elseif ($changes.Count -gt 0) { Write-Host 'Only Tailscale was disconnected; nothing else was changed.' }
+        else { Write-Host 'Nothing was changed.' }
     }
 }
 
@@ -405,7 +437,12 @@ if ($AtHome) {
     }
     if ((Invoke-Sibling 'pbs-vm.ps1' @()) -ne 0) { Problem 'pbs-vm.ps1 failed (above): the backup port may still be closed' }
     else { Step 'pbs-vm.ps1 converged: the backup port is forwarded to the VM for pve1 again' }
-    $backupVm = Restore-BackupVm
+    # In a try: the reminder below must print whatever happens here.
+    try { $backupVm = Restore-BackupVm }
+    catch {
+        Problem "the backup VM was not restored: $($_.Exception.Message) (the record $StateFile is kept: fix it, then run -Home again, or Start-VM $VmName)"
+        $backupVm = 'NOT restored'
+    }
     $summary = @(
         "HOME: Tailscale disconnected, the route no longer accepted; $ContainerName $container; backup VM $backupVm.",
         '',

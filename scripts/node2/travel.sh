@@ -2,8 +2,9 @@
 # The WSL half of scripts/node2/travel.ps1: every step that needs the lab's
 # SSH key, which lives in WSL. travel.ps1 calls one verb at a time.
 #
-#   travel.sh session-open      exit 0 when an operator session is open
-#   travel.sh agent-start       an agent of this run's own; asks for the key's passphrase once
+#   travel.sh session-open      exit 0 when an operator session is open (its age key, or its agent holding the key)
+#   travel.sh session-home      exit 0 when a session opened on the direct path is open (not an away session)
+#   travel.sh agent-start       a new agent of this run's own; asks for the key's passphrase once
 #   travel.sh agent-stop        that agent emptied and stopped (never the session's)
 #   travel.sh key-ready         exit 0 when an agent holds the key (this run's, else the session's)
 #   travel.sh where             home, away or unknown (scripts/ops/away-check.sh with that agent)
@@ -50,11 +51,10 @@ pve() {
 container_status() { pve "sudo pct status $VMID" 2>/dev/null | tr -d '\r'; }
 
 agent_start() {
+	# Always a new agent: one left by an earlier run that could not stop it
+	# may have minutes of the key's lifetime left.
 	mkdir -p "$RUN_DIR"
-	if has_key "$RUN_SOCK"; then
-		echo "the SSH key is loaded already"
-		return 0
-	fi
+	if [ -S "$RUN_SOCK" ]; then SSH_AUTH_SOCK="$RUN_SOCK" ssh-add -D >/dev/null 2>&1 || true; fi
 	pkill -u "$(id -u)" -f "ssh-agent -a $RUN_SOCK" 2>/dev/null || true
 	rm -f "$RUN_SOCK"
 	ssh-agent -a "$RUN_SOCK" -t "$LIFETIME" >/dev/null || return 1
@@ -134,21 +134,32 @@ container_stop() {
 
 health_ping() {
 	# The unit exists only when a ping address is stored (roles/remote_ct,
-	# tasks/health.yaml). Exit 3 says so; 0 is a report that the tunnel is up,
-	# which also resumes a paused check; 1 is a report of a failure.
-	if ! pve "sudo pct exec $VMID -- systemctl cat remote-health.service" >/dev/null 2>&1; then
+	# tasks/health-timer.yaml). Exit 3 says so; 0 is a report that the tunnel
+	# is up, which also resumes a paused check; 1 is a failed report, or no
+	# answer from pve1, which is not taken for "no timer". The answers are
+	# words, so that a failure to ask cannot pass for either.
+	local st
+	st=$(pve "sudo pct exec $VMID -- sh -c 'test -e /etc/systemd/system/remote-health.service && echo present || echo absent'" 2>/dev/null | tr -d '\r[:space:]')
+	case "$st" in
+	present) ;;
+	absent)
 		echo "the container has no health timer: no ping address is stored"
 		return 3
-	fi
-	pve "sudo pct exec $VMID -- systemctl start remote-health.service" >/dev/null 2>&1 || true
-	local st
-	st=$(pve "sudo pct exec $VMID -- systemctl show -p ExecMainStatus --value remote-health.service" 2>/dev/null | tr -d '\r[:space:]')
-	echo "the container's health report: exit status ${st:-unknown}"
-	[ "$st" = 0 ]
+		;;
+	*)
+		echo "could not ask the container (pve1 did not answer): no report was sent" >&2
+		return 1
+		;;
+	esac
+	# A oneshot unit: `systemctl start` waits for the run and fails with it.
+	st=$(pve "sudo pct exec $VMID -- sh -c 'systemctl start remote-health.service && echo reported || echo failed'" 2>/dev/null | tr -d '\r[:space:]')
+	echo "the container's health report: ${st:-no answer}"
+	[ "$st" = reported ]
 }
 
 case "${1:-}" in
-session-open) [ -e /dev/shm/homelab-session/age.key ] ;;
+session-open) [ -e /dev/shm/homelab-session/age.key ] || has_key "$SESSION_SOCK" ;;
+session-home) [ -e /dev/shm/homelab-session/age.key ] && [ ! -e /dev/shm/homelab-session/away ] ;;
 agent-start) agent_start ;;
 agent-stop) agent_stop ;;
 key-ready) pick_sock >/dev/null ;;
@@ -157,7 +168,7 @@ container-start) container_start ;;
 container-stop) container_stop ;;
 health-ping) health_ping ;;
 *)
-	echo "usage: $0 session-open|agent-start|agent-stop|key-ready|where|container-start|container-stop|health-ping" >&2
+	echo "usage: $0 session-open|session-home|agent-start|agent-stop|key-ready|where|container-start|container-stop|health-ping" >&2
 	exit 2
 	;;
 esac

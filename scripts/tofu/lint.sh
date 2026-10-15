@@ -53,9 +53,12 @@ if [ -f "$root" ]; then
 		! grep -qx "VMID=$id" scripts/tests/remote.sh ||
 		! grep -qx "ADDR=$addr" scripts/tests/remote.sh ||
 		! grep -qx "TUNNEL=$addr" scripts/ops/away-check.sh ||
+		! grep -qx "VMID=$id" scripts/node2/travel.sh ||
+		! grep -qF "pct status $id'" scripts/tests/travel-guards.sh ||
+		! grep -qF "\$TunnelSource = '$addr'" scripts/node2/travel.ps1 ||
 		! grep -qxE "[[:space:]]*- vmid: $id" "$vars" ||
 		! grep -qx "pve_remote_admin: $addr" "$vars"; then
-		echo "tofu-lint: guest id or address of remote1 differ between $root, scripts/tofu/child.sh, scripts/tests/remote.sh, scripts/ops/away-check.sh and $vars" >&2
+		echo "tofu-lint: guest id or address of remote1 differ between $root, scripts/tofu/child.sh, scripts/tests/remote.sh, scripts/ops/away-check.sh, scripts/node2/travel.sh, scripts/node2/travel.ps1, scripts/tests/travel-guards.sh and $vars" >&2
 		exit 1
 	fi
 fi

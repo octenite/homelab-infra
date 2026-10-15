@@ -61,7 +61,7 @@ A rebuild starts with section 3 of the runbook: the old device removed in the co
 | The check at healthchecks.io | created by the owner: period 5 minutes, grace 10 minutes (the timer runs every 5 minutes plus up to 30 s; a run takes up to 30 s). Paused by hand in the console whenever the container is stopped on purpose; `travel.ps1 -Home` says so when it stops the container. It stays a hand step: the address stored can report to the check but cannot pause it (`docs/components/travel-mode.md`). The check must keep its default of resuming on the next ping: `travel.ps1 -Away` sends one |
 | What the tag may do | `infrastructure/opentofu/roots/tailscale/policy.hujson` |
 
-A new Tailscale version is a pull request on `remote_ct_tailscale_version`; the role lifts the hold, installs that version, holds again. Security updates from Debian apply unattended; the pinned package is outside their scope twice over (origin and blacklist). No automatic reboot: the container is restarted by `travel.ps1 -Home` and `-Away`, so every trip starts with fresh processes; an update of a library a running daemon holds reaches it at the next restart.
+A new Tailscale version is a pull request on `remote_ct_tailscale_version`; the role lifts the hold, installs that version, holds again. Security updates from Debian apply unattended; the pinned package is outside their scope twice over (origin and blacklist). No automatic reboot: the container is stopped by `travel.ps1 -Home` and started by `-Away`, so a trip that follows a `-Home` starts with fresh processes (`-Away` keeps a container that already runs); an update of a library a running daemon holds reaches it at the next restart.
 
 ## Security considerations
 

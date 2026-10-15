@@ -72,7 +72,7 @@ Tool versions are pinned in `mise.toml` and maintained by Renovate. `just` with 
 
 ## Operating the lab
 
-Every recipe that touches a host needs an operator session. A session holds the SSH key and the decrypted age key in memory and ends by itself after 12 hours.
+Every recipe that touches a host needs an operator session. A session holds the SSH key and the decrypted age key in memory and ends by itself after 12 hours at home, or 2 hours away (`docs/components/travel-mode.md`).
 
 | Task | Command |
 |---|---|

@@ -49,7 +49,8 @@ logname() { printf '%s/%s.log' "$LOG" "$(printf '%s' "$1" | tr -c 'a-zA-Z0-9' '_
 expect() {
 	local what=$1 want=$2 needle=$3 out rc got
 	shift 3
-	out=$("$@" 2>&1)
+	# No input: a probe that is not refused must fail, not wait at a prompt.
+	out=$("$@" 2>&1 </dev/null)
 	rc=$?
 	printf '%s\n' "$out" >"$(logname "$what")"
 	if [ "$rc" -eq 0 ]; then got=allowed; else got=refused; fi
@@ -65,7 +66,10 @@ ts_field() { # <field> <command...>: one field of the Windows client's JSON answ
 }
 travel() { powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS1" "$@"; }
 route_alias() { powershell.exe -NoProfile -Command "(Find-NetRoute -RemoteIPAddress 10.0.10.10 | Select-Object -First 1).InterfaceAlias" 2>/dev/null | tr -d '\r'; }
-play() { bash scripts/ops/play.sh "$@"; }
+# The results as JSON, one line each, so that a message is not wrapped and the
+# refusal can be matched by the address it names; and no reused SSH
+# connection, so that each play really travels the path in force now.
+play() { ANSIBLE_CALLBACK_RESULT_FORMAT=json ANSIBLE_SSH_ARGS='-C' bash scripts/ops/play.sh "$@"; }
 tofu() { bash scripts/tofu/run.sh "$@"; }
 
 restore() { travel -Disconnect >/dev/null 2>&1 || true; }
@@ -95,9 +99,11 @@ for p in pve pve-tokens pve-backup-init pve-bootstrap; do
 	first=$(awk '/^ *tasks:/ { f = 1; next } f && NF { print; exit }' <<<"$all")
 	ok "$p: the first task is the guard's" yes "$(grep -q 'away_guard :' <<<"$first" && echo yes || echo no)"
 	tagged=$(play "$p" --list-tasks --tags away-guard 2>/dev/null)
-	ok "$p: tasks under --tags away-guard" 2 "$(grep 'TAGS: \[' <<<"$tagged" | grep -vc 'play #')"
-	ok "$p: of them the guard's" 2 "$(grep -c 'away_guard :' <<<"$tagged")"
+	ok "$p: the guard's tasks under --tags away-guard" 2 "$(grep -c 'away_guard :' <<<"$tagged")"
+	# The roles' argument checks run too, on the workstation; nothing else may.
+	ok "$p: anything else under it but argument checks" 0 "$(grep 'TAGS: \[' <<<"$tagged" | grep -v 'play #' | grep -v 'away_guard :' | grep -vc 'Validating arguments against arg spec')"
 done
+ok "pve: the guard also runs under another --tags" 2 "$(play pve --list-tasks --tags node_exporter_install 2>/dev/null | grep -c 'away_guard :')"
 
 echo "== at home, Tailscale disconnected: the guards let everything through"
 ok "session length start would choose" "12 home" "$(bash scripts/ops/session.sh hours)"
@@ -123,14 +129,19 @@ fi
 echo "== through the tunnel: real runs refused, dry runs and plans allowed"
 ok "session length start would choose" "2 away" "$(bash scripts/ops/session.sh hours)"
 for p in pve pve-tokens pve-backup-init; do
-	expect "$p, a real run with only the guard" refused "refused through the away tunnel" play "$p" --tags away-guard
+	# Matched by the address read: a guard that read nothing refuses too,
+	# with another message, and must not pass here.
+	expect "$p, a real run with only the guard" refused "from '10.0.30.10'" play "$p" --tags away-guard
 done
 expect "pve, a dry run with only the guard" allowed '' play pve --check --tags away-guard
-expect "OpenTofu remote apply" refused "is not run through the away tunnel" tofu remote apply
-expect "OpenTofu remote import" refused "is not run through the away tunnel" tofu remote import a b
+# Probes that change nothing even if their guard were broken: an apply of a
+# plan file that does not exist, an import of an address that does not
+# exist, and media built without a key to render its answer file.
+expect "OpenTofu remote apply" refused "is not run through the away tunnel" tofu remote apply -input=false "$LOG/no-such.tfplan"
+expect "OpenTofu remote import" refused "is not run through the away tunnel" tofu remote import -input=false a b
 expect "OpenTofu remote plan" allowed '' tofu remote plan -input=false
 expect "OpenTofu tailscale plan" allowed '' tofu tailscale plan -input=false
-expect "install media: validate" refused "install media is built and written at home" bash scripts/pve/build-install-media.sh validate
+expect "install media: validate" refused "install media is built and written at home" env SOPS_AGE_KEY_FILE=/nonexistent bash scripts/pve/build-install-media.sh validate
 # The fences' own SSH to pve1 goes through the relay now: give it longer.
 expect "backup fences, Tailscale connected" allowed '' env FENCES_CONNECT_TIMEOUT=20 bash scripts/tests/backup-fences.sh
 
@@ -148,7 +159,8 @@ fi
 bash scripts/ops/session.sh end
 ok "the Windows client after the session ended" Stopped "$(ts_field BackendState status --json)"
 ok "routes accepted after the session ended" False "$(ts_field RouteAll debug prefs)"
-ok "pve1 is routed directly again" yes "$([ "$(route_alias)" != Tailscale ] && echo yes || echo no)"
+alias=$(route_alias)
+ok "pve1 is routed directly again" yes "$([ -n "$alias" ] && [ "$alias" != Tailscale ] && echo yes || echo "no (${alias:-Windows did not answer})")"
 
 echo
 if [ "$fail" -eq 0 ]; then

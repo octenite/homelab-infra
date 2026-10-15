@@ -21,9 +21,11 @@ TUNNEL=10.0.30.10
 HOST=${PVE_HOST:-10.0.10.10}
 export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
 
-# The variable is expanded by pve1's shell, not here.
+# The variable is expanded by pve1's shell, not here. ConnectTimeout covers
+# the connection and the key exchange only; the rest is bounded by the
+# keepalives and, in the end, by timeout: a stalled answer is "unknown".
 # shellcheck disable=SC2016
-conn=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "ops@$HOST" 'printf %s "$SSH_CONNECTION"' 2>/dev/null) || conn=''
+conn=$(timeout 30 ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "ops@$HOST" 'printf %s "$SSH_CONNECTION"' 2>/dev/null) || conn=''
 client=${conn%% *}
 case "$client" in
 '')

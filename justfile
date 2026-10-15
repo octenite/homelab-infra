@@ -45,7 +45,7 @@ ansible-deps:
 ansible-lint: ansible-deps
     cd infrastructure/ansible && ANSIBLE_CONFIG="$PWD/ansible.cfg" ansible-lint --profile production --offline playbooks roles
 
-# Open an operator session: SSH agent and decrypted age key, both in memory only, both gone after 12 hours.
+# Open an operator session: SSH agent and decrypted age key, both in memory only, both gone after 12 hours at home or 2 hours away.
 session-start:
     bash scripts/ops/session.sh start
 

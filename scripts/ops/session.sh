@@ -30,12 +30,23 @@ SOCK="$HOME/.ssh/homelab-agent.sock"
 HOURS=${HOMELAB_SESSION_HOURS:-12}
 AWAY_HOURS=2
 TS_EXE="/mnt/c/Program Files/Tailscale/tailscale.exe"
+# What the timer says when it ends a session (it has no terminal); shown by
+# `status`, and by the next `start`, which then removes it.
+TIMER_LOG=/dev/shm/homelab-session-end.log
 
 stop_timer() {
 	if [ -r "$DIR/expiry.pid" ]; then
 		kill "$(cat "$DIR/expiry.pid")" 2>/dev/null || true
 		rm -f "$DIR/expiry.pid"
 	fi
+}
+
+arm_timer() { # <hours>
+	stop_timer
+	deadline=$(($(date +%s) + $1 * 3600))
+	echo "$deadline" >"$DIR/expires"
+	setsid nohup bash "$0" expire "$deadline" >>"$TIMER_LOG" 2>&1 &
+	echo "$!" >"$DIR/expiry.pid"
 }
 
 # Sets SESSION_HOURS and WHERE (home, away or unknown) from pve1's answer.
@@ -59,13 +70,17 @@ disconnect_tailscale() {
 	fi
 	"$TS_EXE" set --accept-routes=false >/dev/null 2>&1 || true
 	"$TS_EXE" down >/dev/null 2>&1 || true
-	local state
+	local state routes
 	state=$("$TS_EXE" status --json 2>/dev/null | python3 -c 'import json, sys; print(json.load(sys.stdin).get("BackendState", ""))' 2>/dev/null) || state=''
 	state=${state%$'\r'}
-	if [ "$state" = Stopped ]; then
+	# Routes too: left accepted, the next plain "connect" (the tray menu's)
+	# would send pve1's traffic through the tunnel again.
+	routes=$("$TS_EXE" debug prefs 2>/dev/null | python3 -c 'import json, sys; print(json.load(sys.stdin).get("RouteAll", ""))' 2>/dev/null) || routes=''
+	routes=${routes%$'\r'}
+	if [ "$state" = Stopped ] && [ "$routes" = False ]; then
 		echo "Tailscale disconnected: this was an away session."
 	else
-		printf '%s\n' "WARNING: Tailscale reports '${state:-nothing}' after the disconnect; disconnect it yourself: scripts\\node2\\travel.ps1 -Disconnect" >&2
+		printf '%s\n' "WARNING: Tailscale reports '${state:-nothing}', routes accepted '${routes:-unknown}', after the disconnect; disconnect it yourself: scripts\\node2\\travel.ps1 -Disconnect" >&2
 	fi
 }
 
@@ -97,6 +112,11 @@ start)
 		ssh-agent -a "$SOCK" >/dev/null
 	fi
 	mkdir -p "$DIR"
+	if [ -s "$TIMER_LOG" ]; then
+		echo "The timer of an earlier session said, when it ended it:"
+		sed 's/^/  /' "$TIMER_LOG"
+	fi
+	rm -f "$TIMER_LOG"
 	# Decrypt beside the live key and swap only when both passphrases were
 	# right: a mistyped one must leave a running session, its key lifetime
 	# and its timer as they were.
@@ -109,20 +129,21 @@ start)
 	# lifetime after asking pve1 would ask for the passphrase a second time.
 	SSH_AUTH_SOCK="$SOCK" ssh-add -t "${HOURS}h" "$HOME/.ssh/homelab_ed25519"
 	mv -f "$DIR/age.key.new" "$DIR/age.key"
+	# The session ends by itself: a forgotten session must not stay open
+	# for days on a machine that travels. The deadline is a wall-clock time,
+	# so hours spent asleep with the lid closed count too. Short first, as an
+	# away session: a question to pve1 that is interrupted must still leave a
+	# session that ends, and that takes the tunnel with it.
+	: >"$DIR/away"
+	arm_timer "$AWAY_HOURS"
+	echo "Asking pve1 whether this laptop is at home (up to half a minute) ..."
 	choose_hours
 	rm -f "$DIR/away"
 	if [ "$WHERE" != home ]; then : >"$DIR/away"; fi
 	if [ "$WHERE" = unknown ]; then
 		echo "pve1 did not answer, so it cannot be told whether this laptop is at home: treated as away. At home with pve1 down, HOMELAB_SESSION_HOURS=12 just session-start gives the long session."
 	fi
-	# The session ends by itself: a forgotten session must not stay open
-	# for days on a machine that travels. The deadline is a wall-clock time,
-	# so hours spent asleep with the lid closed count too.
-	stop_timer
-	deadline=$(($(date +%s) + SESSION_HOURS * 3600))
-	echo "$deadline" >"$DIR/expires"
-	setsid nohup bash "$0" expire "$deadline" >/dev/null 2>&1 &
-	echo "$!" >"$DIR/expiry.pid"
+	arm_timer "$SESSION_HOURS"
 	away_note=""
 	if [ -f "$DIR/away" ]; then away_note=" Away session: ending it also disconnects Tailscale."; fi
 	echo "Session open for $SESSION_HOURS hours, until $(date -d "@$deadline" '+%Y-%m-%d %H:%M %Z'). The decrypted key is in memory only. Close it with: just session-end.$away_note"
@@ -132,6 +153,7 @@ expire)
 	while [ "$(date +%s)" -lt "$deadline" ]; do sleep 60; done
 	# This process is the timer: forget its own PID before `end` would kill it.
 	rm -f "$DIR/expiry.pid"
+	echo "$(date '+%Y-%m-%d %H:%M %Z'): the session ended at its deadline."
 	end
 	;;
 end)
@@ -151,6 +173,10 @@ status)
 		echo "age key: closed"
 	fi
 	if SSH_AUTH_SOCK="$SOCK" ssh-add -l >/dev/null 2>&1; then echo "ssh agent: key loaded"; else echo "ssh agent: no key"; fi
+	if [ -s "$TIMER_LOG" ]; then
+		echo "the timer of the last session said:"
+		sed 's/^/  /' "$TIMER_LOG"
+	fi
 	;;
 hours)
 	# What `start` would choose now, without starting anything; used by
