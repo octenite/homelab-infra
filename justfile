@@ -148,6 +148,11 @@ test-router-zones:
 test-remote *args:
     bash scripts/tests/remote.sh "$@"
 
+# The R.9 gate, at home: real runs refused through the away tunnel, the short away session, the backup fences with Tailscale disconnected and connected. Connects and disconnects the tunnel itself, changes nothing on pve1, and ends the session last. `just test-travel --with-session-start` also opens a real away session.
+[positional-arguments]
+test-travel *args:
+    bash scripts/tests/travel-guards.sh "$@"
+
 # First contact with a freshly created remote-access container (as root, once): operator account, keys, root login closed.
 remote-bootstrap:
     bash scripts/ops/play.sh remote-bootstrap

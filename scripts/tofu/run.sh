@@ -55,6 +55,35 @@ EOF
 }
 export SOPS_AGE_KEY_FILE=/dev/shm/homelab-session/age.key
 
+# Through the away tunnel the root "remote" is read, never changed: plans and
+# other reading verbs are allowed, every verb that can write its state or its
+# guest is refused, and so is such a verb when pve1 cannot say whether this
+# run comes through the tunnel (docs/phases/phase-r-plan.md, "Home and away").
+# Asked before any secret is loaded; it needs the operator session's SSH key.
+remote_writes() { # <tofu arguments...>: may this verb change the root's state or its guest?
+	case "$1" in
+	plan | validate | show | output | providers | version | fmt | graph | init | console) return 1 ;;
+	state)
+		case "${2:-}" in list | show | pull) return 1 ;; esac
+		;;
+	esac
+	return 0
+}
+if [ "$root" = remote ] && remote_writes "$@"; then
+	where=$(bash "$REPO/scripts/ops/away-check.sh") || true
+	case "$where" in
+	home) ;;
+	away)
+		printf '%s\n' "refused: 'tofu remote $1' is not run through the away tunnel; 'just tofu remote plan' is. At home with Tailscale still connected: scripts\\node2\\travel.ps1 -Home (or -Disconnect) first." >&2
+		exit 2
+		;;
+	*)
+		echo "refused: pve1 did not answer, so it cannot be told whether this run comes through the away tunnel; 'tofu remote $1' is refused to be safe ('just tofu remote plan' is not)." >&2
+		exit 2
+		;;
+	esac
+fi
+
 # The root "remote" builds a container from a template file on the
 # hypervisor. That file is compared with its pin before anything is planned,
 # and before any secret is loaded.

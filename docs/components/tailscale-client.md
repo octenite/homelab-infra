@@ -10,7 +10,7 @@ The laptop's end of the remote administration path (`docs/adr/0005-administrativ
 
 - The official Windows client, version 1.102.4, in `C:\Program Files\Tailscale`. The service `Tailscale` runs as SYSTEM; the tray application runs as the owner.
 - The client's settings are forced by system policies under `HKLM\SOFTWARE\Policies\Tailscale`, written by `scripts/node2/tailscale.ps1`. A policy holds for every login profile, needs an administrator to change, and is put back by the service when something edits the preference.
-- One setting is left free: accepting subnet routes. `travel.ps1` (step R.9) switches it on for a trip and off at home.
+- One setting is left free: accepting subnet routes. `travel.ps1` (step R.9, `docs/components/travel-mode.md`) switches it on for a trip and off at home.
 - The node state, which holds the laptop's keys, is sealed with the laptop's TPM (decision D5).
 - The laptop accepts no inbound connection from the tailnet. The policy file in Git grants nothing towards it either.
 
@@ -62,7 +62,7 @@ Enrolled on 2026-10-10: address 100.85.8.57, approved in the console, key expiry
 |---|---|
 | Version pin and installer checksum, the policies, the refused values | `scripts/node2/tailscale.ps1`, settings block |
 | What the laptop may reach | `infrastructure/opentofu/roots/tailscale/policy.hujson` |
-| Accepting routes, connecting and disconnecting | `scripts/node2/travel.ps1` (step R.9); until then by hand |
+| Accepting routes, connecting and disconnecting | `scripts/node2/travel.ps1`: `-Away` and `-Home`, or `-Connect` and `-Disconnect` for the tunnel alone; the end of an away session also disconnects (`scripts/ops/session.sh`). The node key's expiry is read and warned about by `-Away` (D7) |
 
 A new version is a pull request that changes the pin and the checksum, an install by hand at home, and a run of the script. No policy can pin the version: the script's check is the pin.
 

@@ -74,7 +74,7 @@ just remote-apply          # must change nothing
 just test-remote layers    # the probes with each layer off in turn, then just pve-apply and just test-remote
 ```
 
-Then one reboot (`ssh ops@10.0.10.10 sudo pct reboot 3010`) and `just test-remote` once more: the filter, the masked units, the kernel settings and the SSH listener must come back by themselves. When the container is stopped on purpose (decision D12), pause the check in the healthchecks.io console until `travel.ps1` (step R.9) does it.
+Then one reboot (`ssh ops@10.0.10.10 sudo pct reboot 3010`) and `just test-remote` once more: the filter, the masked units, the kernel settings and the SSH listener must come back by themselves. When the container is stopped on purpose (decision D12), pause the check in the healthchecks.io console; `travel.ps1 -Home` reminds you, and the pause stays a hand step (`docs/components/travel-mode.md`).
 
 After a rebuild the container has a new SSH host key: `ssh-keygen -R remote1` on the workstation first, and the old device removed in the Tailscale console (**Machines**) before the login, or the new one is named `remote1-1`.
 

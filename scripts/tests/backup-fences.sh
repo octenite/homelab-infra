@@ -27,7 +27,9 @@ away) FORWARD=closed ;;
 	;;
 esac
 
-SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=8)
+# Longer through the relayed tunnel: scripts/tests/travel-guards.sh runs this
+# with Tailscale connected, and then this script's own SSH to pve1 goes there.
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout="${FENCES_CONNECT_TIMEOUT:-8}")
 export SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-$HOME/.ssh/homelab-agent.sock}"
 PVE=10.0.10.10
 ROUTER=192.168.1.53

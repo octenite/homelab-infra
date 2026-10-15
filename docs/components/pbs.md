@@ -169,7 +169,7 @@ The backup port is admitted by source address. When the laptop travels it accept
 | Before leaving | `powershell -ExecutionPolicy Bypass -File scripts\node2\pbs-vm.ps1 -Away` | Removes the 8007 forward and `homelab-pbs1-8007`; `homelab-pbs1-8007-others` blocks the port for every source. The management window is closed. `-Away` cannot be combined with another switch |
 | Back at home | `powershell -ExecutionPolicy Bypass -File scripts\node2\pbs-vm.ps1` | Restores the forward and the rule for the hypervisor |
 
-No mode is stored. The last line of the script's output names the state of the backup port. `scripts\node2\travel.ps1` (step R.9) will call both forms; until it exists they are run by hand. While the laptop is away the hypervisor has no backup target, and the dead-man's switch reports the missed runs.
+No mode is stored. The last line of the script's output names the state of the backup port. `scripts\node2\travel.ps1` calls both forms: `-Away` shuts the VM down and converges `-Away`, `-Home` converges the plain form and starts the VM again if it ran before the trip (`docs/components/travel-mode.md`). While the laptop is away the hypervisor has no backup target, and the dead-man's switch reports the missed runs.
 
 ### Management window
 

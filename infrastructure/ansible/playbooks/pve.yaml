@@ -9,6 +9,11 @@
   # that an earlier task requested must still happen then: on the next run
   # the file is already in place and nothing would ask for it again.
   force_handlers: true
+  pre_tasks:
+    # First: a real run through the away tunnel stops here (R.9).
+    - name: Refuse a real run through the away tunnel
+      ansible.builtin.import_role:
+        name: away_guard
   roles:
     - role: pve_host
     # Exporters from the upstream collection, bound to the management address

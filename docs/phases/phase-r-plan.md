@@ -46,7 +46,7 @@ laptop (away)            Tailscale                 home
 | D8 | Outbound rules of the container | The smallest set: name lookups at the router and HTTPS to the internet. Every connection is then relayed through Tailscale's servers. Measure. Add two UDP rows only if a direct path really forms through the provider's NAT | Open UDP from the start: possibly faster, one wider rule that may buy nothing |
 | D9 | Backup of the container | None. It holds no data and is rebuilt from Git. A rebuild needs you at home for five small steps: deletion protection off, the old entry deleted in the Tailscale console, a browser login for the new one, one signing command, the new SSH host key accepted | Back it up: a restore keeps its identity, and its network key, which does not expire, sits in the backups |
 | D10 | Tailscale policy as code | A second OpenTofu root with the official Tailscale provider. Policy, tests and settings are in Git and applied from the workstation. It needs one credential that does not expire: an OAuth client limited to the policy file and the settings. A leak lets someone change the policy among signed devices and cut remote access. It cannot add a device, change node signing or touch a router rule | Keep the policy in Git and paste it into the web console by hand. No credential, and nothing proves the console matches Git |
-| D12 | When the administration container runs (amended) | Only while the laptop is away: `travel.ps1 -Away` starts it and proves the path, `-Home` stops it and pauses its health check. At all other times the router and pve1 have nothing to admit, which matters because only the Tailscale policy keeps the phone off this container | Always on: nothing to forget before leaving. If you leave without running `-Away`, the recommended form gives no administration path until you are home |
+| D12 | When the administration container runs (amended) | Only while the laptop is away: `travel.ps1 -Away` starts it and proves the path, `-Home` stops it and pauses its health check (the pause is by hand, see "Home and away", amended in R.9). At all other times the router and pve1 have nothing to admit, which matters because only the Tailscale policy keeps the phone off this container | Always on: nothing to forget before leaving. If you leave without running `-Away`, the recommended form gives no administration path until you are home |
 | D11 | Drill of the lost-laptop procedure before the first trip | Yes, reduced: the Tailscale steps and the replacement of the operator's SSH key on every host are done for real; the rotation of the stored secrets is walked through on paper. The runbook it ends in has never been run, and backlog item B30 asks for a rehearsal before Phase 5 | Waive it, recorded. The first run of the procedure is then a real loss |
 
 ## Needed from the owner
@@ -124,6 +124,8 @@ Tailscale accepts the route to pve1 only while away. If it did so at home, Windo
 
 One script owns the forward and the firewall rules: `pbs-vm.ps1`. `travel.ps1` only calls it.
 
+**Amended in R.9 (2026-10-15)**, from the step's research and its review (`docs/components/travel-mode.md`). `-Home` does not pause the health check itself: the stored address can report to the check but cannot pause it, and pausing needs a management key of the healthchecks.io project, a standing secret this design does not take (backlog B46). `-Home` reminds you instead, and `-Away` sends a report, which resumes a paused check. `-Away` and `-Home` run only where the laptop holds one of its home addresses. "No firmware update pending" is read as: Windows does not wait for a restart it may start by itself (Windows Update, servicing, the update orchestrator), because a firmware update arrives that way; file renames an installer left for the next start are reported, not refused. `-Away` makes every refusal before its first change, and on a failed proof leaves the tunnel and the container as they are. `-Connect` and `-Disconnect` switch the tunnel alone. When pve1 cannot be asked, the guards that can change pve1 refuse and a session is short; the media script lets that case through, because it is the disaster-recovery case.
+
 No mode is stored anywhere. The tooling asks pve1 which address it sees:
 
 | Recipe | At home | Away: pve1 sees 10.0.30.10 |
@@ -137,7 +139,7 @@ No mode is stored anywhere. The tooling asks pve1 which address it sees:
 | `just tofu tailscale ...` | allowed | allowed; the policy's own tests refuse a policy that cuts the laptop off |
 | Container play, `openwrt-*`, `pbs-*`, `just luci` | allowed | not reachable |
 
-At home with Tailscale left connected and the route accepted, the same guard refuses real runs and says why. The message is to disconnect.
+At home with Tailscale left connected and the route accepted, the same guard refuses real runs and says why. The message is to disconnect. That is also how the guards are tested at home: `just test-travel` reproduces this state (step R.9).
 
 While you are away, pve1 has no backup target. The backup server is a VM on the laptop. The dead-man's switch reports the missed runs. Backups are not sent through the tunnel.
 
