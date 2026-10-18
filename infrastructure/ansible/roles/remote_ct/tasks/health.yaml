@@ -11,10 +11,44 @@
       remote_ct_health_ping_url is not set: the owner creates a check at healthchecks.io (period 5
       minutes, grace 10 minutes) and stores its address with `just secret-set
       private/ansible/inventory/host_vars/remote1/secrets.sops.yaml remote_ct_health_ping_url`,
-      after the node is logged in and signed: the timer reports failure until then. The health
-      timer is not installed until the address is stored.
+      after the node is logged in and signed. The health timer is not installed until the
+      address is stored.
   when: remote_ct_health_ping_url is not defined
+
+# A rebuilt container finds its address stored already (the private inventory
+# outlives it), but until it is logged in and signed every report is a
+# failure, and a failure resumes a paused check and alerts. So the timer comes
+# with the first run after the signature (docs/runbooks/rebuild-remote1.md).
+- name: Is the node signed
+  ansible.builtin.command:
+    cmd: tailscale lock status
+  register: remote_ct_lock_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - remote_ct_health_ping_url is defined
+    - remote_ct_backend == 'Running'
+
+- name: Ready for the health timer
+  ansible.builtin.set_fact:
+    remote_ct_health_ready: >-
+      {{ remote_ct_backend == 'Running'
+      and 'accessible under Tailnet Lock' in (remote_ct_lock_status.stdout | default('')) }}
+  when: remote_ct_health_ping_url is defined
+
+- name: Health timer not installed yet
+  ansible.builtin.debug:
+    msg: >-
+      The node is not logged in and signed yet (the daemon is '{{ remote_ct_backend }}'): the
+      health timer is installed by the first run after `just remote-login` and the signature on
+      the laptop. A timer installed before would only report failure.
+  when:
+    - remote_ct_health_ping_url is defined
+    - not (remote_ct_health_ready | bool)
 
 - name: Health timer
   ansible.builtin.include_tasks: health-timer.yaml
-  when: remote_ct_health_ping_url is defined
+  when:
+    - remote_ct_health_ping_url is defined
+    - remote_ct_health_ready | bool

@@ -11,6 +11,7 @@
 #   travel.sh container-start   start the administration container if it is stopped; wait until it runs
 #   travel.sh container-stop    shut it down if it runs; wait until it is stopped
 #   travel.sh health-ping       let the container report to its dead-man's switch now
+#   travel.sh container-memory  one memory reading of the container (scripts/ops/remote-memory.sh); its last line is the record
 #
 # The agent of a run holds the SSH key only, never the age key, for at most
 # LIFETIME: -Away refuses an open operator session, so that the laptop does
@@ -133,8 +134,9 @@ container_stop() {
 }
 
 health_ping() {
-	# The unit exists only when a ping address is stored (roles/remote_ct,
-	# tasks/health-timer.yaml). Exit 3 says so; 0 is a report that the tunnel
+	# The unit exists only when a ping address is stored and the node was
+	# signed at the last configure run (roles/remote_ct, tasks/health.yaml).
+	# Exit 3 says so; 0 is a report that the tunnel
 	# is up, which also resumes a paused check; 1 is a failed report, or no
 	# answer from pve1, which is not taken for "no timer". The answers are
 	# words, so that a failure to ask cannot pass for either.
@@ -143,7 +145,7 @@ health_ping() {
 	case "$st" in
 	present) ;;
 	absent)
-		echo "the container has no health timer: no ping address is stored"
+		echo "the container has no health timer: no ping address is stored, or the node was not signed at the last just remote-apply"
 		return 3
 		;;
 	*)
@@ -167,8 +169,15 @@ where) where_now ;;
 container-start) container_start ;;
 container-stop) container_stop ;;
 health-ping) health_ping ;;
+container-memory)
+	s=$(pick_sock) || {
+		echo "no agent holds the SSH key"
+		exit 2
+	}
+	SSH_AUTH_SOCK="$s" bash "$REPO/scripts/ops/remote-memory.sh" read
+	;;
 *)
-	echo "usage: $0 session-open|session-home|agent-start|agent-stop|key-ready|where|container-start|container-stop|health-ping" >&2
+	echo "usage: $0 session-open|session-home|agent-start|agent-stop|key-ready|where|container-start|container-stop|health-ping|container-memory" >&2
 	exit 2
 	;;
 esac

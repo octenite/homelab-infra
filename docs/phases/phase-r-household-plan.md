@@ -238,7 +238,7 @@ What else must be undone depends on what the phone held; that is why H4 asks.
 | A userspace exit node is rated "acceptable" and "new" by the vendor, and one report describes it failing to advertise from a container | Checked in H.5. If it fails, the exit node moves to the later cloud server or to a small VM at home, by your choice |
 | The household listener will be reachable from away. That an admin page is not served there rests on a point the design still has to prove in Phase 10 | E20 is written only in the phase that proves it |
 | A hosted service may skip its login for "trusted networks". If the container's address were ever listed there, the path from away would need no login | A rule for every service plan: that list never contains 10.0.31.10 or the proxy |
-| Memory: two containers at their ceilings leave 1.29 GiB on Node 1 against the gate of 1.5 | See "Cost on Node 1" |
+| Memory: two containers at their limits (`remote1` 768 MiB since R.8, `home1` 256 MiB) leave 0.79 GiB on Node 1 on paper, against the gate of 1.5 | See "Cost on Node 1" |
 | At home with Tailscale left on, the phone sends traffic for home devices through the tunnel | Slower, not broken. You toggle it |
 | The lockdown signal can be sent by whoever holds the phone or the account used for it | It can only close. Reopening needs presence at home |
 
@@ -246,11 +246,13 @@ What else must be undone depends on what the phone held; that is why H4 asks.
 
 | Line | GiB |
 |---|---|
-| Left after the administration plan, with the planned guests | 1.54 |
+| Left after the administration plan, with the planned guests (`remote1` at its limit of 768 MiB) | 1.04 |
 | `home1`, as a ceiling | 0.25 |
-| Left | 1.29 |
+| Left | 0.79 |
 
 The standing gate is 1.5 GiB. A container's memory is a limit, not a reservation; both containers are measured. The household container is not squeezed, because it carries the browsing. The administration container's limit is lowered first, then the cluster's VM gives the difference, about 0.1 to 0.25 GiB. Disk: 4 GiB thin.
+
+Corrected in R.10: the administration container's limit is 768 MiB since R.8 (administration plan, "Cost on Node 1"), so counted at the two limits the gate fails on paper. These lines are replaced by the two measured working sets (drill 5 of the administration plan, backlog B49), whose sum may reach 0.29 GiB (297 MiB) before the worker has to give anything; past that the worker's share can exceed the 0.1 to 0.25 GiB above. Whether the administration container's limit is lowered first is decided when this plan's container step is planned.
 
 Versions: `home1` runs the pins of the administration plan.
 
@@ -260,7 +262,7 @@ Versions: `home1` runs the pins of the administration plan.
 |---|---|
 | Remote access is limited to the targets of E1 to E3 (section 6) | A second purpose with its own targets, in its own zone |
 | One reserved network, VLAN 30, for remote access | VLAN 31 beside it; a row and a column for each zone in the matrix |
-| The remote-access container costs 0.125 GiB (sections 4 and 16) | Two containers with a ceiling of 0.25 GiB each, measured |
+| The remote-access container costs 0.125 GiB (sections 4 and 16) | Two containers with a ceiling of 0.25 GiB each, measured. Corrected in R.10: `remote1` has 768 MiB since R.8 |
 | Applications reach the IoT network only from the servers network | The household container reaches named IoT devices directly, until a service stands in front |
 | The router sends nothing by itself | An alert for unknown devices, and it fetches the lockdown signal |
 
