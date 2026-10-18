@@ -24,11 +24,12 @@
 		// The owner's phone, enrolled 2026-10-10. Named for the tests only:
 		// no grant mentions it before the household plan.
 		"phone": "100.88.195.22",
-		// The administration container, enrolled 2026-10-12 (step R.8). Named
-		// for the tests only: it is a destination of no grant. The laptop
+		// The administration container, enrolled 2026-10-12 (step R.8) and
+		// enrolled anew 2026-10-19 when it was rebuilt (step R.10, drill 2).
+		// Named for the tests only: it is a destination of no grant. The laptop
 		// reaches the hypervisor *through* it (the `via` above), which does not
 		// grant access to the container's own services.
-		"remote1": "100.124.202.58",
+		"remote1": "100.114.245.97",
 	},
 
 	// A device takes a tag at its login, and only a login listed here may
