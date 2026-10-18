@@ -81,6 +81,24 @@
     state: absent
     purge: true
 
+# Purging a package does not end what it started: systemd keeps the unit,
+# now "not-found", running until it is stopped or the container restarts.
+# Seen in the R.10 rebuild: the mail daemon still listened on loopback with
+# its package gone. The service module refuses a unit whose file is gone, so
+# systemctl is called directly; it takes the patterns itself.
+- name: Units the purged packages left running # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: systemctl list-units --all --no-legend --plain --state=active postfix* systemd-timesyncd*
+  register: remote_ct_purged_left
+  changed_when: false
+  check_mode: false
+
+- name: Those units stopped # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: "systemctl stop {{ remote_ct_purged_left.stdout_lines | map('split') | map('first') | join(' ') }}"
+  when: remote_ct_purged_left.stdout_lines | length > 0
+  changed_when: true
+
 # A list in a later apt.conf file is appended to the list of an earlier one.
 # Debian's own 50unattended-upgrades names the main archive as well, so the
 # list is cleared first. The pinned package is named once more, as a guard
