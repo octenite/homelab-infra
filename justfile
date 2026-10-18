@@ -153,6 +153,11 @@ test-remote *args:
 test-travel *args:
     bash scripts/tests/travel-guards.sh "$@"
 
+# The R.10 test from an outside network, on the phone hotspot, in an away session (read-only). `just test-outside netcheck` reads the home NAT at home first; `web` and `phone` bracket the owner's browser and phone checks; `end` ends the away session and checks the tunnel went with it.
+[positional-arguments]
+test-outside *args:
+    bash scripts/tests/travel-outside.sh "$@"
+
 # First contact with a freshly created remote-access container (as root, once): operator account, keys, root login closed.
 remote-bootstrap:
     bash scripts/ops/play.sh remote-bootstrap
@@ -165,6 +170,11 @@ remote-apply *args:
 # The container's one login to the tailnet, by the owner at a browser; prints the signing command for the laptop.
 remote-login:
     bash scripts/ops/remote-login.sh
+
+# The container's memory, read on pve1 (read-only): one reading, `sample <seconds>` for the highest working set over a span, or `window` until Enter.
+[positional-arguments]
+remote-memory *args:
+    bash scripts/ops/remote-memory.sh "$@"
 
 # Start the administration container, only after its stored configuration and the hypervisor's filter read back as designed.
 remote-start:

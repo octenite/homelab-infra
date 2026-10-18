@@ -258,7 +258,17 @@ EOF
 			*) echo "        the health report says failure until the node is logged in and signed" ;;
 			esac
 		else
-			echo "        no health timer yet (the dead-man's switch is not stored)"
+			# The role installs the timer only once the node is signed. Whether
+			# the address is stored is read from the key's name alone, never
+			# its value.
+			stored=no
+			if grep -q '^remote_ct_health_ping_url:' "$REPO/private/ansible/inventory/host_vars/remote1/secrets.sops.yaml" 2>/dev/null; then stored=yes; fi
+			b=$(inf backend)
+			case "$stored ${b%% *} $(inf lock)" in
+			"yes Running 1") ok "the health timer (the address is stored and the node is signed: just remote-apply installs it)" active "" ;;
+			yes*) echo "        no health timer yet: the address is stored; the first just remote-apply after the login and the signature installs it" ;;
+			*) echo "        no health timer yet (the dead-man's switch is not stored)" ;;
+			esac
 		fi
 	fi
 

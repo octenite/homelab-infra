@@ -34,8 +34,10 @@
 # are, prints NOT READY TO TRAVEL and exits 1: the owner is at home and can
 # look. Undo with -Home, or fix and run -Away again.
 #
-# -Home: disconnects Tailscale first, so that the next SSH goes direct; stops
-# the container; reminds you to pause its health check; converges pbs-vm.ps1,
+# -Home: disconnects Tailscale first, so that the next SSH goes direct; adds
+# the container's memory on this trip to C:\ProgramData\homelab\
+# remote1-memory.log and stops the container; reminds you to pause its health
+# check; converges pbs-vm.ps1,
 # which forwards the backup port again; starts the backup VM if it ran before
 # -Away.
 #
@@ -82,6 +84,9 @@ $KeyWarnDays = 14                    # D7
 $ManageRule = 'homelab-pbs1-ssh-wsl' # present only while pbs-vm.ps1 -Manage holds the window open
 $StateDir = Join-Path $env:ProgramData 'homelab'
 $StateFile = Join-Path $StateDir 'travel-state.json'
+# One line per trip: the container's memory read by -Home before it stops it
+# (drill 5 of the plan; scripts/ops/remote-memory.sh).
+$MemoryLog = Join-Path $StateDir 'remote1-memory.log'
 $UpSeconds = 90
 # ---------------------------------------------------------------------------
 
@@ -426,8 +431,27 @@ if ($AtHome) {
         }
         $where = (Invoke-TravelVerb 'where' -Quiet).Last
         if ($where -ne 'home') { Problem "pve1 sees '$where' after the disconnect, not the direct path" }
-        if ((Invoke-TravelVerb 'container-stop').Code -eq 0) { Step "$ContainerName stopped (D12)"; $container = 'stopped' }
-        else { Problem 'the container could not be stopped (above)' }
+        # The trip's memory: read before the stop takes the container's figures
+        # with it, written once the stop succeeded, so that a -Home run again
+        # after a failed stop does not count the same start twice. A record,
+        # not a condition: a failed read or write is only noted.
+        $mem = Invoke-TravelVerb 'container-memory' -Quiet
+        $record = $null
+        if ($mem.Code -eq 0 -and $mem.Last -like 'remote1-memory *') { $record = $mem.Last }
+        else { Note "the container's memory was not read ($($mem.Last)): nothing will be added to $MemoryLog" }
+        if ((Invoke-TravelVerb 'container-stop').Code -eq 0) {
+            Step "$ContainerName stopped (D12)"
+            $container = 'stopped'
+            if ($record) {
+                try {
+                    New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
+                    [IO.File]::AppendAllText($MemoryLog, "$record`r`n", (New-Object Text.UTF8Encoding($false)))
+                    Note "the container's memory on this trip, added to ${MemoryLog}: $record"
+                }
+                catch { Note "the reading was not added to ${MemoryLog} ($($_.Exception.Message)); add it by hand: $record" }
+            }
+        }
+        else { Problem 'the container could not be stopped (above); nothing was added to the memory log: fix it and run -Home again, which reads again' }
     }
     catch {
         Problem "$($_.Exception.Message)"

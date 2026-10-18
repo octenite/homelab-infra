@@ -105,15 +105,22 @@
     enabled: true
     state: started
 
-- name: The daemon's state
+# Read once the daemon has settled. A restart earlier in this run (a version
+# change, a changed flag or drop-in) leaves it in NoState or Starting for some
+# seconds, and the decisions below (the preferences, the health timer) need
+# the state it settles in. Not settled within a minute fails the run: read
+# `journalctl -u tailscaled` in the container.
+- name: The daemon's state, once settled
   ansible.builtin.command:
     cmd: tailscale status --json --peers=false
   register: remote_ct_tailscale_status
   changed_when: false
   check_mode: false
-  retries: 5
+  retries: 30
   delay: 2
-  until: remote_ct_tailscale_status.rc == 0
+  until: >-
+    remote_ct_tailscale_status.rc == 0 and
+    (remote_ct_tailscale_status.stdout | from_json).BackendState not in ['NoState', 'Starting']
 
 - name: Facts about the daemon
   ansible.builtin.set_fact:
