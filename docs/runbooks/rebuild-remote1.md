@@ -2,7 +2,7 @@
 
 Use this when the container `remote1` (guest 3010 on pve1) has to be created: the first time, after a new template pin, a changed key list, a broken container, or a rebuilt hypervisor. At home only, on the wired workstation, with a session open. The container holds no data (decision D9 of `docs/phases/phase-r-plan.md`).
 
-Status: written with step R.7 on 2026-10-12; the rebuild order (host key, health timer, policy address) corrected for step R.10, whose drill 2 rehearses section 3 and the rebuild. The recovery section is not rehearsed yet.
+Status: written with step R.7 on 2026-10-12; the rebuild order (host key, health timer, policy address) corrected for step R.10. Section 3 and the rebuild were rehearsed on 2026-10-19 (step R.10, drill 2; "Rehearsed" below). The recovery section is not rehearsed yet.
 
 Why a runbook and not a plan: the container is protected against deletion, and OpenTofu's root refuses a destroy or a replacement (`scripts/tofu/child.sh`). A replacement by plan would stop the container first and then be refused by the hypervisor.
 
@@ -133,6 +133,27 @@ This happens when a creation ran longer than the provider waited, when its last 
 1. `just tofu remote state list`. If the address is listed, the creation was recorded as failed: `just tofu remote untaint module.remote1.proxmox_virtual_environment_container.this`, then plan. Stop here if the plan is clean.
 2. Otherwise confirm that the guest is remote1: `ssh ops@10.0.10.10 sudo pct config 3010` (host name, pool, net0). An import does not help: the provider cannot read the pool, so the plan after it asks for a replacement.
 3. Remove it and build again: section 3 from step 2, then sections 1 and 2.
+
+## Rehearsed
+
+On 2026-10-19 (step R.10, drill 2), 02:15 to 04:03 IST, at home on the wired workstation, from a stopped container with its check paused. Times in UTC, on 2026-10-18.
+
+| Step | From | Took |
+|---|---|---|
+| A fresh host backup (`pbs-host-backup.service`), the state and a clean plan read | 20:45:00 | 14 s |
+| Section 3: the device removed in the console (owner), protection off, the guest destroyed, the state entry removed, the old host key forgotten | 20:57 | 17 s after the removal |
+| Section 1: `just pve-apply --check --diff`, `just pve-apply` (one file written), `just test-token` (38 checks) | 20:58:11 | 5 min |
+| Section 2, step 1: plan (one to add), apply of that plan (created in 7 s) | 21:03:59 | 1 min |
+| Step 2: `just remote-start` (46 and 66 checks), the host key compared | 21:05:19 | 1 min 10 s |
+| Steps 3 and 4: `just test-remote layers` (86), `just pve-apply`, `just test-remote` (66), a clean plan | 21:07:02 | 4 min 10 s |
+| `just remote-bootstrap`, `just remote-apply` twice (30 changes, then none) | 21:12:05 | 2 min 15 s |
+| `just remote-login` and the signature (owner) | 21:24 | 31 min, with the wait |
+| `just remote-apply` twice (7 changes: preferences, health timer; then none) | 21:55:49 | 1 min 15 s |
+| `just test-remote layers`: failed on a loopback listener of the purged mail system; fixed in the role (pull request 52), applied, then 145 checks; `just pve-apply`; `just test-remote` 104 | 21:57:02 | 19 min with the fix |
+| The policy's address by pull request (53), applied from `main`, a clean plan | 22:19:52 | 3 min |
+| One reboot, `just test-remote` (104) | 22:26 | 1 min |
+
+From the console removal to the policy applied: 86 minutes, of which 31 were the login and signature and 14 the fix; the commands themselves took about half an hour. No alert came during the rebuild: the check was paused and the role installed the timer only after the signature.
 
 ## How to know it worked
 
