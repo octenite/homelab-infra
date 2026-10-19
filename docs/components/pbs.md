@@ -6,14 +6,41 @@ The local backup target: nightly backups of the hypervisor's configuration and, 
 
 ## Architecture
 
-- `pbs1`, Proxmox Backup Server 4.2, Hyper-V Generation 1, 2 vCPU, 4 GiB fixed memory. Checkpoints are disabled. The VM is started by hand (owner decision 2026-10-06). A clean shutdown follows the host.
+- `pbs1`, Proxmox Backup Server 4.2, Hyper-V Generation 1, 2 vCPU, 1.5 GiB (1536 MiB) of fixed memory: below the vendor's guidance, by the owner's decision of 2026-10-20 (B51, exception X35; 4 GiB from 2026-10-06 until then, see "Memory"). Checkpoints are disabled. The VM is started by hand (owner decision 2026-10-06; B51 replaces this with a nightly window, being built). A clean shutdown follows the host.
 - Disks under `F:\homelab\pbs1\disks`: `system.vhdx` (32 GiB, IDE) and `datastore.vhdx` (128 GiB, fixed size, SCSI).
 - The datastore disk is attached exactly when no install medium is in the drive. With two disks present the installer's disk names are not stable, and it once installed onto the datastore disk.
 - Boot order: system disk first, then DVD. An empty system disk falls through to the installer. An installed one never re-enters it.
 - Datastore `pbs1`: one GPT partition, ext4, found by its filesystem or partition label, mounted at `/mnt/datastore/pbs1` with `defaults,nofail,x-systemd.device-timeout=10s`. The VM boots without the disk instead of stopping in emergency mode.
 - Jobs: prune daily (keep 7 daily, 4 weekly, 3 monthly), garbage collection `sun 03:00`, verification monthly, snapshots verified again after 30 days.
 - Notifications: the product's own system sends job failures and update notices to the owner's Telegram chat through a webhook target. The datastore uses notification mode `notification-system`.
-- Memory budget on the workstation: Windows about 6 GiB, WSL capped at 5 GB, the VM 4 GiB fixed.
+- Memory budget on the workstation: Windows about 6 GiB, WSL capped at 5 GB, the VM 1.5 GiB fixed.
+
+### Memory
+
+1.5 GiB (1536 MiB), static, since 2026-10-20 (B51; exception X35 in `docs/ARCHITECTURE.md`). PBS 4.2's documentation asks for 2 GB to evaluate and 4 GiB plus 1 GiB per TiB in use. The extra buys page cache; this VM has no ZFS and a datastore of a few hundred MiB. The owner's reason: on a 16 GB laptop the 4 GiB competed with the applications, the VM could not start once they held the memory, and it was running at 02:30 on 2 of the 12 nights before the change.
+
+Measured on 2026-10-20 with a sampler in the guest reading `/proc` every second. "In use" is `MemTotal` less `MemAvailable`: what cannot be given back. Hyper-V's "memory demand" is not usage: for a Linux guest it includes a reserve of about 490 MiB at 4 GiB.
+
+At 4 GiB the VM had run two hours; at 1.5 GiB it was measured cold, minutes after its first start at the new size (`MemTotal` 1398 MiB).
+
+| Load | In use, peak, at 4 GiB | at 1.5 GiB | Committed, peak, at 4 GiB | at 1.5 GiB |
+|---|---|---|---|---|
+| Idle | 510 MiB | 298 MiB | 126 MiB | 118 MiB |
+| The nightly host backup (2.5 MiB, seconds) | 511 MiB | 298 MiB | 147 MiB | 141 MiB |
+| Garbage collection (33 chunks) | 512 MiB | 341 MiB | 158 MiB | 155 MiB |
+| Verification of every snapshot | 533 MiB | 366 MiB | 210 MiB | 203 MiB |
+| The security-update run: at 4 GiB `apt-daily-upgrade` (20 s); at 1.5 GiB `unattended-upgrade` with nothing left to install | 645 MiB | 354 MiB | 544 MiB | 238 MiB |
+| The DR builder's answer-file check (`PVE_BUILDER=pbs1 just pve-media validate`) | 585 MiB | 352 MiB | 240 MiB | 198 MiB |
+| GC, verification, `apt-get update` and the backup at once | 564 MiB | 373 MiB | 152 MiB | 164 MiB |
+| The DR builder's image for pve1 (`PVE_BUILDER=pbs1 just pve-media iso`: a 1.5 GB download, a 1.7 GB image, 217 s) | - | 378 MiB | - | 184 MiB |
+
+At 4 GiB no swap was used and no process was killed under any load; memory pressure (`/proc/pressure/memory`) stayed at zero. At 1.5 GiB the same, except that the image build moved 5 pages to swap (none read back) and showed brief pressure (some avg10 2.6), page cache under the image tools; `MemAvailable` never fell below 1019 MiB, 73 % of `MemTotal`. Pass. Not yet seen at 1.5 GiB: a security-update run that installs packages (at 4 GiB, 645 MiB in use), checked on the first night it happens; and the Phase 5 guest image.
+
+The pass rule, now and at the Phase 5 gate: no swap-in, no out-of-memory kill, and `MemAvailable` never below a fifth of `MemTotal`; otherwise the pre-agreed step is 2 GiB.
+
+The VM's proxy served 16 s after `Start-VM` at 1.5 GiB (its journal: the datastore mounted at 13 s).
+
+To read it: `free -m` and `cat /proc/pressure/memory` in the VM through the management window, or from Windows `Get-Counter '\Hyper-V Dynamic Memory VM(pbs1)\Guest Available Memory'`, which is the guest's `MemAvailable` in MiB.
 
 Network legs of the VM:
 

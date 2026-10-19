@@ -163,7 +163,7 @@ If the old machine was stolen and not merely broken: its disks were not encrypte
 
 ## 4. WSL memory cap and the direct-link adapter
 
-The memory budget on the workstation is 4 GiB fixed for the VM and 5 GB for WSL.
+The memory budget on the workstation is 1.5 GiB (1536 MiB) fixed for the VM (exception X35; 4 GiB until 2026-10-20) and 5 GB for WSL.
 
 1. Create `%USERPROFILE%\.wslconfig` if it does not exist, with these two lines:
 

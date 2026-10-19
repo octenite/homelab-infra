@@ -85,7 +85,12 @@ $PSDefaultParameterValues = @{ '*:ErrorAction' = 'Stop' }
 $VmName = 'pbs1'
 $Root = 'F:\homelab\pbs1'
 $IsoDir = 'F:\homelab\iso'
-$MemoryGB = 4          # fixed; owner decision 2026-10-06
+# Static memory, below the vendor's guidance (exception X35): 1536 MiB since
+# the owner's decision of 2026-10-20 (B51); 4 GiB from 2026-10-06 until then,
+# which the laptop could not spare once its applications had taken it, so
+# the VM stayed off on most nights. Measured before and after the change
+# (docs/components/pbs.md, "Memory"). Applied only while the VM is off.
+$MemoryMB = 1536
 $Cpu = 2
 $SystemGB = 32
 $DatastoreGB = 128     # fixed VHDX
@@ -221,11 +226,11 @@ if ($existing -and $existing.Generation -ne 1) {
 if (-not $existing) {
     New-Item -ItemType Directory -Force "$Root\disks" | Out-Null
     if (Test-Path $sysVhd) {
-        New-VM -Name $VmName -Generation 1 -MemoryStartupBytes ($MemoryGB * 1GB) -Path $Root -VHDPath $sysVhd -SwitchName $NatSwitch | Out-Null
+        New-VM -Name $VmName -Generation 1 -MemoryStartupBytes ([int64]$MemoryMB * 1MB) -Path $Root -VHDPath $sysVhd -SwitchName $NatSwitch | Out-Null
         Step "vm $VmName (generation 1, existing system disk)"
     }
     else {
-        New-VM -Name $VmName -Generation 1 -MemoryStartupBytes ($MemoryGB * 1GB) -Path $Root `
+        New-VM -Name $VmName -Generation 1 -MemoryStartupBytes ([int64]$MemoryMB * 1MB) -Path $Root `
             -NewVHDPath $sysVhd -NewVHDSizeBytes ($SystemGB * 1GB) -SwitchName $NatSwitch | Out-Null
         Step "vm $VmName (generation 1, $SystemGB GiB system disk)"
     }
@@ -233,9 +238,9 @@ if (-not $existing) {
 $vm = Get-VM -Name $VmName
 $off = $vm.State -eq 'Off'
 
-if ($vm.DynamicMemoryEnabled -or $vm.MemoryStartup -ne ($MemoryGB * 1GB)) {
-    if ($off) { Set-VM -Name $VmName -StaticMemory -MemoryStartupBytes ($MemoryGB * 1GB); Step "memory fixed at $MemoryGB GiB" }
-    else { Note 'memory differs; needs the VM off' }
+if ($vm.DynamicMemoryEnabled -or $vm.MemoryStartup -ne ([int64]$MemoryMB * 1MB)) {
+    if ($off) { Set-VM -Name $VmName -StaticMemory -MemoryStartupBytes ([int64]$MemoryMB * 1MB); Step "memory fixed at $MemoryMB MiB" }
+    else { Note "memory differs from the script ($($vm.MemoryStartup / 1MB) MiB, wanted $MemoryMB); needs the VM off" }
 }
 if ($vm.ProcessorCount -ne $Cpu) {
     if ($off) { Set-VM -Name $VmName -ProcessorCount $Cpu; Step "$Cpu vCPU" } else { Note 'vCPU count differs; needs the VM off' }
@@ -553,5 +558,5 @@ if ($Manage) { Write-Host "management window: OPEN (SSH from WSL through port $S
 else { Write-Host 'management window: closed.' }
 if ($Away) { Write-Host "backup port: CLOSED for travel (no forward, port $BackupPort blocked for every source). A plain run at home opens it for the hypervisor again." }
 else { Write-Host "backup port: forwarded to the VM for the hypervisor ($PveAddress) only." }
-Get-VM -Name $VmName | Select-Object Name, State, @{n = 'MemoryGB'; e = { $_.MemoryStartup / 1GB } }, ProcessorCount, AutomaticStartAction | Format-Table -AutoSize
+Get-VM -Name $VmName | Select-Object Name, State, @{n = 'MemoryMB'; e = { $_.MemoryStartup / 1MB } }, ProcessorCount, AutomaticStartAction | Format-Table -AutoSize
 Get-VMNetworkAdapter -VMName $VmName | Select-Object Name, SwitchName, MacAddress, IPAddresses | Format-Table -AutoSize
