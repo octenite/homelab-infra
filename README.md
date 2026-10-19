@@ -35,7 +35,7 @@ Gate records are in [docs/phases/](docs/phases/). No phase starts before the pre
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The design and what is built of it: topology, resource budget, network policy matrix, secrets, identity, backups, recovery, phases, decision log |
 | [docs/INITIAL-ASSESSMENT.md](docs/INITIAL-ASSESSMENT.md) | What existed before the work started, measured |
 | [docs/adr/](docs/adr/) | Architecture decision records |
-| [docs/components/](docs/components/) | One document per component: router and access points, hypervisor, backup server, the remote-access container, the laptop's Tailscale client and travel mode |
+| [docs/components/](docs/components/) | One document per component: router and access points, hypervisor, backup server, the remote-access container, the laptop's Tailscale client, travel mode and Remote Desktop from the home desktop |
 | [docs/runbooks/](docs/runbooks/) | Operating and restore procedures |
 | [docs/security/secrets-register.md](docs/security/secrets-register.md) | Every secret: where it lives and how it is rotated |
 | [docs/backlog.md](docs/backlog.md) | Open items outside the current phase |

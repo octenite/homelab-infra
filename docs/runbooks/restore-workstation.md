@@ -186,6 +186,12 @@ The memory budget on the workstation is 4 GiB fixed for the VM and 5 GB for WSL.
    powershell -ExecutionPolicy Bypass -File scripts\node2\workstation.ps1
    ```
 
+4. Remote Desktop from the home desktop (X34), in the same elevated PowerShell. Windows made a new certificate, so compare the thumbprint it prints at the desktop's next connection ([remote-desktop.md](../components/remote-desktop.md), Deployment step 3):
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\node2\rdp.ps1
+   ```
+
 ## 5. Backup server VM
 
 Every `pbs-vm.ps1` command below runs in an elevated PowerShell, in the repository:

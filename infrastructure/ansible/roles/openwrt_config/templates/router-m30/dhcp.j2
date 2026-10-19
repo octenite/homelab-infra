@@ -87,6 +87,14 @@ config host 'workstation_wifi'
 	list mac '{{ openwrt_workstation_wifi_mac }}'
 	option ip '192.168.1.197'
 
+{# The home desktop keeps the address it first received, on its wired adapter
+   (AP2's access port). The workstation admits Remote Desktop from this one
+   address (X34, scripts/node2/rdp.ps1). #}
+config host 'desktop'
+	option name 'desktop'
+	list mac '{{ openwrt_desktop_mac }}'
+	option ip '192.168.1.242'
+
 {# The ESP32 keeps one address in the IoT network, so shortcuts and, later,
    Home Assistant can address it. #}
 config host 'esp32'

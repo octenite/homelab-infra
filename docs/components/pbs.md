@@ -220,7 +220,7 @@ Run it in WSL with a session open. It only opens TCP connections and sends pings
 |---|---|
 | Hypervisor, direct link | Workstation 10.0.99.2: no port answers, no ping. VM 10.0.99.3: 8007 open, ping answered, 22, 80 and 111 filtered |
 | Hypervisor, home network | Each address the workstation holds: 8007 open; 22, 445, 2222 and 3389 closed |
-| Router | 8007 and 2222 on the workstation: silent |
+| Router | 8007, 2222 and 3389 (Remote Desktop, X34) on the workstation: silent |
 | WSL | 8007 closed on the workstation's addresses, on the WSL gateway and on 10.0.99.2 |
 | Backup VM (only while the window is open) | Nothing on the hypervisor's direct-link address, nothing on the workstation, nothing in a private range; 9.9.9.9 port 53 and download.proxmox.com port 443 open |
 

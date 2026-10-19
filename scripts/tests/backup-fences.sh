@@ -153,7 +153,8 @@ EOF
 }
 for a in "${WS_ADDRS[@]}"; do
 	grep -qx "$a" <<<"$held" || continue
-	for p in 8007 2222; do
+	# 3389: Remote Desktop admits the home desktop's address alone (X34).
+	for p in 8007 2222 3389; do
 		got=$(router_probe "$a" "$p")
 		check router "$a" "$p" silent "${got:-error}"
 	done

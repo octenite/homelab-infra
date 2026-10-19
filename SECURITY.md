@@ -46,7 +46,7 @@ Status: a passing run is not recorded yet. The last recorded run, made before th
 
 ## Exceptions register
 
-The register is the table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) section 15, IDs X1 to X26 and X33; X27 to X32 are in the two plans of Phase R until its last step moves them. Firewall exceptions E1 to E17 are in section 6. Exceptions added or changed since Phase 3:
+The register is the table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) section 15, IDs X1 to X26, X33 and X34; X27 to X32 are in the two plans of Phase R until its last step moves them. Firewall exceptions E1 to E17 are in section 6. Exceptions added or changed since Phase 3:
 
 | ID | Exception | State |
 |---|---|---|
@@ -57,6 +57,7 @@ The register is the table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) sectio
 | X25 | Shared service process on the workstation makes allow rules ineffective for the forwarded ports; block rules compensate | passing fence test open (item 3) |
 | X26 | Management window: a port forward to the backup server's SSH, opened by hand with `pbs-vm.ps1 -Manage` and closed by a plain run | accepted; `just test-fences` shows which state is live |
 | X33 | The OpenTofu token's rights do not confine where a guest lands: with it, a guest can be placed in the management network or behind the hypervisor's own address (found 2026-10-11, Phase R step R.6) | open by the owner's decision of 2026-10-12: work goes on with the one token (item 9) |
+| X34 | Remote Desktop into the workstation from the home desktop, admitted by address; a session is the owner's administrator session on the admin machine | accepted by the owner on 2026-10-19; `scripts/node2/rdp.ps1 -Check` reads the rules back, `just test-fences` probes the port |
 
 ## Open items
 

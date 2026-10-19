@@ -9,6 +9,7 @@ The D-Link M30 routes between the home networks and the internet, enforces the f
 - One VLAN-aware bridge on the router carries seven networks: management (10), trusted (20), servers (50), IoT (60), guest (70), and the two remote-access networks of Phase R, remote (30) and home_remote (31), which exist on the trunk to Node 1 only. The plan and the port table are in [ARCHITECTURE.md](../ARCHITECTURE.md) section 6.
 - Eight firewall zones, default deny between them and towards the router. Every allow rule carries the ID of its exception, E1 to E17. The table below lists them as they are in the template. The zone `home_remote` is in no rule.
 - The operator workstation holds two reserved addresses, each bound to one adapter: 192.168.1.196 on the dock port and 192.168.1.197 on Wi-Fi. Every workstation rule on the router and on the access points names both.
+- The home desktop holds a reserved address too, 192.168.1.242 on its wired adapter (AP2's access port). No router rule names it. The workstation admits Remote Desktop from it (X34, [remote-desktop.md](remote-desktop.md)).
 - DNS: dnsmasq answers every network except `home_remote` and forwards to a local smartdns instance. In `remote` it answers the container's address only. Client networks cannot use another resolver: such queries are redirected to the router.
 - IPv6 is off on every internal network: no prefix, no advertisements, no DHCPv6. The older networks still carry the router's link-local address; the two remote-access networks carry none.
 - Each access point is connected by a trunk and bridges the trusted, IoT and guest networks between Wi-Fi and the router. It has an address in the management network only (10.0.10.2 and 10.0.10.3), and its own small firewall protects that address.
@@ -73,7 +74,7 @@ Extra package on the router: `ip-bridge`, for reading the bridge's address and V
 | DHCP pools, static leases, DNS | `templates/router-m30/dhcp.j2` |
 | Wi-Fi networks | `templates/<host>/wireless.j2`; names, keys and radio settings in the private inventory |
 | SSH and LuCI exposure | `templates/router-m30/dropbear.j2`, `uhttpd.j2` |
-| DHCP reservations of the workstation's two adapters | `templates/router-m30/dhcp.j2`; the adapters' hardware addresses in the private inventory |
+| DHCP reservations of the workstation's two adapters and the home desktop | `templates/router-m30/dhcp.j2`; the adapters' hardware addresses in the private inventory |
 | Authorised SSH keys | private inventory, `ansible/inventory/group_vars/all/ssh.yaml`, applied by `just openwrt-ssh-keys`. The hypervisor and the backup server read the same list |
 
 Firmware updates use the router's `owut` tool, which keeps the installed packages and the configuration.
