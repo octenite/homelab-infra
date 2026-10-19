@@ -116,7 +116,7 @@ None. The configuration is in Git. The certificate is not kept: a new one only m
 |---|---|
 | The desktop cannot connect | On the workstation, run `rdp.ps1 -Check`. On the desktop, `ipconfig` must show 192.168.1.242. The workstation must be awake, at home, and on a Private network |
 | It works on the dock and not on Wi-Fi | Windows treats the main Wi-Fi network as Public on this laptop (read on 2026-10-19; the wired network is Private), and the allow rules want Private. The script prints a `note:` line about it. Use the dock, or make the main Wi-Fi network Private in Settings (Network and internet, Wi-Fi, the network, "Private network") |
-| "Your credentials did not work" | The user name is `<workstation name>\<account>`, not the desktop's name, and the password is the account's password, not the PIN. After 10 failures the account is locked for 10 minutes |
+| "Your credentials did not work" | The user name is `<workstation name>\<account>`, not the desktop's name, and the password is the account's password, not the PIN. After 10 failures within 10 minutes the account is locked for 10 minutes, and a successful sign-in resets the count. To tell a wrong name from a wrong password without elevation, read the account's counter on the workstation: `([ADSI]"WinNT://$env:COMPUTERNAME/<account>,user").BadPasswordAttempts`. It rises by one per attempt when the name reaches the account and the password is wrong; it stays where it is when the name does not reach the account |
 | The certificate warning comes back | Windows made a new certificate. Compare the thumbprint with what `rdp.ps1` prints. If they differ, find out why before connecting |
 | `the built-in rule ... is on` | Someone used the Remote Desktop switch in Settings. The block rules held anyway. Run `rdp.ps1` to switch the rule off |
 | `Remote Desktop is switched off` | The switch in Settings, or `-Off`. Run `rdp.ps1` |
@@ -142,4 +142,6 @@ None. The configuration is in Git. The certificate is not kept: a new one only m
 | `just test-fences` | `fences hold: 23 probes`. Port 3389: hypervisor to 10.0.99.2 filtered, to 192.168.1.196 refused (by the router's zone rule), router to 192.168.1.196 silent |
 | The first connection from the desktop | owner's step (Deployment, step 3) |
 
-Still to measure: whether the service starts by itself after a restart of Windows. It has no start trigger. If `rdp.ps1 -Check` reports `TermService is not running` after a restart, the script must set it to start automatically.
+After a restart of Windows (2026-10-19 08:23 IST) the service started by itself: the listener was up 18 seconds after the start, before anyone had signed in. No automatic start type is needed.
+
+The owner's first attempts from the desktop that morning reached the account and were refused on the password: the account's failed-password counter rose by one per attempt (Troubleshooting, the credentials row).
