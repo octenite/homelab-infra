@@ -1,6 +1,6 @@
 # Component: Remote Desktop into the workstation
 
-Status: written 2026-10-19 (owner decision the same day). Applied and measured: see "Record" at the end.
+Status: built 2026-10-19 (owner decision the same day). The reservation and the workstation's side are applied and proven; the first connection from the desktop is the owner's step. See "Record" at the end.
 
 ## Purpose
 
@@ -129,3 +129,17 @@ None. The configuration is in Git. The certificate is not kept: a new one only m
 3. By pull request: delete the script and this document, the `desktop` reservation in `dhcp.j2`, `openwrt_desktop_mac` in the private inventory, and X34. Then apply the router.
 
 ## Record
+
+2026-10-19, with an operator session open (pull request 54):
+
+| Step | Result |
+|---|---|
+| `just openwrt-check router-m30` before | one difference: the host entry `desktop`; every other file identical |
+| `just openwrt-apply router-m30` | matches Git, health checks passed, revert disarmed; `uci show dhcp.desktop` shows the reservation |
+| `rdp.ps1` | 6 changes: switched on, service started, the four rules; listening on TCP and UDP 3389 |
+| `rdp.ps1 -Check`, then a second plain run | nothing changed, exit code 0 |
+| Drift: Windows' own `RemoteDesktop-UserMode-In-TCP` switched on by hand, as the switch in Settings does | the router's probe of 192.168.1.196:3389 stayed silent while the listener was up, so the block rule held; `-Check` reported the rule and ended with exit code 1; a plain run switched it off |
+| `just test-fences` | `fences hold: 23 probes`. Port 3389: hypervisor to 10.0.99.2 filtered, to 192.168.1.196 refused (by the router's zone rule), router to 192.168.1.196 silent |
+| The first connection from the desktop | owner's step (Deployment, step 3) |
+
+Still to measure: whether the service starts by itself after a restart of Windows. It has no start trigger. If `rdp.ps1 -Check` reports `TermService is not running` after a restart, the script must set it to start automatically.
