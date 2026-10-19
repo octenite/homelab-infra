@@ -222,8 +222,8 @@ The host configuration is reproducible from Git. What is not (the cluster filesy
 
 | Unit | Does |
 |---|---|
-| `pbs-host-backup.timer` | 02:30 every night, with up to ten minutes of random delay: runs `/usr/local/bin/pbs-host-backup` |
-| `pbs-failover.timer` | Every five minutes: runs `/usr/local/bin/pbs-target` |
+| `pbs-host-backup.timer` | 02:30 every night, and at the next boot after a missed run: runs `/usr/local/bin/pbs-host-backup` |
+| `pbs-failover.timer` | Every five minutes: runs `/usr/local/bin/pbs-target`, then `/usr/local/bin/pbs-due` |
 | `pbs-keepalive.service` | One ping a second to 10.0.99.3 |
 
 | Archive | Content |
@@ -236,7 +236,10 @@ Files named `*.iso` are left out of every archive.
 
 - Path: the storage entry `pbs-node2` names the server `pbs1.internal`, a line in `/etc/hosts`. Proxmox forbids changing a storage's server, so `pbs-target` rewrites that one line: 10.0.99.3 first, else 192.168.1.196, else 192.168.1.197. A path counts as up when an HTTPS request to port 8007 gets through. A bare connect is not enough: the workstation's port forward accepts connections while the VM is off. With nothing answering, the last choice stays.
 - Keep-alive: the workstation's USB 2.5 GbE adapter powers its link down after about ten idle seconds and does not bring it back. One packet a second has kept it up since 2026-10-06. The soak was closed after 5 h 35 min by the owner's decision, and the link came back by itself after a restart of the workstation ([phase-3.md](../phases/phase-3.md)).
-- Dead-man's switch: a successful backup pings a healthchecks.io check. Any failure exits before the ping. The ping URL is a secret in `/etc/homelab/backup.secret`, root only.
+- The backup server is a VM on the workstation that runs for a nightly window (backlog B51), not all day. Inside the window, 02:10 to 03:15, a backup that finds the server not yet up, or fails, waits and tries again every minute until 03:15. Outside it, a run waits two minutes for the server and tries once. One client run is bounded at 15 minutes.
+- Catch-up: after every failover pass, `pbs-due` starts a backup when the last success (`/var/lib/homelab/host-backup.last`) is more than 26 hours old, none is running, and the server answers. A night the VM missed is therefore caught up as soon as the VM runs again, by day too, and a backup cut short by a restart of the workstation is redone. It starts at most one backup an hour, so a backup that keeps failing does not run every five minutes. It does nothing until a first success is recorded: on a rebuilt pve1 a backup of the not yet restored host would become the day's newest snapshot, which the daily prune keeps instead of the last good one. The record comes from the nightly timer or from the hand-run backup at the end of `docs/runbooks/restore-pve-host.md`.
+- "Unreachable" is logged once when the server stops answering (`journalctl -t homelab`), and "answers again" when it is back.
+- Dead-man's switch: a successful backup pings a healthchecks.io check. Any failure exits before the ping. The ping URL is a secret in `/etc/homelab/backup.secret`, root only. A catch-up by day pings it too.
 - Encryption key: `/etc/pve/priv/storage/pbs-node2.enc` on the host, and recorded in the private repository (`proxmox/backup-keys.sops.yaml`, key `pbs-node2`). A copy belongs in the owner's password manager.
 
 `just pve-backup-init` sets the path up and repairs it. It never rotates or regenerates a recorded key.
@@ -280,7 +283,7 @@ Later phases add `just tofu pve apply`, Talos and Argo CD. The whole-platform or
 | The play fails on a file under `/etc/pve` | The file must be written in place, not copied or replaced |
 | The play failed in the bridge change | Wait three minutes: the host restores its previous file (`journalctl -t homelab`). Then `sudo ifquery --check -a` and run the play again |
 | The play stops at its end | See "What `just pve-apply` refuses" |
-| The nightly backup failed | The backup server VM is started by hand: is it running. `sudo pbs-target` prints the address in use. `systemctl status pbs-host-backup.service` and `journalctl -t homelab` |
+| The nightly backup failed | Did the backup server VM run in the window? Start it (`Start-VM pbs1` on the workstation): within five minutes `pbs-due` starts the missed backup by itself. `sudo pbs-target --wait 0` prints the address and exits 1 when nothing answers. `systemctl status pbs-host-backup.service` and `journalctl -t homelab` |
 | The direct link is down | `sudo ethtool enp2s0` for link and speed, `systemctl status pbs-keepalive`. The bridge `vmbr1` stays up without a link, and backups use the fallback path |
 | The second factor is lost | "Lost second factor" above |
 | The host boots into the installer | An install stick is still plugged in. Pull it out. The role only wipes the recorded stick |

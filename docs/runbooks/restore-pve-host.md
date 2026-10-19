@@ -321,7 +321,7 @@ A rebuilt host does not require a second factor until every password user has en
 | `just pve-apply`, run once more | `failed=0`, `changed=0` |
 | `ssh ops@10.0.10.10 sudo pvesm status --storage pbs-node2` | A line with `pbs-node2`, `pbs`, `active` |
 | `ssh ops@10.0.10.10 systemctl is-active pbs-host-backup.timer pbs-failover.timer pbs-keepalive.service` | `active` three times |
-| `ssh ops@10.0.10.10 sudo systemctl start pbs-host-backup.service`, then `ssh ops@10.0.10.10 sudo pbs-host-restore list` | A new snapshot from this minute |
+| `ssh ops@10.0.10.10 sudo systemctl start pbs-host-backup.service`, then `ssh ops@10.0.10.10 sudo pbs-host-restore list` | A new snapshot from this minute. Only after the restore: this first success writes `/var/lib/homelab/host-backup.last`, which turns the automatic catch-up of missed backups back on (`docs/components/proxmox.md`, Backup) |
 | `ssh ops@10.0.10.10 sudo pve-firewall status` | Enabled and running |
 | `ssh root@10.0.10.10` | `Permission denied` |
 | `just test-fences` | `fences hold: <n> probes, all as expected`. The run of 2026-10-07 passed with the management window open ([phase-3.md](../phases/phase-3.md)) |
