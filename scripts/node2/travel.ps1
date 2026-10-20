@@ -37,9 +37,10 @@
 # -Home: disconnects Tailscale first, so that the next SSH goes direct; adds
 # the container's memory on this trip to C:\ProgramData\homelab\
 # remote1-memory.log and stops the container; reminds you to pause its health
-# check; converges pbs-vm.ps1,
-# which forwards the backup port again; starts the backup VM if it ran before
-# -Away.
+# check; converges pbs-vm.ps1, which forwards the backup port again and turns
+# the backup VM's nightly window back on. It does not start the VM: the
+# window does that at night, and a missed night is caught up by pve1 whenever
+# the VM next runs (backlog B51).
 #
 # The health check is paused by hand. What is stored is the address the
 # container reports to, and that address can report but cannot pause a check;
@@ -87,6 +88,8 @@ $StateFile = Join-Path $StateDir 'travel-state.json'
 # One line per trip: the container's memory read by -Home before it stops it
 # (drill 5 of the plan; scripts/ops/remote-memory.sh).
 $MemoryLog = Join-Path $StateDir 'remote1-memory.log'
+# The backup VM's nightly window records each start here (scripts/node2/pbs-night.ps1).
+$NightState = Join-Path $env:ProgramFiles 'homelab\pbs-night.json'
 $UpSeconds = 90
 # ---------------------------------------------------------------------------
 
@@ -277,13 +280,13 @@ function Restore-BackupVm {
         Problem "the record says $VmName ran before the trip, but there is no VM $VmName"
         return 'absent (it ran before the trip)'
     }
-    $result = 'off, as before the trip'
-    if ($rec.pbs1WasRunning) {
-        if ($vm -and $vm.State -ne 'Running') {
-            Start-VM -Name $VmName
-            Step "$VmName started again (it ran before the trip)"
-        }
-        $result = 'running, as before the trip'
+    # Not started here: its nightly window starts it (B51), and a VM started by
+    # day runs until it is stopped. pve1 catches up the nights of the trip by
+    # itself as soon as the VM runs.
+    $result = 'off; it starts with its nightly window at 02:15'
+    if ($vm -and $vm.State -eq 'Running') { $result = 'running' }
+    elseif ($rec.pbs1WasRunning) {
+        Note "$VmName is not started now: its nightly window starts it at 02:15. To catch up the trip's backups at once: Start-VM $VmName (pve1 backs up by itself within five minutes), then Stop-VM $VmName"
     }
     Remove-Item -LiteralPath $StateFile
     Step 'the record of the trip removed'
@@ -335,6 +338,13 @@ if ($Away) {
     if ($session -eq 0) { throw 'An operator session is open: close it first (just session-end), so that the laptop does not leave with the decrypted key and a loaded SSH key in memory. Nothing was changed.' }
     if ($session -ne 1) { throw "Could not tell whether an operator session is open (WSL answered with exit code $session). Nothing was changed." }
     if (Get-NetFirewallRule -Name $ManageRule -ErrorAction SilentlyContinue) { throw "The backup VM's management window is open: close it first with a plain run of pbs-vm.ps1. Nothing was changed." }
+    # Shutting the VM down in its nightly window would cut pve1's backup short.
+    $night = $null
+    if (Test-Path -LiteralPath $NightState) { try { $night = Get-Content -LiteralPath $NightState -Raw | ConvertFrom-Json } catch { $night = $null } }
+    $vmNow = Get-VM -Name $VmName -ErrorAction SilentlyContinue
+    if ($night -and $vmNow -and $vmNow.State -eq 'Running' -and ((Get-Date) - [datetime]$night.started).TotalHours -lt 5) {
+        throw "$VmName is in its nightly window (started at $(([datetime]$night.started).ToString('HH:mm'))): it powers itself off once pve1's backup and its jobs are done. Run -Away after that, or Stop-VM $VmName first to cut the night short. Nothing was changed."
+    }
     $reboot = @(Get-RebootReason)
     if ($reboot.Count -gt 0) { throw "Windows waits for a restart ($($reboot -join '; ')). Restart now, at home, and run -Away again: Windows may otherwise restart by itself on the road. Nothing was changed." }
     $renames = Get-PendingRenameCount

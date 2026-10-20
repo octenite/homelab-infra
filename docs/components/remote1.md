@@ -1,6 +1,6 @@
 # Component: remote1, the administration container
 
-Status: created in Phase R step R.7 (2026-10-12); configured, logged in and signed in step R.8 (passed 2026-10-13); started and stopped by travel mode since R.9. Step R.10 rehearses its rebuild and measures its memory; the figures go here with that step's gate record.
+Status: created in Phase R step R.7 (2026-10-12); configured, logged in and signed in step R.8 (passed 2026-10-13); started and stopped by travel mode since R.9. Rebuilt from Git on 2026-10-19 in step R.10 (drill 2): a new device, tailnet address 100.114.245.97, and the memory figures below.
 
 ## Purpose
 
@@ -71,6 +71,16 @@ The working set of an update run, the figure drill 5 decides on, is measured at 
 2. Terminal 2: `ssh ops@10.0.10.10 sudo pct exec 3010 -- systemctl start apt-daily.service apt-daily-upgrade.service`. Both are oneshot units, so the command returns when the run ends.
 3. Check that the run really happened: `ssh ops@10.0.10.10 sudo pct exec 3010 -- tail -n 5 /var/log/unattended-upgrades/unattended-upgrades.log` shows an entry from now. Apt's daily script skips unattended-upgrade when it ran the same day; then run `ssh ops@10.0.10.10 sudo pct exec 3010 -- unattended-upgrade -v` in the same window.
 4. Press Enter in terminal 1 and record "highest working set" and "memory.peak over the window".
+
+Measured on 2026-10-19 (step R.10), at the 768 MiB limit:
+
+| Moment | Highest working set | Notes |
+|---|---|---|
+| Bootstrap and the first configure run, attended | 391 MiB | apt's lists and the package installs; not counted by the drill's rule |
+| A forced update run (23 Debian security updates; Tailscale held at its pin) | **253 MiB** | memory.peak over the window 639 MiB; no out-of-memory kill |
+| At rest after a start, not logged in / logged in | 123 / 218 MiB | of which processes (anon) 29 / 62 MiB; the rest is page cache in active use |
+
+memory.peak follows the page cache up to the limit (762 MiB after the first configure run), so the per-trip `peak=` says little; the working set is the figure.
 
 ## Security considerations
 

@@ -6,14 +6,70 @@ The local backup target: nightly backups of the hypervisor's configuration and, 
 
 ## Architecture
 
-- `pbs1`, Proxmox Backup Server 4.2, Hyper-V Generation 1, 2 vCPU, 4 GiB fixed memory. Checkpoints are disabled. The VM is started by hand (owner decision 2026-10-06). A clean shutdown follows the host.
+- `pbs1`, Proxmox Backup Server 4.2, Hyper-V Generation 1, 2 vCPU, 1.5 GiB (1536 MiB) of fixed memory: below the vendor's guidance, by the owner's decision of 2026-10-20 (B51, exception X35; 4 GiB from 2026-10-06 until then, see "Memory"). Checkpoints are disabled. It runs for a nightly window, not all day (owner decision 2026-10-20, B51; see "Nightly window"). It is not started with Windows. A clean shutdown follows the host.
 - Disks under `F:\homelab\pbs1\disks`: `system.vhdx` (32 GiB, IDE) and `datastore.vhdx` (128 GiB, fixed size, SCSI).
 - The datastore disk is attached exactly when no install medium is in the drive. With two disks present the installer's disk names are not stable, and it once installed onto the datastore disk.
 - Boot order: system disk first, then DVD. An empty system disk falls through to the installer. An installed one never re-enters it.
-- Datastore `pbs1`: one GPT partition, ext4, found by its filesystem or partition label, mounted at `/mnt/datastore/pbs1` with `defaults,nofail,x-systemd.device-timeout=10s`. The VM boots without the disk instead of stopping in emergency mode.
-- Jobs: prune daily (keep 7 daily, 4 weekly, 3 monthly), garbage collection `sun 03:00`, verification monthly, snapshots verified again after 30 days.
+- Datastore `pbs1`: one GPT partition, ext4, found by its filesystem or partition label, mounted at `/mnt/datastore/pbs1` with `defaults,nofail,x-systemd.device-timeout=10s,x-systemd.before=proxmox-backup-proxy.service`. The VM boots without the disk instead of stopping in emergency mode; with the disk, the server's proxy waits for the mount.
+- Jobs, inside the nightly window: prune daily at 02:50 (keep 7 daily, 4 weekly, 3 monthly), garbage collection Sundays 02:55, verification Sundays 03:00 (weekly; snapshots verified again after 30 days).
 - Notifications: the product's own system sends job failures and update notices to the owner's Telegram chat through a webhook target. The datastore uses notification mode `notification-system`.
-- Memory budget on the workstation: Windows about 6 GiB, WSL capped at 5 GB, the VM 4 GiB fixed.
+- Memory budget on the workstation: Windows about 6 GiB, WSL capped at 5 GB, the VM 1.5 GiB fixed.
+
+### Memory
+
+1.5 GiB (1536 MiB), static, since 2026-10-20 (B51; exception X35 in `docs/ARCHITECTURE.md`). PBS 4.2's documentation asks for 2 GB to evaluate and 4 GiB plus 1 GiB per TiB in use. The extra buys page cache; this VM has no ZFS and a datastore of a few hundred MiB. The owner's reason: on a 16 GB laptop the 4 GiB competed with the applications, the VM could not start once they held the memory, and it was running at 02:30 on 2 of the 12 nights before the change.
+
+Measured on 2026-10-20 with a sampler in the guest reading `/proc` every second. "In use" is `MemTotal` less `MemAvailable`: what cannot be given back. Hyper-V's "memory demand" is not usage: for a Linux guest it includes a reserve of about 490 MiB at 4 GiB.
+
+At 4 GiB the VM had run two hours; at 1.5 GiB it was measured cold, minutes after its first start at the new size (`MemTotal` 1398 MiB).
+
+| Load | In use, peak, at 4 GiB | at 1.5 GiB | Committed, peak, at 4 GiB | at 1.5 GiB |
+|---|---|---|---|---|
+| Idle | 510 MiB | 298 MiB | 126 MiB | 118 MiB |
+| The nightly host backup (2.5 MiB, seconds) | 511 MiB | 298 MiB | 147 MiB | 141 MiB |
+| Garbage collection (33 chunks) | 512 MiB | 341 MiB | 158 MiB | 155 MiB |
+| Verification of every snapshot | 533 MiB | 366 MiB | 210 MiB | 203 MiB |
+| The security-update run: at 4 GiB `apt-daily-upgrade` (20 s); at 1.5 GiB `unattended-upgrade` with nothing left to install | 645 MiB | 354 MiB | 544 MiB | 238 MiB |
+| The DR builder's answer-file check (`PVE_BUILDER=pbs1 just pve-media validate`) | 585 MiB | 352 MiB | 240 MiB | 198 MiB |
+| GC, verification, `apt-get update` and the backup at once | 564 MiB | 373 MiB | 152 MiB | 164 MiB |
+| The DR builder's image for pve1 (`PVE_BUILDER=pbs1 just pve-media iso`: a 1.5 GB download, a 1.7 GB image, 217 s) | - | 378 MiB | - | 184 MiB |
+
+At 4 GiB no swap was used and no process was killed under any load; memory pressure (`/proc/pressure/memory`) stayed at zero. At 1.5 GiB the same, except that the image build moved 5 pages to swap (none read back) and showed brief pressure (some avg10 2.6), page cache under the image tools; `MemAvailable` never fell below 1019 MiB, 73 % of `MemTotal`. Pass. Not yet seen at 1.5 GiB: a security-update run that installs packages (at 4 GiB, 645 MiB in use), checked on the first night it happens; and the Phase 5 guest image.
+
+The pass rule, now and at the Phase 5 gate: no swap-in, no out-of-memory kill, and `MemAvailable` never below a fifth of `MemTotal`; otherwise the pre-agreed step is 2 GiB.
+
+The VM's proxy served 16 s after `Start-VM` at 1.5 GiB (its journal: the datastore mounted at 13 s).
+
+To read it: `free -m` and `cat /proc/pressure/memory` in the VM through the management window, or from Windows `Get-Counter '\Hyper-V Dynamic Memory VM(pbs1)\Guest Available Memory'`, which is the guest's `MemAvailable` in MiB.
+
+### Nightly window
+
+Since 2026-10-20 (owner decision, B51) the VM runs for the hypervisor's nightly backup and is off the rest of the day. Its main purpose is that backup, and 1.5 GiB held all day competed with the owner's applications. Before the change the VM was started by hand, and it was running at 02:30 on 2 of 12 nights.
+
+| Time | What | Where |
+|---|---|---|
+| 02:15 | The scheduled task `\homelab\pbs1-night` (SYSTEM) runs `pbs-night.ps1`: it starts the VM, retrying for up to 20 minutes while Windows lacks the memory. It also runs two minutes after every start of Windows and then starts the VM only between 02:10 and 03:15 | the workstation; installed by `pbs-vm.ps1` |
+| about 02:16 | The VM serves port 8007 (16 s after the start, measured) | the VM |
+| 02:30 | The host backup; inside 02:10 to 03:15 it waits for the VM and retries every minute | pve1 (`docs/components/proxmox.md`, Backup) |
+| 02:44, 02:47, 02:50 | Package lists, the server's update check, the security updates (the timers moved into the window, no random delay) | the VM |
+| 02:50 | Prune; Sundays 02:55 garbage collection, 03:00 verification | the VM |
+| from 03:30, every 2 minutes | `homelab-night-off`: the VM powers itself off when it is idle (below) | the VM |
+| 06:30 | If the VM the task started is still up, unrestarted, and the management window is closed: a clean shutdown | the workstation |
+
+`pbs-night.ps1` starts nothing unless the laptop holds a home address (192.168.1.196 or .197), the VM is Off, no install medium is in its drive and both its disks are attached: a VM in the middle of a rebuild is never started by the task. A VM that already runs was started by someone and is left alone. It runs on battery too. The task is enabled by a plain run of `pbs-vm.ps1` and by `-Manage`, and disabled by `-Away`. Both scripts take one lock, so the task never starts the VM while `pbs-vm.ps1` changes it. Log and state: `C:\Program Files\homelab\pbs-night.log` and `pbs-night.json`. A dry run at any time, changing nothing: `powershell -ExecutionPolicy Bypass -File "C:\Program Files\homelab\pbs-night.ps1" -DryRun`.
+
+`homelab-night-off` powers the VM off only when all of these hold, and stays up on anything else, an error included:
+- this boot was the window's (between 02:05 and 03:20 today): a VM started by hand at another time is never powered off;
+- no task runs on the server;
+- no package run is going;
+- nobody is logged in: the management window's SSH sessions count;
+- `/run/homelab/stay-up` does not exist.
+
+Its decisions go to the journal (`journalctl -t homelab`); `homelab-night-off --dry-run` prints one.
+
+Missed times are caught up. When the VM next starts, the server runs any overdue prune, GC or verification at once, and the package timers are persistent. When pve1 next reaches the VM, it backs up by itself if the last good backup is more than 26 hours old. So `Start-VM pbs1` by day catches up a missed night; that VM then runs until it is stopped (`Stop-VM pbs1`).
+
+To work on the VM by day: `Start-VM pbs1`, then the management window as usual. At night, inside the window, touch `/run/homelab/stay-up` in the VM, or keep an SSH session open, so that it does not power itself off.
 
 Network legs of the VM:
 
@@ -40,7 +96,7 @@ The Proxmox installer's early environment has no synthetic Hyper-V storage or ke
 
 ## Dependencies
 
-- The workstation: switched on, Hyper-V enabled, a volume `F:`, and the VM started by hand.
+- The workstation: switched on at 02:15 (the window wakes it from sleep when wake timers are allowed on AC power), at home, Hyper-V enabled, a volume `F:`.
 - WSL2 with an open operator session for every recipe. Ansible reaches the VM only through the management window (see Fences).
 - The hypervisor: `just pbs-media` builds the install image there. With the hypervisor down no recipe can build the image.
 - Nothing in the lab depends on the backup server.
@@ -166,10 +222,10 @@ The backup port is admitted by source address. When the laptop travels it accept
 
 | Action | Command (elevated PowerShell) | Effect |
 |---|---|---|
-| Before leaving | `powershell -ExecutionPolicy Bypass -File scripts\node2\pbs-vm.ps1 -Away` | Removes the 8007 forward and `homelab-pbs1-8007`; `homelab-pbs1-8007-others` blocks the port for every source. The management window is closed. `-Away` cannot be combined with another switch |
-| Back at home | `powershell -ExecutionPolicy Bypass -File scripts\node2\pbs-vm.ps1` | Restores the forward and the rule for the hypervisor |
+| Before leaving | `powershell -ExecutionPolicy Bypass -File scripts\node2\pbs-vm.ps1 -Away` | Removes the 8007 forward and `homelab-pbs1-8007`; `homelab-pbs1-8007-others` blocks the port for every source. The management window is closed and the nightly window's task disabled. `-Away` cannot be combined with another switch |
+| Back at home | `powershell -ExecutionPolicy Bypass -File scripts\node2\pbs-vm.ps1` | Restores the forward and the rule for the hypervisor, and enables the nightly window again |
 
-No mode is stored. The last line of the script's output names the state of the backup port. `scripts\node2\travel.ps1` calls both forms: `-Away` shuts the VM down and converges `-Away`, `-Home` converges the plain form and starts the VM again if it ran before the trip (`docs/components/travel-mode.md`). While the laptop is away the hypervisor has no backup target, and the dead-man's switch reports the missed runs.
+No mode is stored. The last lines of the script's output name the state of the backup port and of the nightly window. `scripts\node2\travel.ps1` calls both forms: `-Away` shuts the VM down and converges `-Away`, `-Home` converges the plain form; it does not start the VM, the nightly window does (`docs/components/travel-mode.md`). While the laptop is away the hypervisor has no backup target, and the dead-man's switch reports the missed runs; the first night back, or a `Start-VM pbs1` by day, catches up.
 
 ### Management window
 
@@ -335,10 +391,13 @@ Warning: with the flag the role formats a partition without a filesystem and cre
 | The VM has no internet | `Get-NetNat pbs-nat` and `Get-VMNetworkAdapterAcl -VMName pbs1` on the workstation |
 | The direct link is not used | `Get-VMSwitch p2p` and the adapter's link on the workstation. The `p2p` adapter is added to the VM only while the VM is off |
 | No Telegram message arrives | `/etc/proxmox-backup/notifications.cfg` in the VM, and `just pbs-apply` |
+| The VM did not start at night | `C:\Program Files\homelab\pbs-night.log` says why (away from home, a medium in the drive, too little memory, the VM already running). `Get-ScheduledTask -TaskPath \homelab\ -TaskName pbs1-night` and its last result in Task Scheduler. A sleeping laptop wakes only when wake timers are allowed on AC power (`pbs-vm.ps1` notes it when they are not) |
+| The VM did not power itself off | `journalctl -t homelab` in the VM: each check says why it stayed up. It was started outside the window, a task or package run went on, someone was logged in, or `/run/homelab/stay-up` exists. The 06:30 backstop shuts it down unless the management window is open |
+| `just test-fences` says pbs1 does not answer | The VM is off outside its window: `Start-VM pbs1`, then the test |
 
 ## Removal
 
-Stop the VM first: `Stop-VM pbs1`. Everything `pbs-vm.ps1` creates on the workstation:
+Stop the VM first: `Stop-VM pbs1`. Everything `pbs-vm.ps1` creates on the workstation, including the nightly window's task `\homelab\pbs1-night` (`Unregister-ScheduledTask -TaskPath \homelab\ -TaskName pbs1-night`) and the folder `C:\Program Files\homelab`:
 
 | Item | Remove with |
 |---|---|

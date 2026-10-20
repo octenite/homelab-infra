@@ -28,8 +28,8 @@ The play guard reads the variable as the connection user, because sudo clears it
 
 **`scripts/node2/travel.ps1`**, in an elevated PowerShell on the laptop, with its WSL half `scripts/node2/travel.sh`:
 
-- `-Away`, at home before leaving. Refuses, before changing anything, when: the laptop holds neither of its home addresses; an operator session is open; the backup VM's management window is open; Windows waits for a restart it may start by itself (Windows Update, servicing, or the update orchestrator); `tailscale.ps1 -Check` fails; the laptop's node key has expired. Warns when the key expires within 14 days (D7). Then it loads the SSH key into an agent of its own (one passphrase), checks that pve1 sees the direct path, records whether the backup VM runs and shuts it down, converges `pbs-vm.ps1 -Away` (no backup port forward), starts the container, connects Tailscale with the route accepted, and proves the path: the container online with its tag and route, pve1 seeing this laptop arrive from 10.0.30.10, and the container reporting to its health check.
-- `-Home`, back on the home network. Disconnects Tailscale first, so that the next SSH goes direct, reads the container's memory on this trip (`scripts/ops/remote-memory.sh`), stops the container and then adds the reading to `C:\ProgramData\homelab\remote1-memory.log` (a failed read or write is only noted), converges `pbs-vm.ps1` (the forward comes back), starts the backup VM if it ran before the trip, and reminds you to pause the health check.
+- `-Away`, at home before leaving. Refuses, before changing anything, when: the laptop holds neither of its home addresses; an operator session is open; the backup VM's management window is open; the backup VM is in its nightly window (shutting it down would cut pve1's backup short); Windows waits for a restart it may start by itself (Windows Update, servicing, or the update orchestrator); `tailscale.ps1 -Check` fails; the laptop's node key has expired. Warns when the key expires within 14 days (D7). Then it loads the SSH key into an agent of its own (one passphrase), checks that pve1 sees the direct path, records whether the backup VM runs and shuts it down, converges `pbs-vm.ps1 -Away` (no backup port forward), starts the container, connects Tailscale with the route accepted, and proves the path: the container online with its tag and route, pve1 seeing this laptop arrive from 10.0.30.10, and the container reporting to its health check.
+- `-Home`, back on the home network. Disconnects Tailscale first, so that the next SSH goes direct, reads the container's memory on this trip (`scripts/ops/remote-memory.sh`), stops the container and then adds the reading to `C:\ProgramData\homelab\remote1-memory.log` (a failed read or write is only noted), converges `pbs-vm.ps1` (the forward comes back, and the backup VM's nightly window is enabled again), and reminds you to pause the health check. It does not start the backup VM: its window does, at 02:15. To catch up the trip's backups at once, `Start-VM pbs1`; pve1 backs up by itself within five minutes, then `Stop-VM pbs1`.
 - `-Connect` and `-Disconnect`: the tunnel alone, no elevation. Away, after a session has ended and taken the tunnel with it, `-Connect` brings it back.
 
 **The away session** (`scripts/ops/session.sh`): `start` asks pve1 once the SSH key is loaded. Away or unknown, the session's timer ends it after 2 hours, and a marker inside the session makes its end, by hand or by the timer, disconnect the Windows client through WSL interop (`tailscale set --accept-routes=false`, `tailscale down`, both read back). Before it asks, `start` arms a 2-hour timer and the marker, so that an interrupted question still leaves a session that ends and takes the tunnel with it. The SSH key keeps its 12-hour lifetime in the agent as a fallback: changing it after asking pve1 would ask for the passphrase a second time, so the 2-hour bound is the timer's. What the timer says when it ends a session goes to `/dev/shm/homelab-session-end.log`, shown by `just session-status` and by the next `just session-start`.
@@ -71,7 +71,7 @@ Then pause the container's health check in the healthchecks.io console, as `-Hom
 | The laptop's home addresses, the container's name, tag and route, the key warning (14 days) | the settings block of `scripts/node2/travel.ps1` |
 | Session lengths (12 hours at home, 2 away) | `scripts/ops/session.sh`; `HOMELAB_SESSION_HOURS` sets the length in every case |
 | The lifetime of the agent a run of `travel.ps1` brings (15 minutes) | `scripts/node2/travel.sh` |
-| Whether the backup VM ran before the trip | `C:\ProgramData\homelab\travel-state.json`, written by `-Away` if absent, deleted by `-Home` |
+| Whether the backup VM ran before the trip | `C:\ProgramData\homelab\travel-state.json`, written by `-Away` if absent, deleted by `-Home`. Since B51 it only decides whether `-Home` tells you how to catch up |
 | The container's memory, one line per start | `C:\ProgramData\homelab\remote1-memory.log`, appended by `-Home` after a successful stop; `pid=` names the start (of several lines with one pid only the last counts), `ws_now=` is the working set at the end of the trip, `peak=` the trip's upper bound. Read for drill 5 of the plan (backlog B49) |
 
 ## Security considerations
@@ -124,7 +124,7 @@ None. The scripts are in Git; the one state file holds a single fact and is recr
 
 ## Restore
 
-If `travel-state.json` is lost between `-Away` and `-Home`, `-Home` leaves the backup VM as it is and says so: start it by hand if it should run (`Start-VM pbs1`).
+If `travel-state.json` is lost between `-Away` and `-Home`, nothing is lost: `-Home` never starts the backup VM, and its nightly window starts it at 02:15.
 
 ## Troubleshooting
 

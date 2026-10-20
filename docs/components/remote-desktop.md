@@ -1,6 +1,6 @@
 # Component: Remote Desktop into the workstation
 
-Status: built 2026-10-19 (owner decision the same day). The reservation and the workstation's side are applied and proven; the first connection from the desktop is the owner's step. See "Record" at the end.
+Status: built and in use since 2026-10-19 (owner decision the same day). The reservation, the workstation's side and the first connection from the desktop are proven. See "Record" at the end.
 
 ## Purpose
 
@@ -140,7 +140,7 @@ None. The configuration is in Git. The certificate is not kept: a new one only m
 | `rdp.ps1 -Check`, then a second plain run | nothing changed, exit code 0 |
 | Drift: Windows' own `RemoteDesktop-UserMode-In-TCP` switched on by hand, as the switch in Settings does | the router's probe of 192.168.1.196:3389 stayed silent while the listener was up, so the block rule held; `-Check` reported the rule and ended with exit code 1; a plain run switched it off |
 | `just test-fences` | `fences hold: 23 probes`. Port 3389: hypervisor to 10.0.99.2 filtered, to 192.168.1.196 refused (by the router's zone rule), router to 192.168.1.196 silent |
-| The first connection from the desktop | owner's step (Deployment, step 3) |
+| The first connection from the desktop | verified by the owner: the session log shows sessions from 192.168.1.242 from 08:35 IST on, and the failed-password counter back at 0 after the first successful one (read 2026-10-20) |
 
 After a restart of Windows (2026-10-19 08:23 IST) the service started by itself: the listener was up 18 seconds after the start, before anyone had signed in. No automatic start type is needed.
 

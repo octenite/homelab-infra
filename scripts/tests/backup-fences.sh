@@ -1,7 +1,11 @@
 #!/bin/bash
 # Deny test of the backup path's fences (ARCHITECTURE.md E10, E14, X10 and
-# docs/components/pbs.md "Fences"). Read-only: it only opens and closes TCP
-# connections and sends pings, from every vantage point the lab offers.
+# docs/components/pbs.md "Fences"). It only opens and closes TCP connections
+# and sends pings, from every vantage point the lab offers; the one exception
+# is its first question, `pbs-target --wait 0` on pve1, which may point pve1's
+# hosts line at the path that answers, as its failover timer does anyway.
+# The backup VM must be running: it is off outside its nightly window, so
+# start it first by day (Start-VM pbs1).
 #
 #   scripts/tests/backup-fences.sh            (or: just test-fences)
 #   scripts/tests/backup-fences.sh away       after pbs-vm.ps1 -Away: the
@@ -89,6 +93,15 @@ run_on() { # <label> <"target port expected" lines> <ssh target...> ; runs the p
 		check "$label" "$t" "$p" "$exp" "${line##* }"
 	done <<<"$spec"
 }
+
+# The backup VM runs only in its nightly window (backlog B51). Off, half the
+# probes below cannot answer, and a test that could not probe must not pass.
+# pve1 asks the server itself, on whichever path is up (the workstation's
+# forward accepts a connection while the VM is off, so a TCP probe would not do).
+if [ "$FORWARD" = open ] && ! ssh "${SSH_OPTS[@]}" "ops@$PVE" 'sudo pbs-target --wait 0' >/dev/null 2>&1; then
+	echo "pbs1 does not answer: it is off outside its nightly window. Start-VM pbs1 (elevated PowerShell), then run this again."
+	exit 1
+fi
 
 echo "== from the hypervisor"
 # Over the direct link the workstation answers nothing and the backup server

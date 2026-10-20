@@ -173,7 +173,22 @@ pve_backup_name: pbs1.internal
 # seconds (B21); one packet per second is the cadence proven to keep it up
 # (five seconds was not enough).
 pve_backup_keepalive_seconds: 1
+# The backup server runs for a nightly window, started by the workstation
+# before this time (backlog B51), so there is no random delay: one host, one
+# time.
 pve_backup_schedule: "*-*-* 02:30:00"
+# Inside the window a failed backup waits for the server and is tried again
+# every minute until its end; outside it, one wait of two minutes and one try.
+pve_backup_retry_from: "02:10"
+pve_backup_retry_until: "03:15"
+# The longest one client run may take before it counts as failed.
+pve_backup_client_timeout: 900
+# A backup is due when the last success is older than this; the failover
+# timer then starts one as soon as the server answers, at most once per
+# backoff. That catches up a missed night whenever the VM is next started.
+# Longer than one cycle plus the window, so it never runs ahead of the timer.
+pve_backup_due_hours: 26
+pve_backup_due_backoff_minutes: 60
 # healthchecks.io ping on success; empty until the owner creates the account.
 pve_backup_ping_url: ""
 

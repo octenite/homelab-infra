@@ -74,6 +74,11 @@
           PBS_FALLBACKS="{{ pve_backup_fallbacks | join(' ') }}"
           PBS_KEYFILE=/etc/pve/priv/storage/{{ pve_backup_storage }}.enc
           PBS_KEEPALIVE_SECONDS={{ pve_backup_keepalive_seconds }}
+          PBS_RETRY_FROM={{ pve_backup_retry_from }}
+          PBS_RETRY_UNTIL={{ pve_backup_retry_until }}
+          PBS_CLIENT_TIMEOUT={{ pve_backup_client_timeout }}
+          PBS_DUE_HOURS={{ pve_backup_due_hours }}
+          PBS_DUE_BACKOFF_MINUTES={{ pve_backup_due_backoff_minutes }}
       notify: Restart pbs-keepalive
 
     # The dead-man's switch address is a secret of its own kind (whoever has
@@ -104,6 +109,8 @@
           dest: pbs-host-restore
         - src: pbs-keepalive.sh
           dest: pbs-keepalive
+        - src: pbs-due.sh
+          dest: pbs-due
       loop_control:
         label: "{{ item.dest }}"
 
@@ -116,11 +123,12 @@
         - name: pbs-failover.service
           content: |
             [Unit]
-            Description=Keep the backup storage pointed at the path that is up
+            Description=Keep the backup storage pointed at the path that is up, and start a backup that is due
 
             [Service]
             Type=oneshot
             ExecStart=/usr/local/bin/pbs-target
+            ExecStart=/usr/local/bin/pbs-due
         - name: pbs-failover.timer
           content: |
             [Unit]
@@ -150,7 +158,6 @@
 
             [Timer]
             OnCalendar={{ pve_backup_schedule }}
-            RandomizedDelaySec=10min
             Persistent=true
 
             [Install]

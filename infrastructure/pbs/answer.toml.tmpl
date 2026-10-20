@@ -33,3 +33,8 @@ filesystem = "ext4"
 # with two disks the installer's names are not stable, and is formatted by
 # Ansible, not by the installer.
 disk-list = ["sda"]
+# Swap pinned at 4 GiB. Left to the installer, swap equals the memory the VM
+# has at install time (the first install, at 4 GiB, got 3.8 GiB). Since
+# 2026-10-20 the VM has 1.5 GiB (exception X35), so an unpinned rebuild would
+# get about 1.4 GiB of swap, and swap is the backstop a small VM relies on.
+lvm.swapsize = 4

@@ -40,7 +40,7 @@ $report += (@('Microsoft-Hyper-V-All', 'Microsoft-Hyper-V', 'Microsoft-Hyper-V-M
 $report += "vmms service: $((Get-Service vmms -ErrorAction SilentlyContinue).Status)"
 
 $report += Section 'hyper-v vms'
-$report += (Get-VM -ErrorAction SilentlyContinue | Select-Object Name, State, Generation, @{n = 'MemGB'; e = { [int]($_.MemoryAssigned / 1GB) } }, @{n = 'StartupGB'; e = { [int]($_.MemoryStartup / 1GB) } }, ProcessorCount, Path, AutomaticStartAction, Version | Format-Table -AutoSize | Out-String).Trim()
+$report += (Get-VM -ErrorAction SilentlyContinue | Select-Object Name, State, Generation, @{n = 'MemMB'; e = { [int64]($_.MemoryAssigned / 1MB) } }, @{n = 'StartupMB'; e = { [int64]($_.MemoryStartup / 1MB) } }, ProcessorCount, Path, AutomaticStartAction, Version | Format-Table -AutoSize | Out-String).Trim()
 $report += (Get-VM -ErrorAction SilentlyContinue | Get-VMHardDiskDrive | Select-Object VMName, Path | Format-Table -AutoSize | Out-String).Trim()
 $report += (Get-VM -ErrorAction SilentlyContinue | Get-VMNetworkAdapter | Select-Object VMName, SwitchName, MacAddress | Format-Table -AutoSize | Out-String).Trim()
 

@@ -163,7 +163,7 @@ If the old machine was stolen and not merely broken: its disks were not encrypte
 
 ## 4. WSL memory cap and the direct-link adapter
 
-The memory budget on the workstation is 4 GiB fixed for the VM and 5 GB for WSL.
+The memory budget on the workstation is 1.5 GiB (1536 MiB) fixed for the VM (exception X35; 4 GiB until 2026-10-20) and 5 GB for WSL.
 
 1. Create `%USERPROFILE%\.wslconfig` if it does not exist, with these two lines:
 
@@ -362,7 +362,7 @@ WSL has no route to the VM. Ansible reaches it through a port forward on the Win
 
 It is opened by hand and closed by hand. Close it when the work is done. `just test-fences` prints which state is live.
 
-These need the VM running and the window open: `just pbs-bootstrap`, `just pbs-apply`, `just pve-backup-init`, `PVE_BUILDER=pbs1 just pve-media ...`, and the backup-server part of `just test-fences`. The VM is started by hand: `Start-VM pbs1`.
+These need the VM running and the window open: `just pbs-bootstrap`, `just pbs-apply`, `just pve-backup-init`, `PVE_BUILDER=pbs1 just pve-media ...`, and the backup-server part of `just test-fences`. By day the VM is off (it runs for a nightly window): `Start-VM pbs1`, and `Stop-VM pbs1` when done. A plain run of `pbs-vm.ps1` also installs the window's task again.
 
 ## 7. Reconnect the hypervisor
 
