@@ -140,7 +140,7 @@ try { $vmLock = New-Object System.Threading.Mutex($false, 'Global\homelab-pbs1')
 catch [System.UnauthorizedAccessException] { throw "The nightly window's lock exists and this account may not open it. Run this again in a minute." }
 try { $locked = $vmLock.WaitOne([timespan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $locked = $true }
 if (-not $locked) { throw "The nightly window's task is starting $VmName right now. Run this again in a minute." }
-trap { try { $vmLock.ReleaseMutex() } catch { }; break }
+trap { try { $vmLock.ReleaseMutex() } catch { $null = $_ }; break }
 
 # ---- checks before anything changes -----------------------------------------
 if ($Iso -and $Eject) { throw '-Iso and -Eject cannot be combined: attach, let the installer finish, then eject.' }
@@ -627,4 +627,4 @@ if ($Away) { Write-Host 'nightly window: disabled for travel.' }
 else { Write-Host 'nightly window: enabled; the VM starts at 02:15 and powers itself off when its jobs are done.' }
 Get-VM -Name $VmName | Select-Object Name, State, @{n = 'MemoryMB'; e = { $_.MemoryStartup / 1MB } }, ProcessorCount, AutomaticStartAction | Format-Table -AutoSize
 Get-VMNetworkAdapter -VMName $VmName | Select-Object Name, SwitchName, MacAddress, IPAddresses | Format-Table -AutoSize
-try { $vmLock.ReleaseMutex() } catch { }
+try { $vmLock.ReleaseMutex() } catch { $null = $_ }

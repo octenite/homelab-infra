@@ -340,7 +340,7 @@ if ($Away) {
     if (Get-NetFirewallRule -Name $ManageRule -ErrorAction SilentlyContinue) { throw "The backup VM's management window is open: close it first with a plain run of pbs-vm.ps1. Nothing was changed." }
     # Shutting the VM down in its nightly window would cut pve1's backup short.
     $night = $null
-    if (Test-Path -LiteralPath $NightState) { try { $night = Get-Content -LiteralPath $NightState -Raw | ConvertFrom-Json } catch { } }
+    if (Test-Path -LiteralPath $NightState) { try { $night = Get-Content -LiteralPath $NightState -Raw | ConvertFrom-Json } catch { $night = $null } }
     $vmNow = Get-VM -Name $VmName -ErrorAction SilentlyContinue
     if ($night -and $vmNow -and $vmNow.State -eq 'Running' -and ((Get-Date) - [datetime]$night.started).TotalHours -lt 5) {
         throw "$VmName is in its nightly window (started at $(([datetime]$night.started).ToString('HH:mm'))): it powers itself off once pve1's backup and its jobs are done. Run -Away after that, or Stop-VM $VmName first to cut the night short. Nothing was changed."

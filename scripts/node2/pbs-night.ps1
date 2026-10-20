@@ -123,7 +123,7 @@ try {
     [IO.File]::WriteAllText($StateFile, $state)
     Log "started $VmName (Windows had $(Get-AvailableMB) MiB available after the start)"
 }
-finally { try { $mutex.ReleaseMutex() } catch { } }
+finally { try { $mutex.ReleaseMutex() } catch { $null = $_ } }
 
 # ---- while it runs --------------------------------------------------------
 $stopAt = $today.Add($StopAt)
@@ -145,4 +145,4 @@ try {
     Stop-VM -Name $VmName -Force   # a shutdown through the guest, not a power-off
     Log "06:30: $VmName is $((Get-VM -Name $VmName).State)"
 }
-finally { try { $mutex.ReleaseMutex() } catch { } }
+finally { try { $mutex.ReleaseMutex() } catch { $null = $_ } }
