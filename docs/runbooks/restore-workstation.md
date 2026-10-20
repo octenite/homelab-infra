@@ -356,7 +356,7 @@ WSL has no route to the VM. Ansible reaches it through a port forward on the Win
 
 It is opened by hand and closed by hand. Close it when the work is done. `just test-fences` prints which state is live.
 
-These need the VM running and the window open: `just pbs-bootstrap`, `just pbs-apply`, `just pve-backup-init`, `PVE_BUILDER=pbs1 just pve-media ...`, and the backup-server part of `just test-fences`. The VM is started by hand: `Start-VM pbs1`.
+These need the VM running and the window open: `just pbs-bootstrap`, `just pbs-apply`, `just pve-backup-init`, `PVE_BUILDER=pbs1 just pve-media ...`, and the backup-server part of `just test-fences`. By day the VM is off (it runs for a nightly window): `Start-VM pbs1`, and `Stop-VM pbs1` when done. A plain run of `pbs-vm.ps1` also installs the window's task again.
 
 ## 7. Reconnect the hypervisor
 

@@ -40,7 +40,7 @@ The disk, or the whole machine, is gone. The workstation, the router and GitHub 
 | Lost | Survives, and where |
 |---|---|
 | The Proxmox system and its configuration | Git: the answer file and the Ansible roles rebuild it |
-| The cluster database: users, tokens, TOTP enrolments, storage entries, guest configurations (none exist today) | The last nightly backup on the backup server VM. The backup runs at 02:30 and only succeeds when the VM is running then; the VM is started by hand, so the newest snapshot can be older than one day |
+| The cluster database: users, tokens, TOTP enrolments, storage entries, guest configurations (none exist today) | The last nightly backup on the backup server VM. The backup runs at 02:30, when the VM's nightly window has started it; a night the window missed (laptop away or off) is caught up the next time the VM runs, so the newest snapshot can be older than one day |
 | Files under `/etc` and `/root` that are not in Git | The same backup |
 | The thin pool with every guest disk (none exist today) | Nothing. From Phase 5 the guests are rebuilt or restored by the later phases |
 | The host's copy of the backup encryption key | Private repository and password manager. The play puts it back |

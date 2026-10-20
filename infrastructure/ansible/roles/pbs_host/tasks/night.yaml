@@ -1,0 +1,83 @@
+---
+# The nightly window (backlog B51): the workstation starts this VM at 02:15
+# for the hypervisor's 02:30 backup. The server's own jobs run inside the
+# window (their schedules: defaults/main.yaml), so do the package timers, and
+# the VM powers itself off once all of it is done (files/homelab-night-off.sh).
+# Missed times are caught up when the VM next starts: the server runs an
+# overdue job at its start, and the package timers are persistent.
+- name: Drop-in directories of the package timers
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item.timer }}.d"
+    state: directory
+    mode: "0755"
+  loop: "{{ pbs_host_night_timers }}"
+  loop_control:
+    label: "{{ item.timer }}"
+
+- name: Package timers inside the window, no random delay
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.timer }}.d/10-homelab.conf"
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/pbs_host, B51): inside the nightly window.
+      [Timer]
+      OnCalendar=
+      OnCalendar={{ item.at }}
+      RandomizedDelaySec=0
+  loop: "{{ pbs_host_night_timers }}"
+  loop_control:
+    label: "{{ item.timer }}"
+  notify: Reload systemd units
+
+- name: The power-off check
+  ansible.builtin.copy:
+    src: homelab-night-off.sh
+    dest: /usr/local/sbin/homelab-night-off
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: The power-off service and its timer
+  ansible.builtin.copy:
+    dest: "/etc/systemd/system/{{ item.name }}"
+    mode: "0644"
+    content: "{{ item.content }}"
+  loop:
+    - name: homelab-night-off.service
+      content: |
+        # Managed by Ansible (roles/pbs_host, B51).
+        [Unit]
+        Description=Power the backup server off when its nightly window is done
+
+        [Service]
+        Type=oneshot
+        TimeoutStartSec=120
+        ExecStart=/usr/local/sbin/homelab-night-off
+    - name: homelab-night-off.timer
+      content: |
+        # Managed by Ansible (roles/pbs_host, B51).
+        [Unit]
+        Description=Check every two minutes from 03:00 whether the nightly window is done
+
+        [Timer]
+        OnCalendar=*-*-* 03..05:00/2:00
+        AccuracySec=30s
+        Persistent=false
+
+        [Install]
+        WantedBy=timers.target
+  loop_control:
+    label: "{{ item.name }}"
+  register: pbs_host_night_units
+  notify: Reload systemd units
+
+- name: Units reloaded before the timer starts
+  ansible.builtin.meta: flush_handlers
+
+# A dry run writes no unit file, so a new timer cannot be enabled in one.
+- name: The power-off timer enabled
+  ansible.builtin.systemd_service:
+    name: homelab-night-off.timer
+    enabled: true
+    state: started
+  when: not (ansible_check_mode and pbs_host_night_units is changed)

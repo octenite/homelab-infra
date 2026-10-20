@@ -14,7 +14,7 @@ Owner of every row: the repository owner, who is the only administrator.
 - After every change under `private/`: commit and push it, then run `just private-status`. It must report that `private/` is on main, clean and in step with GitHub.
 - "Password manager" is the owner's. Its entries cannot be checked from the repository. Entries the owner has not confirmed are listed under [Open](#open).
 - The hypervisor is reached with `ssh ops@10.0.10.10`. The account `ops` has sudo without a password. Root has no SSH login on pve1 or pbs1.
-- pbs1 is reached only while the VM runs and the management window is open. The VM is started by hand (`Start-VM pbs1`). Open the window in an elevated PowerShell on the workstation, and close it with a plain run of the same script when the work is done:
+- pbs1 is reached only while the VM runs and the management window is open. By day the VM is off (it runs for a nightly window): start it first (`Start-VM pbs1`), and stop it afterwards (`Stop-VM pbs1`). Open the window in an elevated PowerShell on the workstation, and close it with a plain run of the same script when the work is done:
 
   ```
   powershell -ExecutionPolicy Bypass -File scripts\node2\pbs-vm.ps1 -Manage
