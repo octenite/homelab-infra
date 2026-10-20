@@ -132,6 +132,16 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 if (-not $isAdmin) { throw 'Run this in an elevated PowerShell.' }
 if (-not (Get-Command Get-VM -ErrorAction SilentlyContinue)) { throw 'Hyper-V PowerShell module not available.' }
 
+# The nightly window's task (pbs-night.ps1) starts the VM; this script changes
+# it only while it is off. One lock for both, so that neither meets the other
+# half-way. Released at the end and on any error: started as `.\pbs-vm.ps1`
+# in a console, the console would otherwise hold it until it is closed.
+try { $vmLock = New-Object System.Threading.Mutex($false, 'Global\homelab-pbs1') }
+catch [System.UnauthorizedAccessException] { throw "The nightly window's lock exists and this account may not open it. Run this again in a minute." }
+try { $locked = $vmLock.WaitOne([timespan]::FromSeconds(60)) } catch [System.Threading.AbandonedMutexException] { $locked = $true }
+if (-not $locked) { throw "The nightly window's task is starting $VmName right now. Run this again in a minute." }
+trap { try { $vmLock.ReleaseMutex() } catch { $null = $_ }; break }
+
 # ---- checks before anything changes -----------------------------------------
 if ($Iso -and $Eject) { throw '-Iso and -Eject cannot be combined: attach, let the installer finish, then eject.' }
 if ($Iso -and -not (Test-Path -LiteralPath $Iso)) { throw "ISO not found: $Iso" }
@@ -245,7 +255,8 @@ if ($vm.DynamicMemoryEnabled -or $vm.MemoryStartup -ne ([int64]$MemoryMB * 1MB))
 if ($vm.ProcessorCount -ne $Cpu) {
     if ($off) { Set-VM -Name $VmName -ProcessorCount $Cpu; Step "$Cpu vCPU" } else { Note 'vCPU count differs; needs the VM off' }
 }
-if ($vm.AutomaticStartAction -ne 'Nothing') { Set-VM -Name $VmName -AutomaticStartAction Nothing; Step 'started by hand (owner decision)' }
+# Not with Windows: the nightly window's task starts it (B51, below).
+if ($vm.AutomaticStartAction -ne 'Nothing') { Set-VM -Name $VmName -AutomaticStartAction Nothing; Step 'not started with Windows: the nightly window starts it' }
 if ($vm.AutomaticStopAction -ne 'ShutDown') { Set-VM -Name $VmName -AutomaticStopAction ShutDown; Step 'clean shutdown with the host' }
 if ($vm.CheckpointType -ne 'Disabled' -or $vm.AutomaticCheckpointsEnabled) {
     Set-VM -Name $VmName -CheckpointType Disabled -AutomaticCheckpointsEnabled $false; Step 'checkpoints disabled'
@@ -545,6 +556,60 @@ if (Test-Path $cfg) {
 }
 else { Note '.wslconfig absent; WSL cap not set' }
 
+# ---- the nightly window (owner decision 2026-10-20, B51) ---------------------
+# A scheduled task, as SYSTEM, runs pbs-night.ps1 at 02:15 and two minutes
+# after Windows starts; it starts the VM for pve1's 02:30 backup, and the VM
+# powers itself off when its jobs are done. The script runs from a folder only
+# administrators can write, because SYSTEM runs it. Enabled on a plain run and
+# with -Manage; disabled with -Away, so that it never starts the VM on the road.
+$NightDir = Join-Path $env:ProgramFiles 'homelab'
+$NightScript = Join-Path $NightDir 'pbs-night.ps1'
+$NightSource = Join-Path $PSScriptRoot 'pbs-night.ps1'
+$NightTaskPath = '\homelab\'
+$NightTaskName = 'pbs1-night'
+if (-not (Test-Path -LiteralPath $NightDir)) { New-Item -ItemType Directory -Path $NightDir | Out-Null; Step "folder $NightDir" }
+$srcText = [IO.File]::ReadAllText($NightSource)
+if (-not (Test-Path -LiteralPath $NightScript) -or [IO.File]::ReadAllText($NightScript) -ne $srcText) {
+    [IO.File]::WriteAllText($NightScript, $srcText, (New-Object Text.UTF8Encoding($false)))
+    Step "nightly window script installed: $NightScript"
+}
+$nightArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$NightScript`""
+function Test-NightTask {
+    $t = Get-ScheduledTask -TaskPath $NightTaskPath -TaskName $NightTaskName -ErrorAction SilentlyContinue
+    if (-not $t) { return $false }
+    $a = @($t.Actions)
+    if ($a.Count -ne 1 -or $a[0].Execute -ne 'powershell.exe' -or $a[0].Arguments -ne $nightArgs) { return $false }
+    $tr = @($t.Triggers)
+    # The boundary comes back in UTC, with an offset, or plain, depending on
+    # how it was written: compared as a local time of day.
+    $daily = @($tr | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskDailyTrigger' -and $_.StartBoundary -and ([datetime]$_.StartBoundary).TimeOfDay -eq [timespan]'02:15' -and $_.DaysInterval -eq 1 })
+    $boot = @($tr | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' -and $_.Delay -eq 'PT2M' })
+    if ($tr.Count -ne 2 -or $daily.Count -ne 1 -or $boot.Count -ne 1) { return $false }
+    $s = $t.Settings
+    if (-not $s.WakeToRun -or $s.DisallowStartIfOnBatteries -or $s.StopIfGoingOnBatteries -or "$($s.MultipleInstances)" -ne 'IgnoreNew' -or $s.ExecutionTimeLimit -ne 'PT5H' -or $s.StartWhenAvailable) { return $false }
+    if ($t.Principal.UserId -notin 'SYSTEM', 'NT AUTHORITY\SYSTEM' -or "$($t.Principal.RunLevel)" -ne 'Highest') { return $false }
+    return $true
+}
+if (-not (Test-NightTask)) {
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $nightArgs
+    $atBoot = New-ScheduledTaskTrigger -AtStartup
+    $atBoot.Delay = 'PT2M'
+    $triggers = @((New-ScheduledTaskTrigger -Daily -At '02:15'), $atBoot)
+    # On battery too: a missed backup costs more than an hour of a small VM.
+    $settings = New-ScheduledTaskSettingsSet -WakeToRun -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 5)
+    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    Register-ScheduledTask -TaskPath $NightTaskPath -TaskName $NightTaskName -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Description 'Starts the backup server VM pbs1 for the nightly backup window. Managed by scripts/node2/pbs-vm.ps1 (homelab-infra, B51).' -Force | Out-Null
+    if (-not (Test-NightTask)) { throw "scheduled task $NightTaskPath$NightTaskName is not as designed after registering it" }
+    Step "scheduled task $NightTaskPath$NightTaskName (02:15 daily and at start-up, as SYSTEM)"
+}
+$task = Get-ScheduledTask -TaskPath $NightTaskPath -TaskName $NightTaskName
+if ($Away -and $task.State -ne 'Disabled') { Disable-ScheduledTask -TaskPath $NightTaskPath -TaskName $NightTaskName | Out-Null; Step 'nightly window disabled for travel' }
+elseif (-not $Away -and $task.State -eq 'Disabled') { Enable-ScheduledTask -TaskPath $NightTaskPath -TaskName $NightTaskName | Out-Null; Step 'nightly window enabled' }
+# Waking for the task needs wake timers allowed on AC power; the power plan
+# is the owner's, so this only says so.
+$rtc = (powercfg /q SCHEME_CURRENT SUB_SLEEP RTCWAKE) -join "`n"
+if ($rtc -notmatch 'Current AC Power Setting Index:\s+0x00000001') { Note 'wake timers are not fully allowed on AC power ("Important wake timers only" does not wake for this task): a sleeping laptop misses the nightly window (Power Options, Sleep, Allow wake timers: Enable)' }
+
 # ---- start after an install medium was attached ---------------------------------
 if ($Iso -and (Get-VM -Name $VmName).State -eq 'Off') {
     Start-VM -Name $VmName
@@ -558,5 +623,8 @@ if ($Manage) { Write-Host "management window: OPEN (SSH from WSL through port $S
 else { Write-Host 'management window: closed.' }
 if ($Away) { Write-Host "backup port: CLOSED for travel (no forward, port $BackupPort blocked for every source). A plain run at home opens it for the hypervisor again." }
 else { Write-Host "backup port: forwarded to the VM for the hypervisor ($PveAddress) only." }
+if ($Away) { Write-Host 'nightly window: disabled for travel.' }
+else { Write-Host 'nightly window: enabled; the VM starts at 02:15 and powers itself off when its jobs are done.' }
 Get-VM -Name $VmName | Select-Object Name, State, @{n = 'MemoryMB'; e = { $_.MemoryStartup / 1MB } }, ProcessorCount, AutomaticStartAction | Format-Table -AutoSize
 Get-VMNetworkAdapter -VMName $VmName | Select-Object Name, SwitchName, MacAddress, IPAddresses | Format-Table -AutoSize
+try { $vmLock.ReleaseMutex() } catch { $null = $_ }

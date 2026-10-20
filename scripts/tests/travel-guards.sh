@@ -7,7 +7,8 @@
 #   scripts/tests/travel-guards.sh --with-session-start  also opens a real away session (two passphrases)
 #
 # Runs in WSL with a session open, at home, with the administration container
-# running and Tailscale disconnected. "Away" is reproduced at home: with the
+# running, the backup VM running (it is off outside its nightly window:
+# Start-VM pbs1; the backup fences below need it) and Tailscale disconnected. "Away" is reproduced at home: with the
 # route accepted, Windows sends the traffic for pve1 through the tunnel and
 # pve1 sees the container's address, exactly as from the road. That is also
 # the state in which the plan wants real runs refused at home. The tunnel is

@@ -26,7 +26,8 @@ pbs_ssh_sources: ["{{ pbs_nat_gateway }}"]
 pbs_p2p_address: 10.0.99.3/29
 
 # Retention and maintenance (ARCHITECTURE.md section 12): prune daily, garbage
-# collection weekly, verification monthly.
+# collection and verification weekly, all inside the nightly window (the
+# schedules: roles/pbs_host/defaults/main.yaml).
 pbs_keep:
   daily: 7
   weekly: 4

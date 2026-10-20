@@ -20,7 +20,7 @@ The only copy is the datastore of the backup server VM on the workstation. There
 |---|---|
 | The hypervisor is up, the host role is applied and the storage entry `pbs-node2` exists | `just pve-apply` ends clean. The role installs `pbs-host-restore` and its credentials only when the entry exists |
 | On a rebuilt hypervisor: the storage entry and the encryption key | `just pve-backup-init`. It creates the entry with the key recorded in the private repository. Nothing is placed by hand |
-| The backup server VM is running on the workstation | It is started by hand. Either path works: the direct link, or the fallback through the workstation's port forward. `pbs-target` picks the one that answers |
+| The backup server VM is running on the workstation | By day it is off (it runs for a nightly window): `Start-VM pbs1` in an elevated PowerShell, and `Stop-VM pbs1` when done. Either path works: the direct link, or the fallback through the workstation's port forward. `pbs-target` picks the one that answers |
 | A session and its agent, for `ssh` | `just session-start`, then `export SSH_AUTH_SOCK="$HOME/.ssh/homelab-agent.sock"` |
 
 A restore does not need the key on the workstation. To see the recorded key, for example to compare it with the password manager's copy:

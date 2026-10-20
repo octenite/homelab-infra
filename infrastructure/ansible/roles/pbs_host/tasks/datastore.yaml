@@ -78,13 +78,16 @@
 
 # nofail and a short device timeout: without them a missing or replaced
 # datastore disk stops the boot in emergency mode, where no SSH daemon runs
-# and this play, which would prepare the new disk, cannot connect.
+# and this play, which would prepare the new disk, cannot connect. With
+# nofail the boot does not wait for the mount, so it is ordered before the
+# server's proxy explicitly: the VM boots every night for its window, and a
+# job that starts before the datastore is there fails and counts as run.
 - name: Datastore mounted
   ansible.posix.mount:
     src: "LABEL={{ pbs_datastore }}"
     path: "{{ pbs_datastore_path }}"
     fstype: ext4
-    opts: defaults,nofail,x-systemd.device-timeout=10s
+    opts: defaults,nofail,x-systemd.device-timeout=10s,x-systemd.before=proxmox-backup-proxy.service
     state: mounted
 
 - name: Datastore owned by the backup service
