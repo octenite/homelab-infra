@@ -18,6 +18,7 @@ The questions this document answers:
 |---|---|---|
 | Public repository: code, runbooks, this file | GitHub; the working clone on the workstation | Nothing short of GitHub and the workstation together |
 | Private repository: SOPS-encrypted secrets, device identifiers, encrypted router exports | GitHub; the working clone on the workstation, mounted as the submodule `private/` | Commits not yet pushed are lost with the workstation. `just private-status` shows whether any exist |
+| Firmware repository: the ESPHome configuration of the IoT devices and their encrypted secrets | GitHub; the working clone on the workstation, mounted as the submodule `iot/` | Commits not yet pushed are lost with the workstation; `just private-status` covers it too. The devices keep running their firmware whatever happens to the repositories or the lab |
 | Recovery age key: decrypts every SOPS file | Password manager and two paper copies. Never on the workstation | Nothing in these scenarios |
 | Recovery SSH key | Password manager, with its passphrase | Nothing in these scenarios |
 | Operator age key and lab SSH key: daily use | The workstation only (WSL), each protected by a passphrase | The workstation. They are replaced, not recovered |
@@ -31,7 +32,7 @@ The questions this document answers:
 | Account logins: GitHub, the object storage provider, the dead-man's-switch service, the notification bot | With the owner. Where each account's second factor and recovery codes are kept is not recorded yet ([secrets register](docs/security/secrets-register.md), Open) | Nothing in these scenarios |
 | OpenTofu state | Encrypted in the object-storage bucket; the same ciphertext is kept in the private repository under `opentofu/state-copies/`. The passphrase and the bucket keys are in the private repository | Nothing in these scenarios |
 
-Recovery always uses the private repository's `main` branch, not the commit the public repository pins. `just setup` switches to it. `just private-status` confirms it before a recovery starts.
+Recovery always uses the `main` branch of each private repository (`private/`, `iot/`), not the commit the public repository pins. `just setup` switches to it. `just private-status` confirms both before a recovery starts.
 
 ## Scenario 1: the hypervisor is destroyed
 

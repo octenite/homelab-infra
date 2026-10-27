@@ -8,17 +8,20 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# First-time setup of a working copy: tools, hooks, and the private repository on its main branch.
+# First-time setup of a working copy: tools, hooks, and the two private repositories (private/, iot/) on their main branch.
 setup:
     mise install
     pre-commit install
     git submodule update --init
     git -C private switch main
     git -C private pull --ff-only
+    git -C iot switch main
+    git -C iot pull --ff-only
 
-# The private repository must be on main and in step with GitHub before secrets are written or a recovery starts.
-private-status:
-    bash scripts/ops/private-status.sh
+# The private repositories must be on main and in step with GitHub before secrets are written, a device is flashed or a recovery starts.
+[positional-arguments]
+private-status *paths:
+    bash scripts/ops/private-status.sh "$@"
 
 # All fast checks. The CI lint job runs this; the pre-commit hook runs the per-file subset in .pre-commit-config.yaml.
 lint: yaml shell actions policy templates ansible-lint tofu-lint
@@ -226,9 +229,9 @@ secrets:
 
 # Heavier scanners. Needs MISE_ENV=ci so the tools are installed.
 scan:
-    trivy fs --scanners misconfig,secret,vuln --severity HIGH,CRITICAL --exit-code 1 --skip-dirs private .
-    checkov --directory . --quiet --compact --skip-path private
-    semgrep scan --config p/default --config p/secrets --config p/github-actions --metrics off --error --quiet --exclude private .
+    trivy fs --scanners misconfig,secret,vuln --severity HIGH,CRITICAL --exit-code 1 --skip-dirs private --skip-dirs iot .
+    checkov --directory . --quiet --compact --skip-path private --skip-path iot
+    semgrep scan --config p/default --config p/secrets --config p/github-actions --metrics off --error --quiet --exclude private --exclude iot .
 
 # Everything CI runs.
 ci: lint powershell secrets scan
