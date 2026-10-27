@@ -46,13 +46,15 @@ set)
 		echo "usage: $0 set <file> <key>" >&2
 		exit 2
 	}
+	# One of the two private repositories; each has its own .sops.yaml.
 	case "$file" in
-	private/*.sops.yaml) ;;
+	private/*.sops.yaml | iot/*.sops.yaml) ;;
 	*)
-		echo "the file must be private/....sops.yaml" >&2
+		echo "the file must be private/....sops.yaml or iot/....sops.yaml" >&2
 		exit 1
 		;;
 	esac
+	top=${file%%/*}
 	read -rsp "value for $key: " value
 	echo
 	[ -n "$value" ] || {
@@ -65,17 +67,17 @@ set)
 		need_session
 		printf '%s' "$json" | sops set --value-stdin "$file" "[\"$key\"]"
 	else
-		rel=${file#private/}
+		rel=${file#*/}
 		work=$(mktemp -d /dev/shm/homelab-secret.XXXXXX)
 		trap 'rm -rf "$work"' EXIT
 		printf '%s: %s\n' "$key" "$json" >"$work/plain.yaml"
 		mkdir -p "$(dirname "$file")"
-		(cd private && sops encrypt --filename-override "$rel" "$work/plain.yaml") >"$work/encrypted.yaml"
+		(cd "$top" && sops encrypt --filename-override "$rel" "$work/plain.yaml") >"$work/encrypted.yaml"
 		[ -s "$work/encrypted.yaml" ]
 		mv "$work/encrypted.yaml" "$file"
 	fi
 	unset json
-	echo "stored $key in $file; commit the private repository"
+	echo "stored $key in $file; commit the $top repository"
 	;;
 *)
 	echo "usage: $0 reveal <file> [key [subkey]] | set <file> <key>" >&2

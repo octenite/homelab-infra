@@ -1,3 +1,6 @@
 [submodule "private"]
 	path = private
 	url = https://github.com/octenite/homelab-private.git
+[submodule "iot"]
+	path = iot
+	url = https://github.com/octenite/homelab-iot.git

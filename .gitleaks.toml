@@ -6,5 +6,5 @@ title = "homelab-infra"
 useDefault = true
 
 [allowlist]
-description = "Third-party Ansible collections installed into the tree by `just ansible-deps`; their test fixtures contain example keys. The directory is ignored by Git."
-paths = ['''^infrastructure/ansible/collections/''']
+description = "Two paths. Third-party Ansible collections installed into the tree by `just ansible-deps`: their test fixtures contain example keys, and the directory is ignored by Git. The firmware submodule iot/: a separate repository with its own Gitleaks configuration (it allow-lists its documented CI dummy key) and its own CI; the working-tree scan here would apply the wrong allowlist to it, and the history scan never sees it."
+paths = ['''^infrastructure/ansible/collections/''', '''^iot/''']

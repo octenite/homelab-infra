@@ -2,6 +2,7 @@ extends: default
 
 ignore: |
   private/
+  iot/
   .git/
   infrastructure/ansible/collections/
 
