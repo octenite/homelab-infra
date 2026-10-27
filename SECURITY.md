@@ -17,7 +17,7 @@ Checked against the code on 2026-10-07. Phases 0 to 4 are closed; Phase 3 (hyper
 
 ## Rules for this repository
 
-1. Never commit a secret, even encrypted. Encrypted files belong in the private companion repository.
+1. Never commit a secret, even encrypted. Encrypted files belong in the private companion repositories (`private/`; `iot/` for the firmware secrets).
 2. Never commit an identifier: MAC address, e-mail address, network name, serial number.
 3. Pin every version. No `latest` tags, and GitHub Actions are pinned by commit SHA.
 4. Every exception to the model is recorded with an ID, a reason, and a mitigation or removal task.

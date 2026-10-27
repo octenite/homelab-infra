@@ -8,10 +8,10 @@ Owner of every row: the repository owner, who is the only administrator.
 
 ## How to read it
 
-- Paths that start with `private/` are in the private repository. Only file names and key names appear here.
+- Paths that start with `private/` are in the private repository; paths that start with `iot/` are in the firmware repository (section 9). Only file names and key names appear here.
 - Commands run in WSL, in the repository, with a session open (`just session-start`), unless a step says otherwise.
-- `just reveal <file> <key> [subkey]` prints one value. `just secret-set <file> <key>` stores one value typed at a hidden prompt.
-- After every change under `private/`: commit and push it, then run `just private-status`. It must report that `private/` is on main, clean and in step with GitHub.
+- `just reveal <file> <key> [subkey]` prints one value. `just secret-set <file> <key>` stores one value typed at a hidden prompt. Both accept a file under `private/` or `iot/`.
+- After every change under `private/` or `iot/`: commit and push that repository, then run `just private-status`. It must report that both are on main, clean and in step with GitHub.
 - "Password manager" is the owner's. Its entries cannot be checked from the repository. Entries the owner has not confirmed are listed under [Open](#open).
 - The hypervisor is reached with `ssh ops@10.0.10.10`. The account `ops` has sudo without a password. Root has no SSH login on pve1 or pbs1.
 - pbs1 is reached only while the VM runs and the management window is open. By day the VM is off (it runs for a nightly window): start it first (`Start-VM pbs1`), and stop it afterwards (`Stop-VM pbs1`). Open the window in an elevated PowerShell on the workstation, and close it with a plain run of the same script when the work is done:
@@ -109,6 +109,20 @@ These are not secrets of their own. They carry a secret from the tables above an
 | The install stick in Node 1 (`just pve-media prepare`) | The same hash | The first task of `just pve-apply` overwrites the image and removes its boot entry |
 | `F:\homelab\iso\pbs1-auto.iso` (`just pbs-media`) | Hash of the pbs1 root password | `pbs-vm.ps1 -Eject` |
 | `private/opentofu/state-copies/<root>.state.json` | The encrypted state, exactly as the bucket holds it | Kept on purpose. The private repository's guard refuses a copy that is not ciphertext |
+| `/dev/shm/homelab-session/iot-secrets.yaml` (`cd iot && just unlock`) | Every secret of section 9, in the clear, in memory | `just lock`, or the end of the session, which removes its directory |
+| The firmware on each ESP32 | The IoT Wi-Fi key, the fallback hotspot password, the web login and that device's API key, compiled in | Not removable: a flash replaces them. A board that leaves the house is erased first (`iot/docs/devices/`, Removal) |
+
+## 9. IoT devices
+
+The ESPHome devices ([iot-devices.md](../components/iot-devices.md)). Their secrets are in `iot/secrets.sops.yaml`, encrypted to the same two age keys, and are compiled into each device's firmware: a change takes effect with the next flash of every device that uses it (`cd iot && just unlock && just upload <device>`, at home, from the workstation). On 2026-10-27 every value is a placeholder (`CHANGE-ME`); the owner stores the real ones before the first flash (backlog B53).
+
+| Secret | Created | Lives in | Used by | Rotation | If it leaks |
+|---|---|---|---|---|---|
+| IoT network name and key as the devices know them (`wifi_ssid`, `wifi_password`) | Placeholder 2026-10-27; real value with B53 | `iot/secrets.sops.yaml`. The key is `openwrt_wifi_key_iot` of section 2, a second copy | `iot/packages/wifi.yaml`, every device | With [R2](#r2-change-a-wi-fi-key), which flashes every device | A device in range joins the IoT network (section 2) |
+| Fallback hotspot password (`fallback_ap_password`) | Same | `iot/secrets.sops.yaml` only | Every device, when it cannot join its network for 90 s | At will: `just secret-set iot/secrets.sops.yaml fallback_ap_password`, flash every device | Whoever is in radio range of a device that has lost its network can open its captive portal and point it at another network |
+| Web login of the device pages (`web_username`, `web_password`) | Same | `iot/secrets.sops.yaml`; password manager; the phone shortcuts | Every device's page (TCP 80) and the shortcuts that call it | Yearly, and on exposure: store the new values, flash every device, update the shortcuts | From the trusted or IoT network: operate every device's page, the mains board included. Not reachable from the guest network or from outside |
+| API and OTA key per device (`<device>_api_key`) | Same; 32 random bytes, base64 (`openssl rand -base64 32`), one per device | `iot/secrets.sops.yaml`; later Home Assistant's ESPHome integration | That device's native API (TCP 6053) and every update of it over the air (TCP 3232) | On exposure: new key, one flash of that device (the upload authenticates with the old key), then Home Assistant | From the trusted or IoT network: full control of that device, and any firmware can be flashed to it |
+| OTA password of the hand-built firmware (`<device>_ota_password`) | Given in the Device Builder by the owner, before this repository existed | `iot/secrets.sops.yaml`, until the first flash from Git | The one migration flash per device (`iot/docs/devices/`, Deployment) | Not rotated: removed from the file once no device runs the hand-built firmware | Until the migration: that device can be flashed with any firmware from the trusted or IoT network |
 
 ## Procedures
 
@@ -185,6 +199,7 @@ Work from the dock port, not over the wireless network whose key changes: the ap
    ```
 
 4. Reconnect the clients with the new key. Commit and push the private repository.
+5. For the IoT key: the ESPHome devices carry it in their firmware (section 9). Store it with `just secret-set iot/secrets.sops.yaml wifi_password`, commit and push `iot/`, and flash every device (`cd iot && just unlock && just upload <device>`) while the old network still exists; a device flashed after the change is reached through its fallback hotspot instead.
 
 ### R3. Change a root password
 

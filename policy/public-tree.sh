@@ -14,9 +14,9 @@ set -u
 fail=0
 
 # NUL-separated, so a name with a space or a newline is still one name. The
-# private submodule and this file (which has to spell the patterns) are skipped.
+# two private submodules and this file (which has to spell the patterns) are skipped.
 list() {
-	git ls-files -z --cached --others --exclude-standard -- . ':(exclude)private' ':(exclude)policy/public-tree.sh'
+	git ls-files -z --cached --others --exclude-standard -- . ':(exclude)private' ':(exclude)iot' ':(exclude)policy/public-tree.sh'
 }
 
 # A check that could not look must not pass.

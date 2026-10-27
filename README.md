@@ -35,7 +35,7 @@ Gate records are in [docs/phases/](docs/phases/). No phase starts before the pre
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The design and what is built of it: topology, resource budget, network policy matrix, secrets, identity, backups, recovery, phases, decision log |
 | [docs/INITIAL-ASSESSMENT.md](docs/INITIAL-ASSESSMENT.md) | What existed before the work started, measured |
 | [docs/adr/](docs/adr/) | Architecture decision records |
-| [docs/components/](docs/components/) | One document per component: router and access points, hypervisor, backup server, the remote-access container, the laptop's Tailscale client and travel mode |
+| [docs/components/](docs/components/) | One document per component: router and access points, hypervisor, backup server, the remote-access container, the laptop's Tailscale client and travel mode, the IoT devices |
 | [docs/runbooks/](docs/runbooks/) | Operating and restore procedures |
 | [docs/security/secrets-register.md](docs/security/secrets-register.md) | Every secret: where it lives and how it is rotated |
 | [docs/backlog.md](docs/backlog.md) | Open items outside the current phase |
@@ -43,13 +43,18 @@ Gate records are in [docs/phases/](docs/phases/). No phase starts before the pre
 | [DISASTER-RECOVERY.md](DISASTER-RECOVERY.md) | Rebuild procedure and its test status |
 | [CLAUDE.md](CLAUDE.md) | Project brief and working rules |
 
-## Two repositories
+## Three repositories
 
 This repository is public and holds code, manifests and documentation. It contains no ciphertext and no identifiers such as MAC addresses or e-mail addresses. A CI policy test enforces that for the patterns it knows.
 
-Encrypted secrets and the identifying inventory live in a private companion repository, mounted as the Git submodule `private/` and pinned by commit. CI never checks it out, and Argo CD never needs it.
+Two private companions are mounted as Git submodules and pinned by commit. CI never checks them out, and Argo CD never needs them.
 
-The pin can be older than the newest secrets. All work and every recovery use the private repository's `main` branch. `just setup` switches to it, and `just private-status` reports whether it is on `main`, clean and in step with GitHub.
+| Submodule | Repository | Holds |
+|---|---|---|
+| `private/` | `homelab-private` | Encrypted secrets and the identifying inventory |
+| `iot/` | `homelab-iot` | The ESPHome firmware configuration of the IoT devices, with its own encrypted secrets and its own CI that compiles every device ([docs/components/iot-devices.md](docs/components/iot-devices.md), [ADR 0006](docs/adr/0006-iot-firmware-repository.md)) |
+
+The pins can be older than the newest commits. All work and every recovery use each companion's `main` branch. `just setup` switches both to it, and `just private-status` reports whether each is on `main`, clean and in step with GitHub.
 
 ## Working on this repository
 
@@ -83,7 +88,8 @@ Every recipe that touches a host needs an operator session. A session holds the 
 | Configure the hypervisor | `just pve-apply` |
 | Configure the backup server (needs the management window: `pbs-vm.ps1 -Manage`) | `just pbs-apply` |
 | OpenTofu for one root | `just tofu pve plan` |
-| Read one secret value; store one at a hidden prompt | `just reveal <file> <key>`, `just secret-set <file> <key>` |
+| Read one secret value; store one at a hidden prompt | `just reveal <file> <key>`, `just secret-set <file> <key>` (a file under `private/` or `iot/`) |
+| Validate, compile or flash an IoT device | in `iot/`: `just lint`, `just compile <device>`; with a session open, `just unlock` then `just upload <device>` |
 
 Rebuilding the hypervisor is in [docs/runbooks/restore-pve-host.md](docs/runbooks/restore-pve-host.md).
 
