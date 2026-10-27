@@ -80,7 +80,7 @@ The rule names start with `rdp-`, not `homelab-`. `pbs-vm.ps1` removes every `ho
 
 A change of the desktop's address changes `$Desktop` in the script and the reservation together, in one pull request.
 
-Run the script again after a feature update of Windows, after anyone used the Remote Desktop switch in Settings, and whenever in doubt (`-Check`).
+Run the script again after a feature update of Windows, after anyone used the Remote Desktop switch in Settings, and whenever in doubt (`-Check`). `travel.ps1` runs it for a trip: `-Off` on `-Away`, plain on `-Home` (`docs/components/travel-mode.md`).
 
 ## Security considerations
 
@@ -89,7 +89,7 @@ Run the script again after a feature update of Windows, after anyone used the Re
   - The password is never saved in `mstsc` on the desktop.
   - The operator session ends with `just session-end` when the work is done, and the remote session is signed out or disconnected when you leave the desktop.
 - **By address.** Any device in the trusted network that takes 192.168.1.242 while the desktop is off reaches the login prompt (the same class as X9). It then still needs the password, and the lockout limits guessing.
-- **Away from home.** The allow rules need the Private profile and one of the two home addresses, and a foreign network starts as Public. Residue: a foreign network marked Private by hand, which hands the laptop .196 or .197 and has a host at .242, reaches the login prompt. `rdp.ps1 -Off` before a trip closes even that. Whether `travel.ps1 -Away` should do this is backlog B50.
+- **Away from home.** The allow rules need the Private profile and one of the two home addresses, and a foreign network starts as Public. On top of that, `travel.ps1 -Away` runs `rdp.ps1 -Off` and `-Home` runs `rdp.ps1` (owner decision 2026-10-27, B50): on the road the listener is switched off and no allow rule exists, so not even a foreign network marked Private that hands out .196 or .197 reaches the login prompt. A trip without `-Away` keeps the rules' own limits only.
 - **Tailscale.** No path. The client accepts no inbound connection (shields up), and its addresses are in no allow rule.
 - **The backup VM and the direct link.** No path. Every connection from them is blocked by `pbs-vm.ps1`'s rules `homelab-block-backup-vm` and `homelab-block-direct-link`.
 - **The certificate** is self-signed and created by Windows. If Windows creates a new one (after a reinstall, for instance), the warning returns at the desktop. Compare the thumbprint again. If it does not match what `rdp.ps1` prints, do not connect.
