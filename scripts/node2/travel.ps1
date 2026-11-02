@@ -23,7 +23,8 @@
 #      scripts/node2/travel.sh) and checks that pve1 sees this laptop on the
 #      direct path. A tunnel that is already up is disconnected first.
 #   3. Records whether the backup VM runs, shuts it down, and converges
-#      pbs-vm.ps1 -Away: no backup port forward while away.
+#      pbs-vm.ps1 -Away (no backup port forward while away) and rdp.ps1 -Off
+#      (no Remote Desktop while away; B50).
 #   4. Starts the administration container (D12) and connects Tailscale with
 #      the route accepted.
 #   5. Proves the whole path: the container is online with its tag and its
@@ -38,7 +39,8 @@
 # the container's memory on this trip to C:\ProgramData\homelab\
 # remote1-memory.log and stops the container; reminds you to pause its health
 # check; converges pbs-vm.ps1, which forwards the backup port again and turns
-# the backup VM's nightly window back on. It does not start the VM: the
+# the backup VM's nightly window back on, and rdp.ps1, which admits the home
+# desktop again. It does not start the VM: the
 # window does that at night, and a missed night is caught up by pve1 whenever
 # the VM next runs (backlog B51).
 #
@@ -374,6 +376,10 @@ if ($Away) {
         $backupVm = Save-BackupVmState
         if ((Invoke-Sibling 'pbs-vm.ps1' @('-Away')) -ne 0) { throw 'pbs-vm.ps1 -Away failed (above); the backup VM is shut down: a plain run of pbs-vm.ps1 and Start-VM pbs1 undo it' }
         Step 'pbs-vm.ps1 -Away converged: no backup port forward while away'
+        # Remote Desktop admits the home desktop only, at home; on the road
+        # not even that (owner decision 2026-10-27, B50; exception X34).
+        if ((Invoke-Sibling 'rdp.ps1' @('-Off')) -ne 0) { throw 'rdp.ps1 -Off failed (above): Remote Desktop may still be switched on; a plain run of rdp.ps1 at home puts it back' }
+        Step 'rdp.ps1 -Off converged: no Remote Desktop while away'
         if ((Invoke-TravelVerb 'container-start').Code -ne 0) { throw 'the container could not be started (above)' }
         Step "$ContainerName runs (D12)"
         Connect-Tunnel
@@ -400,7 +406,7 @@ if ($Away) {
         if ($ready) {
             $summary = @(
                 "AWAY: the tunnel is up with the route accepted; $ContainerName is online and pve1 sees this laptop arrive from $TunnelSource.",
-                "  backup VM: $backupVm. The backup port is closed: pve1 has no backup target until -Home, and its dead-man's switch reports the nights it misses.",
+                "  backup VM: $backupVm. The backup port is closed: pve1 has no backup target until -Home, and its dead-man's switch reports the nights it misses. Remote Desktop is off until -Home.",
                 '  From now on, also while still at home, real runs against pve1 are refused (pve-apply, tokens, backup init, bootstrap, install media, tofu remote apply); dry runs and plans are allowed.',
                 '  A session started now lasts 2 hours, and ending it disconnects Tailscale. To work again after that: travel.ps1 -Connect, then just session-start.',
                 '  Limits: nothing repairs this path from the road. If pve1 restarts, the container stays stopped (it does not start with the host) and the path is gone until you are home. Large copies are slow: the connection is relayed (D8).',
@@ -471,6 +477,8 @@ if ($AtHome) {
     }
     if ((Invoke-Sibling 'pbs-vm.ps1' @()) -ne 0) { Problem 'pbs-vm.ps1 failed (above): the backup port may still be closed' }
     else { Step 'pbs-vm.ps1 converged: the backup port is forwarded to the VM for pve1 again' }
+    if ((Invoke-Sibling 'rdp.ps1' @()) -ne 0) { Problem 'rdp.ps1 failed (above): the home desktop may not reach Remote Desktop; run rdp.ps1 by hand' }
+    else { Step 'rdp.ps1 converged: Remote Desktop admits the home desktop again (B50)' }
     # In a try: the reminder below must print whatever happens here.
     try { $backupVm = Restore-BackupVm }
     catch {
