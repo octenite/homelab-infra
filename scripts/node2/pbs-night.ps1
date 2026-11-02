@@ -5,17 +5,24 @@
 # write; its log and state file live beside it.
 #
 #   powershell -ExecutionPolicy Bypass -File pbs-night.ps1           as the task runs it
-#   ... -DryRun                                                      the checks only, at any time: starts nothing
+#   ... -DryRun                                                      the checks only, at any time: starts nothing, never sleeps
+#   ... -Rehearse                                                    the away path, at any time: never starts the VM (scripts\tests\pbs-night-away.ps1)
 #
-# 1. It exits unless all of these hold: the local time is inside the start
-#    window (02:10 to 03:15); this laptop holds one of its home addresses;
-#    pbs1 exists and is Off; no install medium is in its drive; its system and
-#    datastore disks are attached (a VM in the middle of a rebuild is never
-#    started). A VM that runs already was started by someone and is left
-#    alone, as is one in any other state.
-# 2. It starts pbs1, trying again every 30 seconds for up to 20 minutes (never
+# 1. It exits unless the local time is inside the start window (02:10 to 03:15).
+# 2. It looks for one of this laptop's home addresses, for up to 3 minutes: after
+#    a wake the dock or the Wi-Fi need a moment. With none it logs what it saw
+#    and starts nothing. If this task's own timer woke the laptop, it then puts
+#    the laptop back to sleep, so that it does not stay awake in a bag (owner
+#    decision 2026-11-03). Sleep and not a shutdown, because open work survives
+#    it; hibernation is off on this laptop (exception X23). A laptop that was
+#    awake anyway is left on.
+# 3. It exits unless pbs1 exists and is Off; no install medium is in its drive;
+#    its system and datastore disks are attached (a VM in the middle of a
+#    rebuild is never started). A VM that runs already was started by someone
+#    and is left alone, as is one in any other state.
+# 4. It starts pbs1, trying again every 30 seconds for up to 20 minutes (never
 #    past 03:15) while Windows cannot give it the memory.
-# 3. It waits while pbs1 runs. The VM powers itself off once its jobs are done,
+# 5. It waits while pbs1 runs. The VM powers itself off once its jobs are done,
 #    from 03:30 (roles/pbs_host, homelab-night-off). At 06:30, if the VM this
 #    run started still runs, unrestarted, and the management window is closed,
 #    it shuts it down cleanly: never a power-off.
@@ -26,7 +33,7 @@
 # take the lock Global\homelab-pbs1, so a start never meets a change.
 
 [CmdletBinding()]
-param([switch]$DryRun)
+param([switch]$DryRun, [switch]$Rehearse)
 
 $ErrorActionPreference = 'Stop'
 
@@ -35,6 +42,10 @@ $VmName = 'pbs1'
 $HomeAddresses = @('192.168.1.196', '192.168.1.197')
 $StartFrom = [timespan]'02:10'
 $StartUntil = [timespan]'03:15'
+$HomeLookSeconds = 180       # two of Windows' one-minute Wi-Fi scans, and the dock's return after a wake
+$HomeLookEvery = 10
+$WakeSource = 'homelab\pbs1-night'   # the power log names the task whose timer woke the laptop; the rehearsal's name starts the same
+$WakeRecentMinutes = 10      # an older wake by this task was not this run's
 $RetryMinutes = 20
 $StopAt = [timespan]'06:30'
 $ManageRule = 'homelab-pbs1-ssh-wsl'   # present while the management window is open
@@ -44,6 +55,7 @@ $StateFile = Join-Path $Dir 'pbs-night.json'
 # ---------------------------------------------------------------------------
 
 function Log([string]$msg) {
+    if ($Rehearse) { $msg = "rehearsal: $msg" }
     $line = "{0} {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg
     if ($DryRun) { Write-Host $line; return }
     try {
@@ -60,9 +72,65 @@ function Get-AvailableMB {
     try { return [int](Get-Counter '\Memory\Available MBytes' -ErrorAction Stop).CounterSamples[0].CookedValue } catch { return -1 }
 }
 
-# Keeps Windows from sleeping while this runs; released when the process ends.
-Add-Type -Namespace Homelab -Name Power -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint flags);'
+function Test-AtHome {
+    return [bool]@(Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred -ErrorAction SilentlyContinue | Where-Object { $HomeAddresses -contains $_.IPAddress }).Count
+}
+
+# What the links looked like. The next morning's reader must be able to tell
+# "away from home" from "at home with the Wi-Fi radio off".
+function Get-LinkFact {
+    $facts = @()
+    try {
+        $facts += @(Get-NetAdapter -Physical -ErrorAction Stop | Where-Object { $_.InterfaceDescription -notmatch 'Bluetooth' } | Sort-Object Name | ForEach-Object { "$($_.Name) $($_.Status)" })
+        $wlan = (& netsh.exe wlan show interfaces) -join "`n"
+        if ($wlan -match 'Software\s+(On|Off)') { $facts += "Wi-Fi radio $($Matches[1].ToLower())" }
+        if ($wlan -match '(?m)^\s*SSID\s*:\s*(.+?)\s*$') { $facts += "joined to $($Matches[1])" }
+        $battery = Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object -First 1
+        if ($battery) { $facts += "$(if ($battery.BatteryStatus -eq 1) { 'on battery' } else { 'on AC' }) at $($battery.EstimatedChargeRemaining) %" }
+    }
+    catch { $facts += "unread: $(($_.Exception.Message -split "`n")[0])" }
+    return $facts -join ', '
+}
+
+# The time of the latest wake, if this task's timer caused it and it is recent.
+# The power log names the task: "Windows will execute 'NT TASK\homelab\pbs1-night'
+# scheduled task that requested waking the computer."
+function Get-TaskWake {
+    try {
+        $last = Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Power-Troubleshooter'; Id = 1 } -MaxEvents 1 -ErrorAction Stop
+        $source = ([xml]$last.ToXml()).Event.EventData.Data | Where-Object { $_.Name -eq 'WakeSourceText' } | ForEach-Object { $_.'#text' }
+        if ("$source" -like "*$WakeSource*" -and ((Get-Date) - $last.TimeCreated).TotalMinutes -le $WakeRecentMinutes) { return $last.TimeCreated }
+    }
+    catch { Log "the power log could not be read: $(($_.Exception.Message -split "`n")[0])" }
+    return $null
+}
+
+# SetThreadExecutionState keeps Windows from sleeping while this runs, until the
+# process ends. RtlAdjustPrivilege turns on the shutdown privilege that SYSTEM
+# holds switched off, which a sleep needs. rundll32 cannot make this call: its
+# arguments arrive as garbage and can disable the wake timers the next night needs.
+Add-Type -Namespace Homelab -Name Power -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint flags);
+[DllImport("ntdll.dll")] public static extern int RtlAdjustPrivilege(int privilege, bool enable, bool currentThread, out bool previous);
+[DllImport("powrprof.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.I1)] public static extern bool SetSuspendState([MarshalAs(UnmanagedType.I1)] bool hibernate, [MarshalAs(UnmanagedType.I1)] bool force, [MarshalAs(UnmanagedType.I1)] bool wakeEventsDisabled);
+'@
 $EsContinuousSystem = [uint32]'0x80000001'
+$SeShutdownPrivilege = 19
+
+# Back to sleep, if this task's timer is what woke the laptop. Anyone who touched
+# it in these few minutes wakes it again with a key; their work is still there.
+# The call returns when the laptop wakes, and this run then ends at once, ahead
+# of the next night's 02:15.
+function Suspend-Laptop {
+    $woke = Get-TaskWake
+    if (-not $woke) { Log 'this task did not wake the laptop: it stays on'; return }
+    Log "this task woke the laptop at $($woke.ToString('HH:mm:ss')) and it is away from home: back to sleep"
+    $previous = $false
+    [void][Homelab.Power]::RtlAdjustPrivilege($SeShutdownPrivilege, $true, $false, [ref]$previous)
+    $asleep = Get-Date
+    if ([Homelab.Power]::SetSuspendState($false, $false, $false)) { Log "awake again $([int]((Get-Date) - $asleep).TotalMinutes) minutes later" }
+    else { Log "Windows refused to sleep (error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())): the laptop stays on"; exit 1 }
+}
 
 $mutex = New-Object System.Threading.Mutex($false, 'Global\homelab-pbs1')
 function Lock-Vm([int]$Seconds) {
@@ -73,10 +141,30 @@ function Lock-Vm([int]$Seconds) {
 $today = (Get-Date).Date
 $now = Get-Date
 $why = $null
-if ($now -lt $today.Add($StartFrom) -or $now -ge $today.Add($StartUntil)) { $why = "outside the start window ($StartFrom to $StartUntil)" }
-elseif (-not @(Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred -ErrorAction SilentlyContinue | Where-Object { $HomeAddresses -contains $_.IPAddress }).Count) { $why = "not on the home network (neither $($HomeAddresses -join ' nor '))" }
-if ($why -and -not $DryRun) { Log "not starting ${VmName}: $why"; exit 0 }
+$away = $false
+if (-not $Rehearse -and ($now -lt $today.Add($StartFrom) -or $now -ge $today.Add($StartUntil))) { $why = "outside the start window ($StartFrom to $StartUntil)" }
+else {
+    $lookUntil = (Get-Date).AddSeconds($HomeLookSeconds)
+    $atHome = Test-AtHome
+    while (-not $atHome -and -not $DryRun -and (Get-Date) -lt $lookUntil) {
+        Start-Sleep -Seconds $HomeLookEvery
+        $atHome = Test-AtHome
+    }
+    if (-not $atHome) {
+        $away = $true
+        $looked = if ($DryRun) { 'at this one look' } else { "after $HomeLookSeconds s" }
+        $why = "not on the home network $looked (neither $($HomeAddresses -join ' nor '); $(Get-LinkFact))"
+    }
+}
+if ($why -and -not $DryRun) {
+    Log "not starting ${VmName}: $why"
+    if ($away) { Suspend-Laptop }
+    exit 0
+}
 if ($why) { Log "dry run: would not start: $why (the checks below run anyway)" }
+if ($away -and $DryRun) { Log "dry run: a real run looks for $HomeLookSeconds s first, then $(if (Get-TaskWake) { 'puts the laptop back to sleep: this task woke it' } else { 'leaves the laptop on: this task did not wake it' })" }
+if ($Rehearse -and -not $DryRun) { Log 'a home address is held, so there is nothing to rehearse: unplug the dock and switch the Wi-Fi off'; exit 0 }
+if ($Rehearse) { exit 0 }
 
 if (-not (Lock-Vm 60)) { Log "not starting ${VmName}: pbs-vm.ps1 holds the lock"; exit 0 }
 try {
@@ -100,7 +188,7 @@ try {
     if ($DryRun -or $why) { Log "dry run: every check passed for the VM; $(if ($why) { 'the time or place did not' } else { 'it would start now' })"; exit 0 }
 
     [void][Homelab.Power]::SetThreadExecutionState($EsContinuousSystem)
-    $limit = $now.AddMinutes($RetryMinutes)
+    $limit = (Get-Date).AddMinutes($RetryMinutes)
     if ($limit -gt $today.Add($StartUntil)) { $limit = $today.Add($StartUntil) }
     $started = $null
     while ($true) {
