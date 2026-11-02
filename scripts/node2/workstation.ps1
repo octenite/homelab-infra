@@ -6,7 +6,10 @@
 # (decision reversed 2026-10-06: one shared address deadlocked Windows, which
 # refused the dock's lease while Wi-Fi held the address and would only drop
 # Wi-Fi once the dock had connectivity). Both links may be up at once, so no
-# connection-manager policy is set; one set earlier is removed here.
+# connection-manager policy is set; one set earlier is removed here. With none,
+# Windows keeps its default: while the dock has connectivity it allows Wi-Fi
+# connections by hand only, and it allows automatic ones again when the wired
+# link goes (measured 2026-11-03, docs/runbooks/workstation-restarts.md).
 #
 # It also keeps Windows on one service per process, and keeps the operator
 # session's key out of the page file, WSL's swap and the hibernation file
