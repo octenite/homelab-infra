@@ -74,12 +74,12 @@ Sleep and not a shutdown, because open work survives it and a shutdown can hang 
 
 Known limits:
 
-- Somebody who picks the laptop up in those few minutes sees it go to sleep once, and wakes it with a key. Windows has a call for this, `IsSystemResumeAutomatic`, and the log records its answer, but it gates nothing yet: PowerToys Awake keeps the display required, which may read as a person being there, and a wrong answer would leave the laptop awake in a bag.
+- Somebody who picks the laptop up in those few minutes sees it go to sleep once, and wakes it with a key. Windows has a call for this, `IsSystemResumeAutomatic`, and the log records its answer, but it gates nothing yet. In the rehearsal it read true with nobody there and PowerToys Awake running. That is one reading, a person being there has not been measured, and a wrong answer would leave the laptop awake in a bag.
 - A laptop at home with no home address (the Wi-Fi radio off, the dock unplugged) also goes back to sleep and misses that night's backup, which pve1 catches up the next time the VM runs. The log says why.
 - After a wake at home with the address found, the laptop stays awake after the backup, as it did before.
 - After a sleep of more than 5 hours Task Scheduler may end the run before it writes its last line, and the task's last result then reads as stopped. Nothing follows from that.
 
-Rehearsal, 10 minutes, on battery, with one real wake and one real sleep: `scripts\tests\pbs-night-away.ps1`, elevated; it prints what to do, and `-Result` reads the outcome and removes its task. It never starts the VM.
+Rehearsal, 10 minutes, on battery, with one real wake and one real sleep: `scripts\tests\pbs-night-away.ps1`, elevated; it prints what to do, and `-Result` reads the outcome and removes its task. It never starts the VM. Run on 2026-11-03, on battery with the Wi-Fi radio off, all eight checks passed: the timer woke the laptop at 05:10:45, it looked for 3 minutes and went to sleep at 05:14:02, and the sleep call held until the power button at 05:15:42.
 
 `homelab-night-off` powers the VM off only when all of these hold, and stays up on anything else, an error included:
 - this boot was the window's (between 02:05 and 03:20 today): a VM started by hand at another time is never powered off;

@@ -131,8 +131,8 @@ $SeShutdownPrivilege = 19
 # Back to sleep, if this task's timer is what woke the laptop. Anyone who touched
 # it in these few minutes wakes it again with a key; their work is still there.
 # Windows' answer to "has a person been active since the wake" is logged and
-# gates nothing yet: PowerToys Awake keeps the display required on this laptop,
-# which may read as a person, and a wrong answer would leave it awake in a bag.
+# gates nothing yet: one reading so far (true with nobody there and PowerToys
+# Awake running, 2026-11-03), and a wrong answer would leave it awake in a bag.
 # The call returns when the laptop wakes, and this run then ends at once, ahead
 # of the next night's 02:15.
 function Suspend-Laptop {
