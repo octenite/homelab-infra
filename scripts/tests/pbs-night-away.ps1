@@ -55,7 +55,7 @@ if (-not (Test-Path -LiteralPath $NightScript)) { throw "$NightScript is not ins
 if ((Get-Content -LiteralPath $NightScript -Raw) -notmatch '\$Rehearse') { throw "$NightScript is an older copy: run scripts\node2\pbs-vm.ps1 first." }
 if ($WakeInMinutes -lt 3) { throw 'Give yourself at least 3 minutes to unplug the dock and put the laptop to sleep.' }
 $vmState = (Get-VM -Name 'pbs1').State
-if ($vmState -ne 'Off') { throw "pbs1 is $vmState: sleeping now would interrupt it. Wait until it is off (the nightly window powers it off from 03:30)." }
+if ($vmState -ne 'Off') { throw "pbs1 is ${vmState}: sleeping now would interrupt it. Wait until it is off (the nightly window powers it off from 03:30)." }
 $at = (Get-Date).AddMinutes($WakeInMinutes)
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$NightScript`" -Rehearse"
 $trigger = New-ScheduledTaskTrigger -Once -At $at
