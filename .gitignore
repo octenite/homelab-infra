@@ -13,6 +13,11 @@ talosconfig
 *.age
 *.iso
 
+# The nightly window's log and state, should pbs-night.ps1 ever run from the
+# checkout instead of its install folder: the log can name a Wi-Fi network.
+scripts/node2/pbs-night.log
+scripts/node2/pbs-night.json
+
 # Tool caches and editor noise
 .venv/
 __pycache__/

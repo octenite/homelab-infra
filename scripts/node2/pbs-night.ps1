@@ -76,6 +76,11 @@ function Test-AtHome {
     return [bool]@(Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred -ErrorAction SilentlyContinue | Where-Object { $HomeAddresses -contains $_.IPAddress }).Count
 }
 
+function Test-InWindow {
+    $time = (Get-Date).TimeOfDay
+    return $time -ge $StartFrom -and $time -lt $StartUntil
+}
+
 # What the links looked like. The next morning's reader must be able to tell
 # "away from home" from "at home with the Wi-Fi radio off".
 function Get-LinkFact {
@@ -86,20 +91,24 @@ function Get-LinkFact {
         if ($wlan -match 'Software\s+(On|Off)') { $facts += "Wi-Fi radio $($Matches[1].ToLower())" }
         if ($wlan -match '(?m)^\s*SSID\s*:\s*(.+?)\s*$') { $facts += "joined to $($Matches[1])" }
         $battery = Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object -First 1
-        if ($battery) { $facts += "$(if ($battery.BatteryStatus -eq 1) { 'on battery' } else { 'on AC' }) at $($battery.EstimatedChargeRemaining) %" }
+        # BatteryStatus: 1 discharging, 4 low, 5 critical; the other values are on AC.
+        if ($battery) { $facts += "$(if ($battery.BatteryStatus -in 1, 4, 5) { 'on battery' } else { 'on AC' }) at $($battery.EstimatedChargeRemaining) %" }
     }
     catch { $facts += "unread: $(($_.Exception.Message -split "`n")[0])" }
     return $facts -join ', '
 }
 
-# The time of the latest wake, if this task's timer caused it and it is recent.
-# The power log names the task: "Windows will execute 'NT TASK\homelab\pbs1-night'
-# scheduled task that requested waking the computer."
+# The time of the latest wake, if this task's timer caused it, it is recent, and
+# Windows has not restarted since (a boot adds no wake record, so the timer's
+# would still read as the newest). The power log names the task: "Windows will
+# execute 'NT TASK\homelab\pbs1-night' scheduled task that requested waking the
+# computer."
 function Get-TaskWake {
     try {
         $last = Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Power-Troubleshooter'; Id = 1 } -MaxEvents 1 -ErrorAction Stop
         $source = ([xml]$last.ToXml()).Event.EventData.Data | Where-Object { $_.Name -eq 'WakeSourceText' } | ForEach-Object { $_.'#text' }
-        if ("$source" -like "*$WakeSource*" -and ((Get-Date) - $last.TimeCreated).TotalMinutes -le $WakeRecentMinutes) { return $last.TimeCreated }
+        $booted = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
+        if ("$source" -like "*$WakeSource*" -and ((Get-Date) - $last.TimeCreated).TotalMinutes -le $WakeRecentMinutes -and $last.TimeCreated -gt $booted) { return $last.TimeCreated }
     }
     catch { Log "the power log could not be read: $(($_.Exception.Message -split "`n")[0])" }
     return $null
@@ -111,24 +120,30 @@ function Get-TaskWake {
 # arguments arrive as garbage and can disable the wake timers the next night needs.
 Add-Type -Namespace Homelab -Name Power -MemberDefinition @'
 [DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint flags);
+[DllImport("kernel32.dll")] public static extern bool IsSystemResumeAutomatic();
 [DllImport("ntdll.dll")] public static extern int RtlAdjustPrivilege(int privilege, bool enable, bool currentThread, out bool previous);
 [DllImport("powrprof.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.I1)] public static extern bool SetSuspendState([MarshalAs(UnmanagedType.I1)] bool hibernate, [MarshalAs(UnmanagedType.I1)] bool force, [MarshalAs(UnmanagedType.I1)] bool wakeEventsDisabled);
 '@
+$EsContinuous = [uint32]'0x80000000'
 $EsContinuousSystem = [uint32]'0x80000001'
 $SeShutdownPrivilege = 19
 
 # Back to sleep, if this task's timer is what woke the laptop. Anyone who touched
 # it in these few minutes wakes it again with a key; their work is still there.
+# Windows' answer to "has a person been active since the wake" is logged and
+# gates nothing yet: PowerToys Awake keeps the display required on this laptop,
+# which may read as a person, and a wrong answer would leave it awake in a bag.
 # The call returns when the laptop wakes, and this run then ends at once, ahead
 # of the next night's 02:15.
 function Suspend-Laptop {
     $woke = Get-TaskWake
     if (-not $woke) { Log 'this task did not wake the laptop: it stays on'; return }
-    Log "this task woke the laptop at $($woke.ToString('HH:mm:ss')) and it is away from home: back to sleep"
+    Log "this task woke the laptop at $($woke.ToString('HH:mm:ss')) and it holds no home address: back to sleep (Windows calls the wake automatic: $([Homelab.Power]::IsSystemResumeAutomatic()))"
+    [void][Homelab.Power]::SetThreadExecutionState($EsContinuous)
     $previous = $false
     [void][Homelab.Power]::RtlAdjustPrivilege($SeShutdownPrivilege, $true, $false, [ref]$previous)
     $asleep = Get-Date
-    if ([Homelab.Power]::SetSuspendState($false, $false, $false)) { Log "awake again $([int]((Get-Date) - $asleep).TotalMinutes) minutes later" }
+    if ([Homelab.Power]::SetSuspendState($false, $false, $false)) { Log "the sleep call returned $([int]((Get-Date) - $asleep).TotalMinutes) minutes later" }
     else { Log "Windows refused to sleep (error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())): the laptop stays on"; exit 1 }
 }
 
@@ -138,12 +153,14 @@ function Lock-Vm([int]$Seconds) {
     catch [System.Threading.AbandonedMutexException] { return $true }   # its holder died: the lock is ours
 }
 
-$today = (Get-Date).Date
-$now = Get-Date
 $why = $null
 $away = $false
-if (-not $Rehearse -and ($now -lt $today.Add($StartFrom) -or $now -ge $today.Add($StartUntil))) { $why = "outside the start window ($StartFrom to $StartUntil)" }
+if (-not $Rehearse -and -not (Test-InWindow)) { $why = "outside the start window ($StartFrom to $StartUntil)" }
 else {
+    # Held from here on: Windows sleeps again 2 minutes after a timer wake unless
+    # something holds it, which is shorter than the look. It does not stop the
+    # explicit sleep of Suspend-Laptop, which releases it first anyway.
+    if (-not $DryRun) { [void][Homelab.Power]::SetThreadExecutionState($EsContinuousSystem) }
     $lookUntil = (Get-Date).AddSeconds($HomeLookSeconds)
     $atHome = Test-AtHome
     while (-not $atHome -and -not $DryRun -and (Get-Date) -lt $lookUntil) {
@@ -155,6 +172,7 @@ else {
         $looked = if ($DryRun) { 'at this one look' } else { "after $HomeLookSeconds s" }
         $why = "not on the home network $looked (neither $($HomeAddresses -join ' nor '); $(Get-LinkFact))"
     }
+    elseif (-not $Rehearse -and -not (Test-InWindow)) { $why = "the start window ($StartFrom to $StartUntil) ended during the look" }
 }
 if ($why -and -not $DryRun) {
     Log "not starting ${VmName}: $why"
@@ -162,9 +180,11 @@ if ($why -and -not $DryRun) {
     exit 0
 }
 if ($why) { Log "dry run: would not start: $why (the checks below run anyway)" }
-if ($away -and $DryRun) { Log "dry run: a real run looks for $HomeLookSeconds s first, then $(if (Get-TaskWake) { 'puts the laptop back to sleep: this task woke it' } else { 'leaves the laptop on: this task did not wake it' })" }
-if ($Rehearse -and -not $DryRun) { Log 'a home address is held, so there is nothing to rehearse: unplug the dock and switch the Wi-Fi off'; exit 0 }
-if ($Rehearse) { exit 0 }
+if ($away) { Log "dry run: a real run looks for $HomeLookSeconds s first, then $(if (Get-TaskWake) { 'puts the laptop back to sleep: this task woke it' } else { 'leaves the laptop on: this task did not wake it' })" }
+if ($Rehearse) {
+    if (-not $away) { Log 'a home address is held, so there is nothing to rehearse: unplug the dock and switch the Wi-Fi off' }
+    exit 0
+}
 
 if (-not (Lock-Vm 60)) { Log "not starting ${VmName}: pbs-vm.ps1 holds the lock"; exit 0 }
 try {
@@ -187,7 +207,7 @@ try {
     if ($refuse) { Log "not starting: $refuse"; exit 0 }
     if ($DryRun -or $why) { Log "dry run: every check passed for the VM; $(if ($why) { 'the time or place did not' } else { 'it would start now' })"; exit 0 }
 
-    [void][Homelab.Power]::SetThreadExecutionState($EsContinuousSystem)
+    $today = (Get-Date).Date
     $limit = (Get-Date).AddMinutes($RetryMinutes)
     if ($limit -gt $today.Add($StartUntil)) { $limit = $today.Add($StartUntil) }
     $started = $null

@@ -288,7 +288,7 @@ function Restore-BackupVm {
     $result = 'off; it starts with its nightly window at 02:15'
     if ($vm -and $vm.State -eq 'Running') { $result = 'running' }
     elseif ($rec.pbs1WasRunning) {
-        Note "$VmName is not started now: its nightly window starts it at 02:15. To catch up the trip's backups at once: Start-VM $VmName (pve1 backs up by itself within five minutes), then Stop-VM $VmName"
+        Note "$VmName is not started now: its nightly window starts it at 02:15. To catch up the trip's backups at once: Start-VM $VmName, wait five minutes for pve1 to begin, and when 'systemctl is-active pbs-host-backup.service' on pve1 no longer reads activating, Stop-VM $VmName. After a trip over a Sunday leave it to the window: the VM's overdue verification starts with it, and a job cut short counts as run"
     }
     Remove-Item -LiteralPath $StateFile
     Step 'the record of the trip removed'
