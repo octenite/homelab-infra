@@ -65,7 +65,7 @@ Measured the same day, because the owner saw the Wi-Fi turn off.
 
 - **Windows' connection manager**, default setting, no policy (`fMinimizeConnections` absent, `scripts/node2/workstation.ps1` keeps it absent; ARCHITECTURE decision 40). While the dock has connectivity it blocks automatic Wi-Fi connections and may drop a Wi-Fi connection. A connection made by hand is allowed. When the wired link goes it allows them again: 1 second to reconnect on 10-29. This disconnects; it does not switch the radio off. The log is `Microsoft-Windows-Wcmsvc/Operational` id 1015, `Auto enabled: false`.
 - **The radio itself** was switched off in software on 2026-11-03, not by airplane mode, and had logged nothing since 11-01 02:21:36, seconds after a dock drop. With the radio off nothing connects by itself, which is what the owner saw. Windows does not log what flips this switch. Switched on again the same day, the card joined the main network in 5 seconds at its reserved address with a strong signal.
-- The nightly window's log now shows the radio's state when it finds no home address (`docs/components/pbs.md`).
+- The nightly window now switches the radio on when it finds no home address and the radio is off, and logs it (`docs/components/pbs.md`, "Away from home").
 
 The main network is set to connect automatically. The old network name is the guest network since Phase 4 and stays manual: a laptop on it has no home address.
 

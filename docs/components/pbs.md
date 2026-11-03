@@ -65,21 +65,25 @@ Wake timers stay allowed on AC power and on battery (owner decision 2026-11-03),
 | Step | What |
 |---|---|
 | Looks | Up to 3 minutes for a home address, every 10 seconds. After a wake the dock or the Wi-Fi need a moment: on 2026-10-29 one look, 33 seconds after the wake, was all the task took |
-| Logs | The adapters' states, the Wi-Fi radio, the network it joined, AC or battery and the charge. These tell "away" from "at home with the radio off" the next morning |
+| Switches the Wi-Fi radio on | After 20 seconds with no address, which gives the dock its chance first, if the radio is off and airplane mode is not on. "No home Wi-Fi" cannot be known with the radio off, and the radio has been found off at home (`docs/runbooks/workstation-restarts.md`). The home network's automatic connection does the rest. With the address found the night runs as usual and, with the dock unplugged, pve1 backs up over Wi-Fi, its third path (see "Paths") |
+| Logs | The adapters' states, the Wi-Fi radio, the network it joined, AC or battery and the charge, whenever the first look found nothing. These tell the next morning what the laptop saw |
+| Puts the radio back | Only if this run switched it on and found no home address: off, as it found it. At home it stays on |
 | Back to sleep | Only when this task's timer woke the laptop in the last 10 minutes and Windows has not restarted since: the power log names the task. A laptop that was awake anyway, or restarted, is left on. It wakes again the next night, and the same happens |
 
 Without this step nothing sends it back: PowerToys Awake on this laptop holds it awake indefinitely once it is up (found 2026-11-03), so in a bag it would run until the battery was empty.
 
 Sleep and not a shutdown, because open work survives it and a shutdown can hang on an application's question with nobody there. Hibernation is off on this laptop (exception X23). The cost is about 3.5 minutes awake per night away.
 
+A radio that was off comes on for up to 3 minutes a night. In that time Windows joins only networks set to connect automatically, as it would with the radio left on. Airplane mode keeps it off, and `travel.ps1 -Away` disables the task. The switch is the Native Wifi API's `WlanSetInterface`, which needs no user session.
+
 Known limits:
 
 - Somebody who picks the laptop up in those few minutes sees it go to sleep once, and wakes it with a key. Windows has a call for this, `IsSystemResumeAutomatic`, and the log records its answer, but it gates nothing yet. In the rehearsal it read true with nobody there and PowerToys Awake running. That is one reading, a person being there has not been measured, and a wrong answer would leave the laptop awake in a bag.
-- A laptop at home with no home address (the Wi-Fi radio off, the dock unplugged) also goes back to sleep and misses that night's backup, which pve1 catches up the next time the VM runs. The log says why.
+- A laptop at home that finds no home address in the 3 minutes (the router down, the home network's automatic connection off, airplane mode, the dock unplugged) also goes back to sleep and misses that night's backup, which pve1 catches up the next time the VM runs. The log says why.
 - After a wake at home with the address found, the laptop stays awake after the backup, as it did before.
 - After a sleep of more than 5 hours Task Scheduler may end the run before it writes its last line, and the task's last result then reads as stopped. Nothing follows from that.
 
-Rehearsal, 10 minutes, on battery, with one real wake and one real sleep: `scripts\tests\pbs-night-away.ps1`, elevated; it prints what to do, and `-Result` reads the outcome and removes its task. It never starts the VM. Run on 2026-11-03, on battery with the Wi-Fi radio off, all eight checks passed: the timer woke the laptop at 05:10:45, it looked for 3 minutes and went to sleep at 05:14:02, and the sleep call held until the power button at 05:15:42.
+Rehearsal, about 10 minutes each, on battery, with a real timer wake: `scripts\tests\pbs-night-away.ps1`, elevated, where the radio comes on and the laptop joins the home network, and with `-NoHomeWifi`, where it finds nothing, puts the radio back and really sleeps. It prints what to do, and `-Result` reads the outcome and removes its task. It never starts the VM. Before the radio step existed, the sleep was rehearsed on 2026-11-03, on battery with the radio off, and all eight checks passed: the timer woke the laptop at 05:10:45, it looked for 3 minutes and went to sleep at 05:14:02, and the sleep call held until the power button at 05:15:42.
 
 `homelab-night-off` powers the VM off only when all of these hold, and stays up on anything else, an error included:
 - this boot was the window's (between 02:05 and 03:20 today): a VM started by hand at another time is never powered off;
@@ -415,7 +419,7 @@ Warning: with the flag the role formats a partition without a filesystem and cre
 | The direct link is not used | `Get-VMSwitch p2p` and the adapter's link on the workstation. The `p2p` adapter is added to the VM only while the VM is off |
 | No Telegram message arrives | `/etc/proxmox-backup/notifications.cfg` in the VM, and `just pbs-apply` |
 | The VM did not start at night | `C:\Program Files\homelab\pbs-night.log` says why (away from home, a medium in the drive, too little memory, the VM already running). `Get-ScheduledTask -TaskPath \homelab\ -TaskName pbs1-night` and its last result in Task Scheduler. A sleeping laptop wakes only when wake timers are allowed (`pbs-vm.ps1` notes it when they are not, on AC power or on battery) |
-| The log says `not on the home network` at home | Read the states in that line. `Wi-Fi radio off`: the Wi-Fi button in quick settings; Windows does not record what switched it off. `Ethernet` adapters down with the dock on the desk: the dock fell off USB. pve1 catches the backup up the next time the VM runs |
+| The log says `not on the home network` at home | Read the states in that line and the line before it. `Wi-Fi radio off`: airplane mode, or the line before says why it could not be switched on. The radio on but nothing joined: the router, or the main network's automatic connection (Settings, Wi-Fi, Manage known networks). `Ethernet` adapters down with the dock on the desk: the dock fell off USB. pve1 catches the backup up the next time the VM runs |
 | The laptop was found asleep after a wake it did not need, or awake with the log saying `refused to sleep` | The away path of "Nightly window". A refused sleep leaves the laptop on as it was; the error number is in the log |
 | The VM did not power itself off | `journalctl -t homelab` in the VM: each check says why it stayed up. It was started outside the window, a task or package run went on, someone was logged in, or `/run/homelab/stay-up` exists. The 06:30 backstop shuts it down unless the management window is open |
 | `just test-fences` says pbs1 does not answer | The VM is off outside its window: `Start-VM pbs1`, then the test |
