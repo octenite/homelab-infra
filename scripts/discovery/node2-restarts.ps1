@@ -9,8 +9,11 @@
 #   usb      seconds before the new boot that the last USB device fell off the
 #            bus, if one fell in the 10 minutes before
 #   quiet    seconds between the last entry of the main logs and the new boot.
-#            About 40 s is the firmware and the boot alone: Windows was running
-#            until the reset. Minutes mean it went silent first: a freeze
+#            The firmware and the start of the boot take under 11 s (measured on
+#            the restart of 2026-11-03). More than that is a stretch with no entry,
+#            which may be a freeze or only a quiet log: logs are not a heartbeat
+# Then the crash rate before and after a resume, the restarts by fortnight, and
+# the hardware errors recorded.
 
 $ErrorActionPreference = 'SilentlyContinue'
 $logs = 'System', 'Application', 'Microsoft-Windows-WLAN-AutoConfig/Operational', 'Microsoft-Windows-Wcmsvc/Operational',
@@ -35,6 +38,44 @@ foreach ($r in $restarts) {
         $d['SystemSleepTransitionsToOn'],
         $(if ($usb.Count) { "$([int]($boot - $usb[-1]).TotalSeconds) s" } else { '-' }),
         $(if ($newest) { "$([int]($boot - $newest.TimeCreated).TotalSeconds) s" } else { '?' })
+}
+
+$boots = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-General'; Id = 12 } | Sort-Object TimeCreated | ForEach-Object { $_.TimeCreated })
+$downs = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-General'; Id = 13 } | Sort-Object TimeCreated | ForEach-Object { $_.TimeCreated })
+$wakes = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Power-Troubleshooter'; Id = 1 } | ForEach-Object {
+        $f = @{}
+        ([xml]$_.ToXml()).Event.EventData.Data | ForEach-Object { $f[$_.Name] = $_.'#text' }
+        [pscustomobject]@{ Sleep = [datetime]$f['SleepTime']; Wake = [datetime]$f['WakeTime'] }
+    } | Sort-Object Wake)
+$hoursBefore = 0.0; $hoursAfter = 0.0; $crashesBefore = 0; $crashesAfter = 0
+for ($i = 0; $i -lt $boots.Count; $i++) {
+    $boot = $boots[$i]
+    $next = if ($i + 1 -lt $boots.Count) { $boots[$i + 1] } else { $null }
+    $crashed = $next -and @($restarts | Where-Object { $_.TimeCreated -ge $next.AddMinutes(-1) -and $_.TimeCreated -lt $next.AddMinutes(5) }).Count
+    $down = @($downs | Where-Object { $_ -gt $boot -and (-not $next -or $_ -lt $next) } | Select-Object -Last 1)
+    $end = if (-not $next) { Get-Date } elseif ($crashed -or -not $down.Count) { $next } else { $down[0] }
+    $resumed = @($wakes | Where-Object { $_.Wake -gt $boot -and $_.Wake -lt $end })
+    if ($resumed.Count) {
+        $hoursBefore += ($resumed[0].Sleep - $boot).TotalHours
+        $hoursAfter += ($end - $resumed[0].Wake).TotalHours
+        for ($j = 1; $j -lt $resumed.Count; $j++) { $hoursAfter -= ($resumed[$j].Wake - $resumed[$j].Sleep).TotalHours }
+        if ($crashed) { $crashesAfter++ }
+    }
+    else {
+        $hoursBefore += ($end - $boot).TotalHours
+        if ($crashed) { $crashesBefore++ }
+    }
+}
+"`nCrash rate, hours awake with the sleep left out"
+"  before any sleep in that session: {0:N0} h, {1} restarts{2}" -f $hoursBefore, $crashesBefore, $(if ($crashesBefore) { ", one per {0:N0} h" -f ($hoursBefore / $crashesBefore) })
+"  after a resume in that session:   {0:N0} h, {1} restarts{2}" -f $hoursAfter, $crashesAfter, $(if ($crashesAfter) { ", one per {0:N0} h" -f ($hoursAfter / $crashesAfter) })
+
+"`nBy fortnight, from the first boot in the log"
+$from = $boots[0].Date
+while ($from -lt (Get-Date)) {
+    $to = $from.AddDays(14)
+    "  {0}: {1,3} boots, {2} restarts" -f $from.ToString('MM-dd'), @($boots | Where-Object { $_ -ge $from -and $_ -lt $to }).Count, @($restarts | Where-Object { $_.TimeCreated -ge $from -and $_.TimeCreated -lt $to }).Count
+    $from = $to
 }
 
 "`nHardware errors Windows recorded, over the same logs (all should read 0)"
