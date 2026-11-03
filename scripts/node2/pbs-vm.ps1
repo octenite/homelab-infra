@@ -605,10 +605,10 @@ if (-not (Test-NightTask)) {
 $task = Get-ScheduledTask -TaskPath $NightTaskPath -TaskName $NightTaskName
 if ($Away -and $task.State -ne 'Disabled') { Disable-ScheduledTask -TaskPath $NightTaskPath -TaskName $NightTaskName | Out-Null; Step 'nightly window disabled for travel' }
 elseif (-not $Away -and $task.State -eq 'Disabled') { Enable-ScheduledTask -TaskPath $NightTaskPath -TaskName $NightTaskName | Out-Null; Step 'nightly window enabled' }
-# Waking for the task needs wake timers allowed on AC power; the power plan
-# is the owner's, so this only says so.
+# Waking for the task needs wake timers allowed, on AC power and on battery
+# (owner decision 2026-11-03); the power plan is the owner's, so this only says so.
 $rtc = (powercfg /q SCHEME_CURRENT SUB_SLEEP RTCWAKE) -join "`n"
-if ($rtc -notmatch 'Current AC Power Setting Index:\s+0x00000001') { Note 'wake timers are not fully allowed on AC power ("Important wake timers only" does not wake for this task): a sleeping laptop misses the nightly window (Power Options, Sleep, Allow wake timers: Enable)' }
+if ($rtc -notmatch 'Current AC Power Setting Index:\s+0x00000001' -or $rtc -notmatch 'Current DC Power Setting Index:\s+0x00000001') { Note 'wake timers are not fully allowed on AC power and on battery ("Important wake timers only" does not wake for this task): a sleeping laptop misses the nightly window (Power Options, Sleep, Allow wake timers: Enable)' }
 
 # ---- start after an install medium was attached ---------------------------------
 if ($Iso -and (Get-VM -Name $VmName).State -eq 'Off') {
