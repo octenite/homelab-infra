@@ -5,17 +5,21 @@
 # write; its log and state file live beside it.
 #
 #   powershell -ExecutionPolicy Bypass -File pbs-night.ps1           as the task runs it
-#   ... -DryRun                                                      the checks only, at any time: starts nothing, never sleeps
-#   ... -Rehearse                                                    the away path, at any time: never starts the VM (scripts\tests\pbs-night-away.ps1)
+#   ... -DryRun                                                      the checks only, at any time: starts nothing, switches nothing, never sleeps
+#   ... -Rehearse                                                    the look and what follows it, at any time: never starts the VM (scripts\tests\pbs-night-away.ps1)
 #
 # 1. It exits unless the local time is inside the start window (02:10 to 03:15).
 # 2. It looks for one of this laptop's home addresses, for up to 3 minutes: after
-#    a wake the dock or the Wi-Fi need a moment. With none it logs what it saw
-#    and starts nothing. If this task's own timer woke the laptop, it then puts
-#    the laptop back to sleep, so that it does not stay awake in a bag (owner
-#    decision 2026-11-03). Sleep and not a shutdown, because open work survives
-#    it; hibernation is off on this laptop (exception X23). A laptop that was
-#    awake anyway is left on.
+#    a wake the dock or the Wi-Fi need a moment. After 20 seconds with none it
+#    switches the Wi-Fi radio on, if it is off and airplane mode is not on,
+#    because "no home Wi-Fi" cannot be known with the radio off; the home
+#    network's automatic connection does the rest, and pve1 then backs up over
+#    Wi-Fi (owner decision 2026-11-03). With no address after the 3 minutes it
+#    logs what it saw, puts the radio back as it found it, and starts nothing.
+#    If this task's own timer woke the laptop, it then puts the laptop back to
+#    sleep, so that it does not stay awake in a bag (owner decision 2026-11-03).
+#    Sleep and not a shutdown, because open work survives it; hibernation is off
+#    on this laptop (exception X23). A laptop that was awake anyway is left on.
 # 3. It exits unless pbs1 exists and is Off; no install medium is in its drive;
 #    its system and datastore disks are attached (a VM in the middle of a
 #    rebuild is never started). A VM that runs already was started by someone
@@ -44,7 +48,9 @@ $StartFrom = [timespan]'02:10'
 $StartUntil = [timespan]'03:15'
 $HomeLookSeconds = 180       # two of Windows' one-minute Wi-Fi scans, and the dock's return after a wake
 $HomeLookEvery = 10
-$WakeSource = 'homelab\pbs1-night'   # the power log names the task whose timer woke the laptop; the rehearsal's name starts the same
+$RadioAfterSeconds = 20      # the dock first: it needs no radio, and a wake brings it back within this
+$AirplaneKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\RadioManagement\SystemRadioState'   # its default value is 1 in airplane mode
+$WakeSource ='homelab\pbs1-night'   # the power log names the task whose timer woke the laptop; the rehearsal's name starts the same
 $WakeRecentMinutes = 10      # an older wake by this task was not this run's
 $RetryMinutes = 20
 $StopAt = [timespan]'06:30'
@@ -72,8 +78,8 @@ function Get-AvailableMB {
     try { return [int](Get-Counter '\Memory\Available MBytes' -ErrorAction Stop).CounterSamples[0].CookedValue } catch { return -1 }
 }
 
-function Test-AtHome {
-    return [bool]@(Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred -ErrorAction SilentlyContinue | Where-Object { $HomeAddresses -contains $_.IPAddress }).Count
+function Get-HomeAddress {
+    return Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred -ErrorAction SilentlyContinue | Where-Object { $HomeAddresses -contains $_.IPAddress } | Select-Object -ExpandProperty IPAddress -First 1
 }
 
 function Test-InWindow {
@@ -118,15 +124,60 @@ function Get-TaskWake {
 # process ends. RtlAdjustPrivilege turns on the shutdown privilege that SYSTEM
 # holds switched off, which a sleep needs. rundll32 cannot make this call: its
 # arguments arrive as garbage and can disable the wake timers the next night needs.
+# SetWifiRadio is the Native Wifi API's radio switch (opcode 4, 1 on, 2 off): it
+# needs no user session, unlike the call behind the Wi-Fi button, and it acts on
+# a radio that button switched off (measured 2026-11-03).
 Add-Type -Namespace Homelab -Name Power -MemberDefinition @'
 [DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint flags);
 [DllImport("kernel32.dll")] public static extern bool IsSystemResumeAutomatic();
 [DllImport("ntdll.dll")] public static extern int RtlAdjustPrivilege(int privilege, bool enable, bool currentThread, out bool previous);
 [DllImport("powrprof.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.I1)] public static extern bool SetSuspendState([MarshalAs(UnmanagedType.I1)] bool hibernate, [MarshalAs(UnmanagedType.I1)] bool force, [MarshalAs(UnmanagedType.I1)] bool wakeEventsDisabled);
+[StructLayout(LayoutKind.Sequential)] public struct WLAN_PHY_RADIO_STATE { public uint dwPhyIndex; public int dot11SoftwareRadioState; public int dot11HardwareRadioState; }
+[DllImport("wlanapi.dll")] static extern uint WlanOpenHandle(uint clientVersion, IntPtr reserved, out uint negotiated, out IntPtr handle);
+[DllImport("wlanapi.dll")] static extern uint WlanCloseHandle(IntPtr handle, IntPtr reserved);
+[DllImport("wlanapi.dll")] static extern uint WlanSetInterface(IntPtr handle, ref Guid iface, int opcode, uint size, ref WLAN_PHY_RADIO_STATE data, IntPtr reserved);
+public static uint SetWifiRadio(Guid iface, bool on) {
+    uint negotiated; IntPtr handle;
+    uint rc = WlanOpenHandle(2, IntPtr.Zero, out negotiated, out handle);
+    if (rc != 0) return rc;
+    WLAN_PHY_RADIO_STATE state = new WLAN_PHY_RADIO_STATE();
+    state.dot11SoftwareRadioState = on ? 1 : 2;
+    rc = WlanSetInterface(handle, ref iface, 4, (uint)Marshal.SizeOf(state), ref state, IntPtr.Zero);
+    WlanCloseHandle(handle, IntPtr.Zero);
+    return rc;
+}
 '@
 $EsContinuous = [uint32]'0x80000000'
 $EsContinuousSystem = [uint32]'0x80000001'
 $SeShutdownPrivilege = 19
+
+# The radio can be off at home, and Windows logs nothing about what switched it
+# (docs/runbooks/workstation-restarts.md). Returns the adapter's GUID when this
+# run switched the radio on, so that it can be put back; a failure only logs,
+# and the look goes on with the dock alone.
+function Enable-WifiRadio {
+    try {
+        if ((Get-ItemProperty -Path $AirplaneKey -ErrorAction Stop).'(default)' -eq 1) { Log 'airplane mode is on: the Wi-Fi radio stays off'; return $null }
+        if (((& netsh.exe wlan show interfaces) -join "`n") -notmatch 'Software\s+Off') { return $null }
+        $wifi = Get-NetAdapter -Physical -ErrorAction Stop | Where-Object { $_.PhysicalMediaType -eq 'Native 802.11' } | Select-Object -First 1
+        if (-not $wifi) { return $null }
+        $interface = [guid]$wifi.InterfaceGuid
+        $result = [Homelab.Power]::SetWifiRadio($interface, $true)
+        if ($result -ne 0) { Log "the Wi-Fi radio is off and could not be switched on (error $result)"; return $null }
+        Log 'the Wi-Fi radio was off: switched it on to look for the home network'
+        return $interface
+    }
+    catch { Log "the Wi-Fi radio could not be read or switched: $(($_.Exception.Message -split "`n")[0])"; return $null }
+}
+
+function Disable-WifiRadio([guid]$Interface) {
+    try {
+        $result = [Homelab.Power]::SetWifiRadio($Interface, $false)
+        if ($result -eq 0) { Log 'the Wi-Fi radio is back off, as it was' }
+        else { Log "the Wi-Fi radio could not be put back off (error $result)" }
+    }
+    catch { Log "the Wi-Fi radio could not be put back off: $(($_.Exception.Message -split "`n")[0])" }
+}
 
 # Back to sleep, if this task's timer is what woke the laptop. Anyone who touched
 # it in these few minutes wakes it again with a key; their work is still there.
@@ -155,34 +206,47 @@ function Lock-Vm([int]$Seconds) {
 
 $why = $null
 $away = $false
+$radioSwitched = $null
 if (-not $Rehearse -and -not (Test-InWindow)) { $why = "outside the start window ($StartFrom to $StartUntil)" }
 else {
     # Held from here on: Windows sleeps again 2 minutes after a timer wake unless
     # something holds it, which is shorter than the look. It does not stop the
     # explicit sleep of Suspend-Laptop, which releases it first anyway.
     if (-not $DryRun) { [void][Homelab.Power]::SetThreadExecutionState($EsContinuousSystem) }
-    $lookUntil = (Get-Date).AddSeconds($HomeLookSeconds)
-    $atHome = Test-AtHome
-    while (-not $atHome -and -not $DryRun -and (Get-Date) -lt $lookUntil) {
+    $lookFrom = Get-Date
+    $radioTried = $false
+    $held = Get-HomeAddress
+    while (-not $held -and -not $DryRun -and ((Get-Date) - $lookFrom).TotalSeconds -lt $HomeLookSeconds) {
         Start-Sleep -Seconds $HomeLookEvery
-        $atHome = Test-AtHome
+        $held = Get-HomeAddress
+        if (-not $held -and -not $radioTried -and ((Get-Date) - $lookFrom).TotalSeconds -ge $RadioAfterSeconds) {
+            $radioTried = $true
+            $radioSwitched = Enable-WifiRadio
+        }
     }
-    if (-not $atHome) {
+    $lookedFor = [int]((Get-Date) - $lookFrom).TotalSeconds
+    if (-not $held) {
         $away = $true
-        $looked = if ($DryRun) { 'at this one look' } else { "after $HomeLookSeconds s" }
+        $looked = if ($DryRun) { 'at this one look' } else { "after $lookedFor s" }
         $why = "not on the home network $looked (neither $($HomeAddresses -join ' nor '); $(Get-LinkFact))"
     }
-    elseif (-not $Rehearse -and -not (Test-InWindow)) { $why = "the start window ($StartFrom to $StartUntil) ended during the look" }
+    else {
+        if ($lookedFor -ge $HomeLookEvery) { Log "found $held after $lookedFor s ($(Get-LinkFact))" }
+        if (-not $Rehearse -and -not (Test-InWindow)) { $why = "the start window ($StartFrom to $StartUntil) ended during the look" }
+    }
 }
 if ($why -and -not $DryRun) {
     Log "not starting ${VmName}: $why"
-    if ($away) { Suspend-Laptop }
+    if ($away) {
+        if ($radioSwitched) { Disable-WifiRadio $radioSwitched }
+        Suspend-Laptop
+    }
     exit 0
 }
 if ($why) { Log "dry run: would not start: $why (the checks below run anyway)" }
-if ($away) { Log "dry run: a real run looks for $HomeLookSeconds s first, then $(if (Get-TaskWake) { 'puts the laptop back to sleep: this task woke it' } else { 'leaves the laptop on: this task did not wake it' })" }
+if ($away) { Log "dry run: a real run looks for $HomeLookSeconds s first, switching the Wi-Fi radio on if it is off, then $(if (Get-TaskWake) { 'puts the laptop back to sleep: this task woke it' } else { 'leaves the laptop on: this task did not wake it' })" }
 if ($Rehearse) {
-    if (-not $away) { Log 'a home address is held, so there is nothing to rehearse: unplug the dock and switch the Wi-Fi off' }
+    if (-not $away) { Log "$held is held: a real run goes on to start $VmName, a rehearsal stops here" }
     exit 0
 }
 
