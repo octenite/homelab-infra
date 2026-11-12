@@ -24,8 +24,14 @@
 #    its system and datastore disks are attached (a VM in the middle of a
 #    rebuild is never started). A VM that runs already was started by someone
 #    and is left alone, as is one in any other state.
-# 4. It starts pbs1, trying again every 30 seconds for up to 20 minutes (never
-#    past 03:15) while Windows cannot give it the memory.
+# 4. It starts pbs1, trying again every 30 seconds until 03:10 while Windows
+#    cannot give it the memory: pve1 retries its backup until 03:15, so a start
+#    by then still gets the night's backup.
+#    When the first try fails, when it gives up, and when it finds no home
+#    address, it reports the reason to the start alert (backlog B57), a
+#    healthchecks.io check whose address `pbs-vm.ps1 -SetAlert` stores beside
+#    this script; a start reports success, which clears the alert. With no
+#    address stored it only logs.
 # 5. It waits while pbs1 runs. The VM powers itself off once its jobs are done,
 #    from 03:30 (roles/pbs_host, homelab-night-off). At 06:30, if the VM this
 #    run started still runs, unrestarted, and the management window is closed,
@@ -52,8 +58,9 @@ $RadioAfterSeconds = 20      # the dock first: it needs no radio, and a wake bri
 $AirplaneKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\RadioManagement\SystemRadioState'   # its default value is 1 in airplane mode
 $WakeSource ='homelab\pbs1-night'   # the power log names the task whose timer woke the laptop; the rehearsal's name starts the same
 $WakeRecentMinutes = 10      # an older wake by this task was not this run's
-$RetryMinutes = 20
+$RetryUntil = [timespan]'03:10'   # pve1's backup retries until 03:15: a start by now still gets the night's backup
 $StopAt = [timespan]'06:30'
+$AlertFile = Join-Path $PSScriptRoot 'pbs-night-alert.txt'   # the start alert's address, a secret: written by pbs-vm.ps1 -SetAlert, readable by SYSTEM and administrators only
 $ManageRule = 'homelab-pbs1-ssh-wsl'   # present while the management window is open
 $Dir = $PSScriptRoot
 $LogFile = Join-Path $Dir 'pbs-night.log'
@@ -76,6 +83,35 @@ function Log([string]$msg) {
 
 function Get-AvailableMB {
     try { return [int](Get-Counter '\Memory\Available MBytes' -ErrorAction Stop).CounterSamples[0].CookedValue } catch { return -1 }
+}
+
+# The applications that hold the memory, largest first: what to close.
+function Get-MemoryFact {
+    try {
+        $top = Get-Process -ErrorAction Stop | Group-Object ProcessName | ForEach-Object { [pscustomobject]@{ Name = $_.Name; MB = [int](($_.Group | Measure-Object WorkingSet64 -Sum).Sum / 1MB) } } | Sort-Object MB -Descending | Select-Object -First 5
+        return "largest: $(($top | ForEach-Object { "$($_.Name) $($_.MB) MiB" }) -join ', ')"
+    }
+    catch { return 'largest: unread' }
+}
+
+# Reports to the start alert (B57). $Failed sends a failure report, which alerts
+# at once; otherwise a success, which clears it. Never throws, never logs the
+# address, and does nothing in a dry run, a rehearsal or with no address stored.
+function Send-Alert([bool]$Failed, [string]$Text) {
+    if ($DryRun -or $Rehearse) { return }
+    try {
+        if (-not (Test-Path -LiteralPath $AlertFile)) { return }
+        $url = ([IO.File]::ReadAllText($AlertFile)).Trim()
+        if ($url -notmatch '^https://[A-Za-z0-9.-]+/[A-Za-z0-9/_-]+$') { Log 'start alert not sent: the stored address is not an https address'; return }
+        if ($Failed) { $url = "$url/fail" }
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $null = Invoke-WebRequest -Uri $url -Method Post -Body "${VmName}: $Text" -TimeoutSec 15 -UseBasicParsing -ErrorAction Stop
+        Log "start alert: reported $(if ($Failed) { 'the failure' } else { 'the start' })"
+    }
+    catch {
+        # The message of a failed request can carry the address: only its kind is logged.
+        Log "start alert not sent ($($_.Exception.GetType().Name))"
+    }
 }
 
 function Get-HomeAddress {
@@ -238,6 +274,9 @@ else {
 if ($why -and -not $DryRun) {
     Log "not starting ${VmName}: $why"
     if ($away) {
+        # Reaches nobody without a network, which is the usual case away from
+        # home; at home with a broken link it may still leave over another one.
+        Send-Alert $true "not started at $(Get-Date -Format 'HH:mm'): $why. At home, fix the link and run Start-VM $VmName (elevated) before 03:10; otherwise the next night catches up."
         if ($radioSwitched) { Disable-WifiRadio $radioSwitched }
         Suspend-Laptop
     }
@@ -272,9 +311,10 @@ try {
     if ($DryRun -or $why) { Log "dry run: every check passed for the VM; $(if ($why) { 'the time or place did not' } else { 'it would start now' })"; exit 0 }
 
     $today = (Get-Date).Date
-    $limit = (Get-Date).AddMinutes($RetryMinutes)
-    if ($limit -gt $today.Add($StartUntil)) { $limit = $today.Add($StartUntil) }
+    $limit = $today.Add($RetryUntil)
     $started = $null
+    $failures = 0
+    $msg = ''
     while ($true) {
         try {
             Start-VM -Name $VmName -ErrorAction Stop
@@ -283,17 +323,26 @@ try {
         }
         catch {
             $msg = ($_.Exception.Message -split "`n")[0]
-            Log "start failed: $msg (Windows has $(Get-AvailableMB) MiB available)"
+            $failures++
+            $free = Get-AvailableMB
+            Log "start failed: $msg (Windows has $free MiB available)"
+            # Once, at the first failure: the owner may be awake and can close something.
+            if ($failures -eq 1) { Send-Alert $true "start failed at $(Get-Date -Format 'HH:mm'): $msg Windows has $free MiB available, the VM needs about 1600; $(Get-MemoryFact). Trying again every 30 s until $($limit.ToString('HH:mm')): close applications and it starts by itself." }
         }
-        if ((Get-VM -Name $VmName).State -eq 'Running') { Log "$VmName runs now, started by someone else"; exit 0 }
+        if ((Get-VM -Name $VmName).State -eq 'Running') { Log "$VmName runs now, started by someone else"; Send-Alert $false "runs now, started by hand at $(Get-Date -Format 'HH:mm')"; exit 0 }
         if ((Get-Date).AddSeconds(30) -ge $limit) { break }
         Start-Sleep -Seconds 30
     }
-    if (-not $started) { Log "gave up starting $VmName at $(Get-Date -Format 'HH:mm'): pve1's backup misses this night unless the VM is started later"; exit 1 }
+    if (-not $started) {
+        Log "gave up starting $VmName at $(Get-Date -Format 'HH:mm') after $failures tries: pve1's backup misses this night unless the VM is started later"
+        Send-Alert $true "gave up at $(Get-Date -Format 'HH:mm') after $failures tries: $msg Windows has $(Get-AvailableMB) MiB available; $(Get-MemoryFact). Tonight's backup is missed; the next night catches up by itself."
+        exit 1
+    }
     $vmId = (Get-VM -Name $VmName).Id.Guid
     $state = [pscustomobject]@{ started = $started.ToString('o'); vmId = $vmId } | ConvertTo-Json -Compress
     [IO.File]::WriteAllText($StateFile, $state)
     Log "started $VmName (Windows had $(Get-AvailableMB) MiB available after the start)"
+    Send-Alert $false "started at $($started.ToString('HH:mm'))$(if ($failures) { " after $failures failed tries" })"
 }
 finally { try { $mutex.ReleaseMutex() } catch { $null = $_ } }
 

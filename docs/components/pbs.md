@@ -48,7 +48,7 @@ Since 2026-10-20 (owner decision, B51) the VM runs for the hypervisor's nightly 
 
 | Time | What | Where |
 |---|---|---|
-| 02:15 | The scheduled task `\homelab\pbs1-night` (SYSTEM) runs `pbs-night.ps1`: it starts the VM, retrying for up to 20 minutes while Windows lacks the memory. It also runs two minutes after every start of Windows and then starts the VM only between 02:10 and 03:15 | the workstation; installed by `pbs-vm.ps1` |
+| 02:15 | The scheduled task `\homelab\pbs1-night` (SYSTEM) runs `pbs-night.ps1`: it starts the VM, retrying every 30 seconds until 03:10 while Windows lacks the memory, and reports a start that fails ("Start alert", below). It also runs two minutes after every start of Windows and then starts the VM only between 02:10 and 03:15 | the workstation; installed by `pbs-vm.ps1` |
 | about 02:16 | The VM serves port 8007 (16 s after the start, measured) | the VM |
 | 02:30 | The host backup; inside 02:10 to 03:15 it waits for the VM and retries every minute | pve1 (`docs/components/proxmox.md`, Backup) |
 | 02:44, 02:47, 02:50 | Package lists, the server's update check, the security updates (the timers moved into the window, no random delay) | the VM |
@@ -57,6 +57,21 @@ Since 2026-10-20 (owner decision, B51) the VM runs for the hypervisor's nightly 
 | 06:30 | If the VM the task started is still up, unrestarted, and the management window is closed: a clean shutdown | the workstation |
 
 `pbs-night.ps1` starts nothing unless the laptop holds a home address (192.168.1.196 or .197), the VM is Off, no install medium is in its drive and both its disks are attached: a VM in the middle of a rebuild is never started by the task. A VM that already runs was started by someone and is left alone. It runs on battery too. The task is enabled by a plain run of `pbs-vm.ps1` and by `-Manage`, and disabled by `-Away`. Both scripts take one lock, so the task never starts the VM while `pbs-vm.ps1` changes it. Log and state: `C:\Program Files\homelab\pbs-night.log` and `pbs-night.json`. A dry run at any time, changing nothing: `powershell -ExecutionPolicy Bypass -File "C:\Program Files\homelab\pbs-night.ps1" -DryRun`.
+
+#### Start alert
+
+Owner decision 2026-11-12 (B57). On 10-27 and 11-05 the VM could not start at 02:15 because the applications held the memory, and nobody knew until the log was read. Now the task tells the owner at the time, with the reason, so that an owner who is awake can act.
+
+| When | What is reported | What to do |
+|---|---|---|
+| The first start fails | A failure: Windows' error, the memory available, the five largest applications, and until when it keeps trying | Close applications. It tries every 30 seconds until 03:10 and starts by itself |
+| It gives up at 03:10 | A failure: the number of tries and the same facts | Nothing that night: pve1 catches up at the next start of the VM |
+| No home address after the 3-minute look | A failure with what the links looked like. Away from home it usually reaches nobody, having no network | At home: fix the link, then `Start-VM pbs1` (elevated) before 03:10 |
+| The VM starts, also after failures or by hand during the tries | A success, which clears the alert | |
+
+It is a healthchecks.io check of its own, delivered on the owner's channels (email, Telegram). The owner creates it with a long period (30 days, grace 1 day): its job is the failure report, which alerts at once whatever the period; the nightly success only brings it up again. A night the task never ran (the laptop off) is not this check's business: pve1's own backup check notices that. The check's address is stored on the laptop only, by `pbs-vm.ps1 -SetAlert` at a hidden prompt, in `C:\Program Files\homelab\pbs-night-alert.txt`, readable by SYSTEM and administrators; `-SetAlert` then sends one test failure and one success. With no address stored the task only logs. `-Away` disables the task, so nothing is reported from the road.
+
+After 03:10 a start by hand no longer gets that night's backup (pve1 stops retrying at 03:15 and is not due again until 26 hours after its last success); the next night's start catches up first, as on 10-30 and 11-03.
 
 #### Away from home
 

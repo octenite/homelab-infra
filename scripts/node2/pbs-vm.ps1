@@ -7,6 +7,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\node2\pbs-vm.ps1            converge; the management window is closed
 #   ... -Manage                                                                  converge and open the management window (SSH from WSL)
 #   ... -Away                                                                    converge for a laptop that leaves the house: no port forward at all
+#   ... -SetAlert                                                                converge and store the start alert's address, asked at a hidden prompt (B57); goes with -Manage too
 #   ... -Iso F:\homelab\iso\pbs1-auto.iso                                        attach the install medium (VM off) and start the VM
 #   ... -Eject                                                                   detach the medium after the install and delete the image
 #   ... -Recreate      -Yes 'recreate pbs1'                                      remove the VM definition (disk files are kept), build it again
@@ -66,6 +67,7 @@ param(
     [switch]$Eject,
     [switch]$Manage,
     [switch]$Away,
+    [switch]$SetAlert,
     [switch]$Recreate,
     [switch]$WipeDatastore,
     [switch]$WipeSystem,
@@ -146,7 +148,7 @@ trap { try { $vmLock.ReleaseMutex() } catch { $null = $_ }; break }
 if ($Iso -and $Eject) { throw '-Iso and -Eject cannot be combined: attach, let the installer finish, then eject.' }
 if ($Iso -and -not (Test-Path -LiteralPath $Iso)) { throw "ISO not found: $Iso" }
 if ($WipeDatastore -and $WipeSystem) { throw 'One wipe at a time: run -WipeSystem and -WipeDatastore separately.' }
-if ($Away -and ($Manage -or $Iso -or $Eject -or $Recreate -or $WipeSystem -or $WipeDatastore)) {
+if ($Away -and ($Manage -or $SetAlert -or $Iso -or $Eject -or $Recreate -or $WipeSystem -or $WipeDatastore)) {
     throw '-Away stands alone: it closes the management window and removes the port forward. Work on the VM is done at home, before leaving.'
 }
 $destructive = @()
@@ -573,6 +575,40 @@ if (-not (Test-Path -LiteralPath $NightScript) -or [IO.File]::ReadAllText($Night
     [IO.File]::WriteAllText($NightScript, $srcText, (New-Object Text.UTF8Encoding($false)))
     Step "nightly window script installed: $NightScript"
 }
+# The start alert (backlog B57): the ping address of a healthchecks.io check,
+# which pbs-night.ps1 reports to when the VM cannot start. A secret of low
+# value (it can report that one check up or failed, nothing else), typed at a
+# hidden prompt, never an argument, and readable by SYSTEM and administrators
+# only. It is not in Git: after a rebuild of the workstation, -SetAlert again.
+$AlertFile = Join-Path $NightDir 'pbs-night-alert.txt'
+if ($SetAlert) {
+    $secure = Read-Host -AsSecureString 'Ping address of the healthchecks.io check for the nightly start (hidden; empty removes it)'
+    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try { $address = ([Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)).Trim().TrimEnd('/') }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
+    if (-not $address) {
+        if (Test-Path -LiteralPath $AlertFile) { Remove-Item -LiteralPath $AlertFile -Force; Step 'start alert address removed' }
+    }
+    elseif ($address -notmatch '^https://[A-Za-z0-9.-]+/[A-Za-z0-9/_-]+$') { throw 'That is not an https ping address (expected the form https://hc-ping.com/<id>). Nothing was stored.' }
+    else {
+        [IO.File]::WriteAllText($AlertFile, $address, (New-Object Text.UTF8Encoding($false)))
+        # SYSTEM reads it, administrators manage it, nobody else: the folder's
+        # inherited entries would let every user read it.
+        $acl = & icacls.exe $AlertFile /inheritance:r /grant:r '*S-1-5-18:(R)' '*S-1-5-32-544:(F)'
+        if ($LASTEXITCODE -ne 0) { Remove-Item -LiteralPath $AlertFile -Force; throw "The address could not be protected and was removed again: $($acl -join ' ')" }
+        Step 'start alert address stored'
+        # One failure and one success, so that the owner sees what an alert
+        # looks like on each channel, and the check ends up.
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $null = Invoke-WebRequest -Uri "$address/fail" -Method Post -Body "${VmName}: test of the start alert from pbs-vm.ps1 -SetAlert. A real one names the reason here, for example: start failed at 02:15, Windows has 312 MiB available; largest: ..." -TimeoutSec 15 -UseBasicParsing
+            Start-Sleep -Seconds 20
+            $null = Invoke-WebRequest -Uri $address -Method Post -Body "${VmName}: test ended, the check is up" -TimeoutSec 15 -UseBasicParsing
+            Write-Host 'start alert: a test failure and, 20 s later, a success were reported. Expect a "down" and an "up" message on each channel.'
+        }
+        catch { Write-Host "start alert: the test report was NOT delivered ($($_.Exception.GetType().Name)). Check the address and the network, then -SetAlert again." }
+    }
+}
 $nightArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$NightScript`""
 function Test-NightTask {
     $t = Get-ScheduledTask -TaskPath $NightTaskPath -TaskName $NightTaskName -ErrorAction SilentlyContinue
@@ -625,6 +661,8 @@ if ($Away) { Write-Host "backup port: CLOSED for travel (no forward, port $Backu
 else { Write-Host "backup port: forwarded to the VM for the hypervisor ($PveAddress) only." }
 if ($Away) { Write-Host 'nightly window: disabled for travel.' }
 else { Write-Host 'nightly window: enabled; the VM starts at 02:15 and powers itself off when its jobs are done.' }
+if (Test-Path -LiteralPath $AlertFile) { Write-Host 'start alert: set; a start that fails is reported with its reason.' }
+else { Write-Host 'start alert: not set; a start that fails is only logged (pbs-vm.ps1 -SetAlert stores the address).' }
 Get-VM -Name $VmName | Select-Object Name, State, @{n = 'MemoryMB'; e = { $_.MemoryStartup / 1MB } }, ProcessorCount, AutomaticStartAction | Format-Table -AutoSize
 Get-VMNetworkAdapter -VMName $VmName | Select-Object Name, SwitchName, MacAddress, IPAddresses | Format-Table -AutoSize
 try { $vmLock.ReleaseMutex() } catch { $null = $_ }
