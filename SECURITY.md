@@ -46,7 +46,7 @@ Status: a passing run is not recorded yet. The last recorded run, made before th
 
 ## Exceptions register
 
-The register is the table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) section 15, IDs X1 to X26 and X33 to X35; X27 to X32 are in the two plans of Phase R until its last step moves them. Firewall exceptions E1 to E17 are in section 6. Exceptions added or changed since Phase 3:
+The register is the table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) section 15, IDs X1 to X29 and X32 to X35; X30 and X31 belong to the household plan of Phase R and enter it when that is built. Firewall exceptions E1 to E17 are in section 6. Exceptions added or changed since Phase 3:
 
 | ID | Exception | State |
 |---|---|---|
@@ -56,6 +56,10 @@ The register is the table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) sectio
 | X23 | No disk encryption on the workstation | accepted by the owner; hardening open (item 2) |
 | X25 | Shared service process on the workstation makes allow rules ineffective for the forwarded ports; block rules compensate | passing fence test open (item 3) |
 | X26 | Management window: a port forward to the backup server's SSH, opened by hand with `pbs-vm.ps1 -Manage` and closed by a plain run | accepted; `just test-fences` shows which state is live |
+| X27 | The network key of the remote-access container does not expire | accepted with Phase R; in no backup, replaced by every rebuild, its tag has no rights as a source |
+| X28 | Remote administration depends on Tailscale and on the owner's GitHub account | accepted with Phase R; nothing at home depends on either; node signing, the router's rules and pve1's own logins bound a takeover |
+| X29 | From outside, pve1 sees one source address, and no traffic log exists | accepted with Phase R; one administrator, one laptop; pve1 logs each login |
+| X32 | The phone can complete the owner's GitHub login | accepted by the owner on 2026-10-09; a PIN on each of the two apps, no standing session, printed recovery codes; `docs/runbooks/lost-phone.md` |
 | X33 | The OpenTofu token's rights do not confine where a guest lands: with it, a guest can be placed in the management network or behind the hypervisor's own address (found 2026-10-11, Phase R step R.6) | open by the owner's decision of 2026-10-12: work goes on with the one token (item 9) |
 | X34 | Remote Desktop into the workstation from the home desktop, admitted by address; a session is the owner's administrator session on the admin machine | accepted by the owner on 2026-10-19; `scripts/node2/rdp.ps1 -Check` reads the rules back, `just test-fences` probes the port |
 | X35 | The backup server VM runs with 1.5 GiB, below the vendor's 2 GB evaluation minimum and 4 GiB recommendation (owner decision 2026-10-20, B51) | accepted; measured at 4 GiB and at 1.5 GiB on 2026-10-20 (pass), re-measured at the Phase 5 gate, with a pre-agreed step up to 2 GiB |
@@ -69,6 +73,8 @@ The register is the table in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) sectio
 | 3 | The fence test (X25, X26) passed on 2026-10-07 with the management window open and, after the restart, with it closed. Nothing runs it on a schedule | run `just test-fences` after every change to the workstation's network or firewall, and after every run of `pbs-vm.ps1` |
 | 4 | The root cause of X25 was removed on 2026-10-07: `scripts/node2/workstation.ps1` keeps Windows on one service per process. A tuning tool or a Windows change can raise the threshold again | the script reports and corrects it on every run; the block rules stay as the second layer |
 | 6 | The healthchecks ping URL appeared once in a session transcript | a new URL, stored with `just secret-set` |
+| 10 | The ping URL of the remote-access container's check was shown in a screenshot in an operator session on 2026-11-07. It can report that one check up or failed, and nothing else | accepted by the owner on 2026-11-08 and not rotated; a new check and `just secret-set` if that changes |
+| 11 | The procedure for a lost laptop has never been run (`docs/runbooks/lost-laptop.md`; decision D11 of Phase R, backlog B30). Until it has, the laptop does not travel with the tunnel in earnest | the reduced drill, recorded in `docs/phases/phase-r.md` |
 | 7 | No off-site copy of the backups exists (B25) | the off-site buckets, with the datasets of the later phases |
 | 8 | The backup server's traffic to the internet is not restricted (X7, B33) | an allow-list, or the owner's acceptance as it stands |
 | 9 | A leaked OpenTofu token reaches further than its grants suggest (X33, backlog B43). In normal use nothing changes: the code creates only what it is written to create, and it is validated first. With a stolen token someone could create a guest next to the hypervisor's management address, where SSH is key-only and the web interface needs a password and a second factor. The token is on the workstation only | the owner's decision between a second, narrower token for the remote-access work and keeping the one; until then the validation in the OpenTofu roots and CI, and the tests of step R.7 |

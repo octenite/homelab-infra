@@ -13,7 +13,7 @@ Status: not drilled. The steps follow the roles, the session script and `private
 
 Both files are useless without their passphrases. An open session holds both keys decrypted in memory until it is closed, the machine powers off, or 12 hours have passed.
 
-The lab admits SSH only from the workstation's two addresses (192.168.1.196, 192.168.1.197), so a stolen SSH key also needs a place in the home network. A stolen age key needs nothing but a copy of the private repository, and the workstation carries one. That is why the age key comes first.
+The lab admits SSH only from the workstation's two addresses (192.168.1.196, 192.168.1.197), so a stolen SSH key also needs a place in the home network. Since Phase R there is one exception: while `travel.ps1 -Away` is in force, the laptop reaches the hypervisor's SSH from anywhere through the container `remote1`, so for a laptop stolen on a trip the first act is to remove that container from the tailnet ([lost-laptop.md](lost-laptop.md), part 1), before anything here. The router, the access points and the backup server stay unreachable from outside. A stolen age key needs nothing but a copy of the private repository, and the workstation carries one. That is why the age key comes first.
 
 Two cases:
 
