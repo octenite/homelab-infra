@@ -88,7 +88,7 @@ Steps. The commands are in [docs/runbooks/restore-workstation.md](docs/runbooks/
 
 Manual steps that remain: hardware, Windows, Hyper-V and WSL; the static address; fetching the recovery keys and typing passphrases; every run of `pbs-vm.ps1` (elevated PowerShell); `.wslconfig`; committing the private repository.
 
-If the workstation was stolen and not merely broken: its disks are not encrypted (exception X23). The key files on it are protected by their passphrases only. Step 3 removes both keys from every recipient list and from every host. The secrets themselves are then rotated with [docs/runbooks/operator-key-compromised.md](docs/runbooks/operator-key-compromised.md), case B. That runbook has not been drilled (open).
+If the workstation was stolen and not merely broken, start with [docs/runbooks/lost-laptop.md](docs/runbooks/lost-laptop.md): its first part closes the remote administration path from the phone, within minutes, and its second part leads through the steps here. Its disks are not encrypted (exception X23). The key files on it are protected by their passphrases only. Step 3 removes both keys from every recipient list and from every host. The secrets themselves are then rotated with [docs/runbooks/operator-key-compromised.md](docs/runbooks/operator-key-compromised.md), case B. That runbook has not been drilled (open).
 
 ## Scenario 3: both are destroyed
 
@@ -111,6 +111,18 @@ Steps, in this order because of that dependency:
 Manual steps that remain: everything listed for scenarios 1 and 2, plus the whole interactive install of the hypervisor and placing the first SSH key for root by hand.
 
 What closes the gap: the off-site copies of the backup design ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) section 12), built with the later phases, and a way to build the hypervisor's install image on the workstation alone.
+
+## Remote administration (Phase R)
+
+It holds no data, so nothing of it is backed up (decision D9), and nothing at home depends on it. What each loss means for it:
+
+| Lost | What to do |
+|---|---|
+| The hypervisor (scenario 1) | The container `remote1` went with it. After the host is back: [docs/runbooks/rebuild-remote1.md](docs/runbooks/rebuild-remote1.md). It needs the owner at home for a browser login and one signing command on the laptop. Rehearsed on 2026-10-19: 86 minutes |
+| The workstation (scenario 2) | It held the tailnet's only signing key. [docs/runbooks/lost-laptop.md](docs/runbooks/lost-laptop.md), part 2: node signing is disabled with a disablement secret (password manager and paper) and enabled again with the new workstation as signer; the container is rebuilt |
+| The phone | [docs/runbooks/lost-phone.md](docs/runbooks/lost-phone.md). The phone holds the second factor of the GitHub login, so the printed recovery codes at home are the way back in |
+| The tailnet itself, or the account behind it | [docs/runbooks/tailnet-setup.md](docs/runbooks/tailnet-setup.md) builds it from Git: the policy, its tests and the settings are code. Every device is enrolled again |
+| Every disablement secret, with the laptop | Node signing cannot be switched off. A new tailnet is the way out: the row above |
 
 ## Later phases: not built yet
 
@@ -155,6 +167,9 @@ Targets of the design for the later phases, until measured: platform back in one
 | 2026-10-06 | Restore of `etc.pxar` into a scratch directory, before and after the key rotation | Passed: five files compared equal to the live ones | - |
 | 2026-10-07 | Backup, then restore of all three archives into scratch directories; integrity check of the restored cluster database | Passed. The database was not put in place on a host | - |
 | 2026-10-07 | OpenTofu without its bucket: work from the kept state copy, change something, return to the bucket ([tofu-offline.md](docs/runbooks/tofu-offline.md), parts A and B) | Passed three times with the marker-only state. Three defects found and fixed: plain-text temporary files, a wrapper that ran in offline mode unnoticed, an override file that could be committed | About 20 minutes |
+| 2026-10-19 | The remote-access container destroyed and created again from Git, with a new login and signature ([rebuild-remote1.md](docs/runbooks/rebuild-remote1.md)) | Passed. One defect found and fixed: a purged package's daemon kept running | 86 minutes, of which 31 the owner's login and signature |
+| 2026-11-03 | Remote administration from a phone hotspot, and the container stopped from the road (`docs/phases/phase-r.md`) | Passed: 75 checks; the check alerted 15 minutes after the last report | About an hour |
+| - | Lost laptop, reduced ([lost-laptop.md](docs/runbooks/lost-laptop.md), decision D11) | Not run | - |
 | - | Hypervisor rebuilt after a loss, image built on the backup server VM | Not run | - |
 | - | Hypervisor installed by the manual fallback | Not run | - |
 | - | Backup server VM rebuilt, datastore kept | Not run | - |
