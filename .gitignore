@@ -17,6 +17,7 @@ talosconfig
 # checkout instead of its install folder: the log can name a Wi-Fi network.
 scripts/node2/pbs-night.log
 scripts/node2/pbs-night.json
+scripts/node2/pbs-night-alert.txt
 
 # Tool caches and editor noise
 .venv/
