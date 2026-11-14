@@ -1,0 +1,112 @@
+---
+# Debian's own sources stay as the cloud image wrote them. Two vendor
+# repositories are added, each with its signing key pinned by checksum: a key
+# that does not match is not written and the play stops.
+- name: Docker's apt signing key
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/debian/gpg
+    dest: /usr/share/keyrings/docker-archive-keyring.asc
+    checksum: "sha256:{{ staging_vm_docker_keyring_sha256 }}"
+    mode: "0644"
+  notify: Update apt cache
+
+- name: Docker's repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/docker.sources
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: https://download.docker.com/linux/debian
+      Suites: {{ ansible_distribution_release }}
+      Components: stable
+      Architectures: amd64
+      Signed-By: /usr/share/keyrings/docker-archive-keyring.asc
+  notify: Update apt cache
+
+- name: Cloudflare's apt signing key
+  ansible.builtin.get_url:
+    url: https://pkg.cloudflare.com/cloudflare-public-v2.gpg
+    dest: /usr/share/keyrings/cloudflare-public-v2.gpg
+    checksum: "sha256:{{ staging_vm_cloudflared_keyring_sha256 }}"
+    mode: "0644"
+  notify: Update apt cache
+
+- name: Cloudflare's repository
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/cloudflared.sources
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: https://pkg.cloudflare.com/cloudflared
+      Suites: any
+      Components: main
+      Architectures: amd64
+      Signed-By: /usr/share/keyrings/cloudflare-public-v2.gpg
+  notify: Update apt cache
+
+# Each vendor package at one exact version; every other version is refused.
+# Security updates come from Debian only (below), so these repositories are
+# never in their scope. A bump is a pull request that changes the version in
+# group_vars/staging.yaml.
+- name: Vendor packages pinned to one version each
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/homelab-vendor
+    mode: "0644"
+    content: |
+      {% for name, version in staging_vm_docker_packages.items() %}
+      Package: {{ name }}
+      Pin: version {{ version }}
+      Pin-Priority: 1001
+
+      {% endfor %}
+      Package: cloudflared
+      Pin: version {{ staging_vm_cloudflared_version }}
+      Pin-Priority: 1001
+
+- name: Flush handlers so the cache is current before installing
+  ansible.builtin.meta: flush_handlers
+
+# What a general-purpose server is expected to have, and what the roles
+# below need. The guest agent lets the hypervisor freeze the filesystems for
+# a consistent backup and shut the machine down cleanly.
+- name: Host packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - git
+      - htop
+      - jq
+      - qemu-guest-agent
+      - rsync
+      - tmux
+      - unattended-upgrades
+      - unzip
+      - vim
+    state: present
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: The guest agent runs
+  ansible.builtin.systemd_service:
+    name: qemu-guest-agent
+    state: started
+
+# A list in a later apt.conf file is appended to the list of an earlier one.
+# Debian's own 50unattended-upgrades names the main archive as well, so the
+# list is cleared first.
+- name: Unattended upgrades, Debian security origins only
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52-homelab-unattended.conf
+    mode: "0644"
+    content: |
+      #clear Unattended-Upgrade::Origins-Pattern;
+      Unattended-Upgrade::Origins-Pattern {
+          "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+      };
+      Unattended-Upgrade::Automatic-Reboot "{{ 'true' if staging_vm_unattended_reboot else 'false' }}";
+      Unattended-Upgrade::Automatic-Reboot-Time "{{ staging_vm_unattended_reboot_time }}";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";

@@ -170,6 +170,25 @@ remote-bootstrap:
 remote-apply *args:
     bash scripts/ops/play.sh remote "$@"
 
+# Configure the staging machine from Git (idempotent). Dry run: just staging-apply --check --diff
+[positional-arguments]
+staging-apply *args:
+    bash scripts/ops/play.sh staging "$@"
+
+# The staging machine read back and probed from inside (read-only): every address at home must stay closed.
+test-staging:
+    bash scripts/tests/staging.sh
+
+# Start the staging machine after a deliberate stop, then test its fences.
+staging-start:
+    ssh -o BatchMode=yes ops@10.0.10.10 sudo qm start 4010
+    sleep 30
+    bash scripts/tests/staging.sh
+
+# Register the GitHub Actions runner on the staging machine, by the owner with a one-hour token from GitHub at a hidden prompt.
+staging-runner-register:
+    bash scripts/ops/staging-runner-register.sh
+
 # The container's one login to the tailnet, by the owner at a browser; prints the signing command for the laptop.
 remote-login:
     bash scripts/ops/remote-login.sh

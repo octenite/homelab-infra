@@ -1,0 +1,92 @@
+---
+- name: Time zone
+  community.general.timezone:
+    name: "{{ staging_vm_timezone }}"
+
+# The zone lets time requests reach the router only; Debian's default pool
+# on the internet is not reachable from here.
+- name: Drop-in directory for the time service
+  ansible.builtin.file:
+    path: /etc/systemd/timesyncd.conf.d
+    state: directory
+    mode: "0755"
+
+- name: Time from the router
+  ansible.builtin.copy:
+    dest: /etc/systemd/timesyncd.conf.d/homelab.conf
+    mode: "0644"
+    content: |
+      [Time]
+      NTP={{ staging_vm_router }}
+      FallbackNTP=
+  notify: Restart timesyncd
+
+# The zone has no IPv6; the hypervisor's filter drops what the device would
+# send from a link-local address.
+- name: IPv6 off
+  ansible.posix.sysctl:
+    name: "{{ item }}"
+    value: "1"
+    sysctl_file: /etc/sysctl.d/90-homelab.conf
+    sysctl_set: true
+    reload: true
+  loop:
+    - net.ipv6.conf.all.disable_ipv6
+    - net.ipv6.conf.default.disable_ipv6
+
+# A swap file, made and formatted once, in one step: a file left half-made
+# by an interrupted run is not mistaken for a finished one, because it gets
+# its final name only at the end. fallocate is not used: the kernel refuses
+# a swap file with holes on some filesystems.
+- name: Swap file exists, formatted
+  ansible.builtin.shell:
+    cmd: >-
+      set -e;
+      dd if=/dev/zero of={{ staging_vm_swap_file }}.new bs=1M count={{ staging_vm_swap_mib }} status=none;
+      chmod 0600 {{ staging_vm_swap_file }}.new;
+      mkswap {{ staging_vm_swap_file }}.new >/dev/null;
+      mv {{ staging_vm_swap_file }}.new {{ staging_vm_swap_file }}
+    creates: "{{ staging_vm_swap_file }}"
+
+- name: Swap file is private
+  ansible.builtin.file:
+    path: "{{ staging_vm_swap_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Swap file is in fstab
+  ansible.posix.mount:
+    path: none
+    src: "{{ staging_vm_swap_file }}"
+    fstype: swap
+    opts: sw
+    state: present
+
+- name: Active swap
+  ansible.builtin.command:
+    cmd: swapon --noheadings --show=NAME
+  register: staging_vm_swap_active
+  changed_when: false
+  check_mode: false
+
+- name: Swap is on
+  ansible.builtin.command:
+    cmd: swapon {{ staging_vm_swap_file }}
+  when: staging_vm_swap_file not in staging_vm_swap_active.stdout_lines
+  changed_when: true
+
+- name: Journal drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    mode: "0755"
+
+- name: Journal size cap
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/homelab.conf
+    mode: "0644"
+    content: |
+      [Journal]
+      SystemMaxUse={{ staging_vm_journal_max_use }}
+  notify: Restart journald

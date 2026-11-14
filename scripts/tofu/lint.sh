@@ -40,6 +40,29 @@ d = json.load(open(sys.argv[1])); print(d["template_file"], d["template_sha512"]
 	fi
 fi
 
+# The same for the staging machine's cloud image, and one guest id and one
+# address for it: the root, the wrapper's guard and the hypervisor play.
+pin=infrastructure/opentofu/roots/staging/image.auto.tfvars.json
+if [ -f "$pin" ]; then
+	read -r ifile isum < <(python3 -c 'import json, sys
+d = json.load(open(sys.argv[1])); print(d["image_file"], d["image_sha512"])' "$pin")
+	vars=infrastructure/ansible/playbooks/group_vars/proxmox.yaml
+	if ! grep -qF -- "- file: $ifile" "$vars" || ! grep -qF -- "sha512: $isum" "$vars"; then
+		echo "tofu-lint: $pin and pve_vm_images in $vars name different images" >&2
+		exit 1
+	fi
+	root=infrastructure/opentofu/roots/staging/main.tf
+	id=$(sed -n 's/^[[:space:]]*vm_id[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' "$root")
+	addr=$(sed -n 's/^[[:space:]]*ipv4_address[[:space:]]*=[[:space:]]*"\([0-9.]*\)\/24"[[:space:]]*$/\1/p' "$root")
+	if ! [[ $id =~ ^[0-9]+$ && $addr =~ ^[0-9.]+$ ]] ||
+		! grep -qx "STAGING_VMID=$id" scripts/tofu/child.sh ||
+		! grep -qxE "[[:space:]]*- vmid: $id" "$vars" ||
+		! grep -qx "pve_staging_vm: $addr" "$vars"; then
+		echo "tofu-lint: guest id or address of stg1 differ between $root, scripts/tofu/child.sh and $vars" >&2
+		exit 1
+	fi
+fi
+
 # One guest id and one address for remote1: the root, the wrapper's guard,
 # the hypervisor play (its firewall file is named after the id) and the test
 # must agree.

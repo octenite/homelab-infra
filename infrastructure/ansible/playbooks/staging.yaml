@@ -1,0 +1,13 @@
+---
+# Configure the staging machine. Idempotent; connects as the operator account
+# that cloud-init created at the first boot. The tunnel's token and the
+# runner's registration are the owner's steps (docs/components/staging.md).
+- name: Configure the staging machine
+  hosts: "{{ target | default('staging') }}"
+  gather_facts: true
+  become: true
+  # A restart that an earlier task requested must happen even when a later
+  # task stops the play on purpose: on the next run nothing asks for it again.
+  force_handlers: true
+  roles:
+    - role: staging_vm

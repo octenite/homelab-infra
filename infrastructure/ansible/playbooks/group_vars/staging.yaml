@@ -1,0 +1,76 @@
+---
+# The staging machine (docs/adr/0007-staging-vm.md): a general-purpose Debian
+# VM with Docker for a team outside the household. Everything here is policy.
+# What names the company (its domain, its GitHub organisation, the
+# developers' logins) is in the private inventory, host_vars/stg1. The VM
+# itself is created by OpenTofu (roots/staging); this is what runs inside it.
+#
+# The VM has no filter of its own on purpose: whoever may deploy to it is
+# root on it, so a filter inside proves nothing. Its fences are the router's
+# zone and the hypervisor's file for guest 4010.
+ansible_user: ops
+ansible_become: true
+staging_vm_ops_user: ops
+staging_vm_ssh_authorized_keys: "{{ openwrt_ssh_authorized_keys }}"
+
+staging_vm_router: 10.0.40.1
+
+# The team. Each developer gets an account of their own, in the groups
+# "developers" (may log in over SSH) and "docker" (may run containers, which
+# is root in practice). The keys are the ones GitHub publishes for the login,
+# read again on every run: a key removed at GitHub goes away here with the
+# next run. The list is private (host_vars/stg1/team.yaml):
+#   staging_vm_developers:
+#     - {name: <account on the VM>, github: <GitHub login>}
+# An account dropped from the list is locked and its keys removed; its home
+# directory stays until someone deletes it deliberately.
+staging_vm_developers: []
+staging_vm_former_developers: []
+
+# Docker from the vendor's repository, each package at one exact version. A
+# bump is a pull request. The signing key is fetched over HTTPS and compared
+# with this checksum (read 2026-11-14; key 9DC8 5822 9FC7 DD38 854A E2D8 8D81
+# 803C 0EBF CD88, "Docker Release (CE deb)").
+staging_vm_docker_keyring_sha256: 1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570
+staging_vm_docker_packages:
+  docker-ce: "5:29.9.3-1~debian.13~trixie"
+  docker-ce-cli: "5:29.9.3-1~debian.13~trixie"
+  containerd.io: "2.4.2-4~debian.13~trixie"
+  docker-buildx-plugin: "0.39.0-1~debian.13~trixie"
+  docker-compose-plugin: "5.7.1-1~debian.13~trixie"
+# Container logs are capped: an application that logs without end would
+# otherwise fill the 30 GB disk.
+staging_vm_docker_log_max_size: 20m
+staging_vm_docker_log_max_file: "3"
+
+# The tunnel client, from the vendor's repository at one exact version (key
+# read 2026-11-14). The tunnel itself and its hostnames are made in the
+# company's Cloudflare dashboard (exception X37); its token is the secret
+# staging_vm_tunnel_token in host_vars/stg1/secrets.sops.yaml. Without it the
+# client is installed and its unit stays off, and the play says so.
+staging_vm_cloudflared_version: 2026.11.0
+staging_vm_cloudflared_keyring_sha256: 1bd95f4082b320d541bee351560fc2765aa9f9cd8efa4c9e32135e63f252721d
+staging_vm_cloudflared_user: cloudflared
+
+# The GitHub Actions runner: the version first installed, with the checksum
+# from its release notes. The runner updates itself afterwards, because
+# GitHub stops giving jobs to a runner that falls behind; the pin is what a
+# rebuild starts from. Where it registers (the organisation's or a
+# repository's address) is private: staging_vm_runner_url in host_vars/stg1.
+# The registration is the owner's step: just staging-runner-register.
+staging_vm_runner_version: 2.338.2
+staging_vm_runner_sha256: baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40
+staging_vm_runner_user: runner
+staging_vm_runner_dir: /opt/actions-runner
+staging_vm_runner_labels: staging
+
+# 4 GiB of memory and a database, caches and workers in containers: swap is
+# the margin between a slow minute and a killed process.
+staging_vm_swap_mib: 2048
+
+staging_vm_journal_max_use: 500M
+# Security updates install by themselves; a kernel update restarts the
+# machine at this time (Asia/Kolkata), after the nightly backup.
+staging_vm_timezone: Asia/Kolkata
+staging_vm_unattended_reboot: true
+staging_vm_unattended_reboot_time: "04:30"
