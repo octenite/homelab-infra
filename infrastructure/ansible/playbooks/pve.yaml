@@ -36,3 +36,8 @@
       ansible.builtin.include_role:
         name: pve_host
         tasks_from: templates
+
+    - name: Cloud images for VMs
+      ansible.builtin.include_role:
+        name: pve_host
+        tasks_from: images

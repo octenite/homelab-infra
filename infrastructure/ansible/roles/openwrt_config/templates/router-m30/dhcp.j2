@@ -64,6 +64,11 @@ config dhcp 'home_remote'
 	option interface 'home_remote'
 	option ignore '1'
 
+{# Staging: one VM with a static address. #}
+config dhcp 'dmz'
+	option interface 'dmz'
+	option ignore '1'
+
 config dhcp 'wan'
 	option interface 'wan'
 	option ignore '1'

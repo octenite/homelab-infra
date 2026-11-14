@@ -109,11 +109,13 @@ echo "== where the token holds the right to attach a guest: the cluster VLAN and
 BR=/sdn/zones/localnetwork/vmbr0
 may yes "the cluster" "$BR/50" SDN.Use
 may yes "remote access, administration" "$BR/30" SDN.Use
+may yes "staging" "$BR/40" SDN.Use
 may no "remote access, household: not before its plan" "$BR/31" SDN.Use
 may no "no right on the bridge path itself" "$BR" SDN.Use
 may no "the direct link to the workstation" /sdn/zones/localnetwork/vmbr1 SDN.Use
 may no "nothing at the top" / VM.Allocate
 may yes "guests in the remote-access pool" /pool/remote VM.Allocate
+may yes "guests in the staging pool" /pool/staging VM.Allocate
 
 # The whole map of the token: the paths on which it holds anything must be
 # exactly the ones Git grants (plus the guests in its pools, once any exist).
@@ -122,10 +124,10 @@ paths=$(printf 'header = "Authorization: PVEAPIToken=%s=%s"\n' "$TOKEN_ID" "$sec
 	python3 -c 'import json, sys
 d = json.load(sys.stdin)["data"]
 print(" ".join(sorted(p for p, v in d.items() if v and not p.startswith("/vms/"))))' 2>/dev/null)
-want="/nodes/$NODE /pool/remote /pool/talos $BR/30 $BR/50 /storage/local /storage/local-lvm"
+want="/nodes/$NODE /pool/remote /pool/staging /pool/talos $BR/30 $BR/40 $BR/50 /storage/local /storage/local-lvm"
 checks=$((checks + 1))
 if [ "$paths" = "$want" ]; then
-	echo "  ok    the token holds rights on exactly these seven paths and no other"
+	echo "  ok    the token holds rights on exactly these nine paths and no other"
 else
 	echo "  FAIL  the token's paths are: ${paths:-(no answer)}"
 	echo "        expected:              $want"
