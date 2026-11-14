@@ -69,28 +69,31 @@ remote_writes() { # <tofu arguments...>: may this verb change the root's state o
 	esac
 	return 0
 }
-if [ "$root" = remote ] && remote_writes "$@"; then
+# The root "staging" follows the same rule: a guest on the hypervisor is
+# built and changed at home.
+if { [ "$root" = remote ] || [ "$root" = staging ]; } && remote_writes "$@"; then
 	where=$(bash "$REPO/scripts/ops/away-check.sh") || true
 	case "$where" in
 	home) ;;
 	away)
-		printf '%s\n' "refused: 'tofu remote $1' is not run through the away tunnel; 'just tofu remote plan' is. At home with Tailscale still connected: scripts\\node2\\travel.ps1 -Home (or -Disconnect) first." >&2
+		printf '%s\n' "refused: 'tofu $root $1' is not run through the away tunnel; 'just tofu $root plan' is. At home with Tailscale still connected: scripts\\node2\\travel.ps1 -Home (or -Disconnect) first." >&2
 		exit 2
 		;;
 	*)
-		echo "refused: pve1 did not answer, so it cannot be told whether this run comes through the away tunnel; 'tofu remote $1' is refused to be safe ('just tofu remote plan' is not)." >&2
+		echo "refused: pve1 did not answer, so it cannot be told whether this run comes through the away tunnel; 'tofu $root $1' is refused to be safe ('just tofu $root plan' is not)." >&2
 		exit 2
 		;;
 	esac
 fi
 
 # The root "remote" builds a container from a template file on the
-# hypervisor. That file is compared with its pin before anything is planned,
-# and before any secret is loaded.
-if [ "$root" = remote ]; then
+# hypervisor, the root "staging" a machine from a cloud image. That file is
+# compared with its pin before anything is planned, and before any secret is
+# loaded.
+if [ "$root" = remote ] || [ "$root" = staging ]; then
 	case "$1" in
 	plan | apply | import | refresh)
-		bash "$REPO/scripts/tofu/template-pin.sh" || {
+		bash "$REPO/scripts/tofu/template-pin.sh" "$root" || {
 			echo "nothing was planned or applied" >&2
 			exit 1
 		}

@@ -1,0 +1,119 @@
+---
+# A self-hosted GitHub Actions runner: it connects outwards and takes the
+# deploy jobs, so no key from outside reaches in. It runs as its own user,
+# which is in the docker group: a workflow of the company's repositories is
+# root on this machine, as the design assumes (ADR 0007).
+- name: The runner's user
+  ansible.builtin.user:
+    name: "{{ staging_vm_runner_user }}"
+    system: true
+    shell: /bin/bash
+    home: "{{ staging_vm_runner_dir }}"
+    create_home: false
+    groups: [docker]
+    append: true
+
+- name: The runner's directory
+  ansible.builtin.file:
+    path: "{{ staging_vm_runner_dir }}"
+    state: directory
+    owner: "{{ staging_vm_runner_user }}"
+    group: "{{ staging_vm_runner_user }}"
+    mode: "0750"
+
+# Unpacked once. The runner replaces its own files when GitHub asks it to
+# update, so later runs leave the directory alone.
+- name: Is the runner unpacked?
+  ansible.builtin.stat:
+    path: "{{ staging_vm_runner_dir }}/config.sh"
+  register: staging_vm_runner_unpacked
+
+- name: The runner's release archive, compared with its checksum
+  ansible.builtin.get_url:
+    url: "https://github.com/actions/runner/releases/download/v{{ staging_vm_runner_version }}/actions-runner-linux-x64-{{ staging_vm_runner_version }}.tar.gz"
+    dest: "/var/tmp/actions-runner-{{ staging_vm_runner_version }}.tar.gz"
+    checksum: "sha256:{{ staging_vm_runner_sha256 }}"
+    mode: "0644"
+  when: not staging_vm_runner_unpacked.stat.exists
+
+- name: The runner unpacked
+  ansible.builtin.unarchive:
+    src: "/var/tmp/actions-runner-{{ staging_vm_runner_version }}.tar.gz"
+    dest: "{{ staging_vm_runner_dir }}"
+    remote_src: true
+    owner: "{{ staging_vm_runner_user }}"
+    group: "{{ staging_vm_runner_user }}"
+  when: not staging_vm_runner_unpacked.stat.exists
+
+# The archive carries a mode for its top directory, which unpacking puts on
+# the directory above: set it back, so a first run settles in one pass.
+- name: The runner's directory keeps its mode after unpacking
+  ansible.builtin.file:
+    path: "{{ staging_vm_runner_dir }}"
+    state: directory
+    owner: "{{ staging_vm_runner_user }}"
+    group: "{{ staging_vm_runner_user }}"
+    mode: "0750"
+
+- name: The archive removed
+  ansible.builtin.file:
+    path: "/var/tmp/actions-runner-{{ staging_vm_runner_version }}.tar.gz"
+    state: absent
+
+# The libraries the runner's .NET runtime needs, by the vendor's own script,
+# once: the marker is written only when the script succeeds.
+- name: The runner's dependencies
+  ansible.builtin.shell:
+    cmd: ./bin/installdependencies.sh && touch .homelab-dependencies
+    chdir: "{{ staging_vm_runner_dir }}"
+    creates: "{{ staging_vm_runner_dir }}/.homelab-dependencies"
+
+- name: The runner's unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/actions-runner.service
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/staging_vm).
+      [Unit]
+      Description=GitHub Actions runner
+      After=network-online.target docker.service
+      Wants=network-online.target
+      # Not registered yet: nothing to run.
+      ConditionPathExists={{ staging_vm_runner_dir }}/.runner
+
+      [Service]
+      User={{ staging_vm_runner_user }}
+      Group={{ staging_vm_runner_user }}
+      WorkingDirectory={{ staging_vm_runner_dir }}
+      ExecStart={{ staging_vm_runner_dir }}/run.sh
+      KillMode=process
+      KillSignal=SIGTERM
+      TimeoutStopSec=5min
+      Restart=always
+      RestartSec=10s
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: Reload systemd units
+
+- name: Units reloaded before the runner is enabled
+  ansible.builtin.meta: flush_handlers
+
+- name: Is the runner registered?
+  ansible.builtin.stat:
+    path: "{{ staging_vm_runner_dir }}/.runner"
+  register: staging_vm_runner_registered
+
+- name: The runner enabled, and running once registered
+  ansible.builtin.systemd_service:
+    name: actions-runner
+    enabled: true
+    state: "{{ 'started' if staging_vm_runner_registered.stat.exists else 'stopped' }}"
+
+- name: Not registered yet
+  ansible.builtin.debug:
+    msg: >-
+      The runner is installed and not registered. That is the owner's step:
+      `just staging-runner-register` asks for a registration token from GitHub
+      at a hidden prompt (docs/components/staging.md).
+  when: not staging_vm_runner_registered.stat.exists

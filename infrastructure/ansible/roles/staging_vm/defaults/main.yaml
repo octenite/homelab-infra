@@ -1,0 +1,7 @@
+---
+# Everything that is policy lives in playbooks/group_vars/staging.yaml. Here:
+# names and paths the tasks share.
+staging_vm_sshd_dropin: /etc/ssh/sshd_config.d/20-homelab.conf
+staging_vm_tunnel_dir: /etc/cloudflared
+staging_vm_tunnel_token_file: /etc/cloudflared/token
+staging_vm_swap_file: /swapfile

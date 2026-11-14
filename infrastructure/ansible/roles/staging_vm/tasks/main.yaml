@@ -1,0 +1,30 @@
+---
+- name: Packages and repositories
+  ansible.builtin.import_tasks: apt.yaml
+
+- name: Clock, swap, logs
+  ansible.builtin.import_tasks: system.yaml
+
+- name: Docker
+  ansible.builtin.import_tasks: docker.yaml
+
+- name: Accounts of the team
+  ansible.builtin.import_tasks: users.yaml
+
+- name: SSH
+  ansible.builtin.import_tasks: ssh.yaml
+
+# sshd is restarted before the tunnel is touched: a failure in the tasks
+# below would otherwise lose that restart, because on the next run the file
+# is already in place and nothing asks for it again.
+- name: Apply pending service restarts before the tunnel
+  ansible.builtin.meta: flush_handlers
+
+- name: The tunnel client
+  ansible.builtin.import_tasks: tunnel.yaml
+
+- name: The GitHub Actions runner
+  ansible.builtin.import_tasks: runner.yaml
+
+- name: Apply pending service restarts
+  ansible.builtin.meta: flush_handlers

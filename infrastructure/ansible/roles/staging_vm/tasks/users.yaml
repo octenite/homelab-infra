@@ -1,0 +1,47 @@
+---
+# One account per developer, never a shared one: a login in the journal names
+# a person, and one person is removed without touching the others.
+- name: The group that may log in over SSH
+  ansible.builtin.group:
+    name: developers
+
+- name: A developer's account
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    shell: /bin/bash
+    groups: [developers, docker]
+    append: true
+    create_home: true
+    password_lock: true
+  loop: "{{ staging_vm_developers }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# The keys GitHub publishes for the login, fetched by the VM itself over
+# HTTPS on every run. exclusive: a key the developer removed at GitHub, or
+# one added by hand here, is gone after the run.
+- name: A developer's keys, as GitHub publishes them
+  ansible.posix.authorized_key:
+    user: "{{ item.name }}"
+    key: "https://github.com/{{ item.github }}.keys"
+    exclusive: true
+  loop: "{{ staging_vm_developers }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# Someone who left: no keys, no groups that open anything, a locked account.
+# The home directory stays; deleting someone's files is a deliberate step.
+- name: A former developer's keys removed
+  ansible.builtin.file:
+    path: "/home/{{ item }}/.ssh/authorized_keys"
+    state: absent
+  loop: "{{ staging_vm_former_developers }}"
+
+- name: A former developer's account closed
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: []
+    append: false
+    shell: /usr/sbin/nologin
+    password_lock: true
+  loop: "{{ staging_vm_former_developers }}"

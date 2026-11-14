@@ -2,8 +2,10 @@
 # Runs on the hypervisor from a timer, from the failover timer when a backup
 # is due (pbs-due), or by hand. Backs up the host's configuration to the
 # backup server, encrypted with the storage's key, over whichever path is up,
-# and reports success to the dead-man's switch when one is set. Any failure
-# exits before that report, so a missing report means a missing backup.
+# then the guests named in PBS_GUESTS (the staging machine, ADR 0007) with
+# the hypervisor's own vzdump through the same storage entry, and reports
+# success to the dead-man's switch when one is set. Any failure exits before
+# that report, so a missing report means a missing backup.
 #
 # The backup server is a VM on the workstation that runs for a nightly window
 # (backlog B51). Inside the window (PBS_RETRY_FROM to PBS_RETRY_UNTIL, local
@@ -70,6 +72,35 @@ attempt() { # <seconds to wait for the server>
 		--repository "${PBS_USER}@${server}:${PBS_DATASTORE}" \
 		--keyfile "$PBS_KEYFILE" \
 		--backup-id "$(hostname -s)-host" || return 1
+	host_done=yes
+}
+
+# The guests, after the host: each is backed up once per run, so a retry
+# after a failure does not repeat what already succeeded. Snapshot mode: the
+# guest keeps running, and its agent freezes the filesystems for the moment
+# the snapshot is taken. A guest that does not exist is a failure: the list
+# names machines that must be backed up.
+guests_done=" "
+guests() {
+	for g in ${PBS_GUESTS:-}; do
+		case "$guests_done" in *" $g "*) continue ;; esac
+		timeout -k 30 "${PBS_GUEST_TIMEOUT:-1800}" vzdump "$g" --storage "$PBS_STORE" --mode snapshot \
+			--notes-template '{{guestname}}' || {
+			echo "the backup of guest $g failed" >&2
+			return 1
+		}
+		guests_done="$guests_done$g "
+	done
+}
+
+host_done=no
+attempt_all() { # <seconds to wait for the server>
+	if [ "$host_done" = no ]; then
+		attempt "$1" || return 1
+	else
+		/usr/local/bin/pbs-target --wait "$1" >/dev/null || return 1
+	fi
+	guests
 }
 
 tries=0
@@ -77,7 +108,7 @@ while :; do
 	tries=$((tries + 1))
 	left=$((deadline - $(date +%s)))
 	[ "$left" -gt 0 ] || left=0
-	if attempt "$left"; then
+	if attempt_all "$left"; then
 		break
 	fi
 	if [ "$window" = no ] || [ "$(date +%s)" -ge "$deadline" ]; then
@@ -93,4 +124,4 @@ date +%s >/var/lib/homelab/host-backup.last
 if [ -n "${PING_URL:-}" ]; then
 	curl -fsS -m 10 --retry 3 -o /dev/null "$PING_URL" || logger -t homelab "backup ping failed"
 fi
-logger -t homelab "host configuration backed up to $server (attempt $tries)"
+logger -t homelab "host configuration${PBS_GUESTS:+ and guests $PBS_GUESTS} backed up (attempt $tries)"
