@@ -32,9 +32,10 @@ pve_nic_p2p: enp2s0
 #   30  remote access, administration: the container remote1 (Phase R)
 #   31  remote access, household: laid empty; the token gets no right to it
 #       before the household plan
+#   40  staging: the VM stg1 (ADR 0007)
 #   50  the cluster
-pve_bridge_vlans: [30, 31, 50]
-pve_token_vlans: [30, 50]
+pve_bridge_vlans: [30, 31, 40, 50]
+pve_token_vlans: [30, 40, 50]
 
 # Remote access (Phase R, docs/adr/0005-administrative-access.md). The host
 # never holds an address in these two networks. The administration container
@@ -51,6 +52,24 @@ pve_not_internet: [10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192
 pve_guest_firewalls:
   - vmid: 3010
     template: guest-remote-admin.fw.j2
+  - vmid: 4010
+    template: guest-staging.fw.j2
+
+# Staging (docs/adr/0007-staging-vm.md): one VM that people outside the house
+# use through a tunnel it dials out. The host holds no address in its network
+# and nothing leads from it to the host.
+pve_staging_vm: 10.0.40.10
+pve_staging_router: 10.0.40.1
+pve_staging_network: 10.0.40.0/24
+
+# Cloud images for VMs, kept on the local storage's import directory and
+# compared with a checksum kept here, like the container templates. A dated
+# build, never "latest": a rebuilt VM starts from the same image, and a new
+# build is a pull request.
+pve_vm_images:
+  - file: debian-13-genericcloud-amd64-20261111-2659.qcow2
+    url: https://cloud.debian.org/images/cloud/trixie/20261111-2659/debian-13-genericcloud-amd64-20261111-2659.qcow2
+    sha512: 3247873136ba09b060fab45e9c115239f81c1d401fce00b8fa9b872013f7135d6a40b12462ab5ac03b9fa4ed5955dd0e8d1c900109a939ad7a0a4dafe7dea47b
 
 # Container templates, fetched from the vendor's index and compared with a
 # checksum kept here. The index is signed, but the pin is what makes a rebuilt
@@ -78,6 +97,8 @@ pve_pools:
     comment: Talos VMs, managed by OpenTofu
   - name: remote
     comment: Remote-access containers, managed by OpenTofu
+  - name: staging
+    comment: Staging VMs, managed by OpenTofu
 # The provisioning role carries no Sys.Modify: on a node path that privilege
 # covers the host firewall, the bridges, DNS and the hosts file, far beyond
 # creating VMs. If the image download of Phase 5 needs a network privilege,
@@ -134,6 +155,9 @@ pve_acls_fixed:
     role: TerraformProvisioner
     user: terraform@pve
   - path: /pool/remote
+    role: TerraformProvisioner
+    user: terraform@pve
+  - path: /pool/staging
     role: TerraformProvisioner
     user: terraform@pve
   - path: /storage/local

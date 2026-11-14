@@ -1,6 +1,6 @@
 {# Managed by Ansible. Source of truth: this template plus the private inventory.
    Policy: docs/ARCHITECTURE.md section 6. Default deny between all zones and
-   towards the router. Every allow below carries the ID of its exception (E1 to E17)
+   towards the router. Every allow below carries the ID of its exception (E1 to E17, E23, E24; E18 to E22 are the household plan's)
    or the word Router for a service the router itself offers to a zone. #}
 {# The operator workstation holds two reserved addresses: its dock port and
    its Wi-Fi adapter (decision 2026-10-06; one shared address deadlocked
@@ -16,6 +16,8 @@
 {# The administration container of Phase R. Its rules name this one address:
    a second address in the zone gets nothing. #}
 {% set remote1 = '10.0.30.10' %}
+{# The staging VM (ADR 0007). Its rules name this one address too. #}
+{% set stg1 = '10.0.40.10' %}
 {# "wan" as a destination is whatever leaves through the WAN port, and that
    includes the provider's own private networks and its modem. A rule that
    means the internet excludes these ranges. #}
@@ -29,8 +31,9 @@ config defaults
 {# remote and home_remote are the two remote-access zones (Phase R). The
    second is laid empty: it is in no rule below, not even for name lookups,
    until the household plan fills it. Neither is in any of the loops below
-   that offer a router service to a list of zones. #}
-{% for z in ['lan', 'mgmt', 'servers', 'iot', 'guest', 'remote', 'home_remote'] %}
+   that offer a router service to a list of zones. dmz is the staging zone
+   (ADR 0007), with rules of its own further down and in none of the loops. #}
+{% for z in ['lan', 'mgmt', 'servers', 'iot', 'guest', 'remote', 'home_remote', 'dmz'] %}
 config zone
 	option name '{{ z }}'
 	list network '{{ z }}'
@@ -357,6 +360,77 @@ config rule
 {% endfor %}
 	option dest 'remote'
 	option dest_ip '{{ remote1 }}'
+	option proto 'tcp'
+	option dest_port '22'
+	option family 'ipv4'
+	option target 'ACCEPT'
+
+{# Staging (ADR 0007). The VM stg1 is used by people outside the house, who
+   reach it only through a tunnel it dials out itself, and whoever may deploy
+   to it may run anything on it. So the zone leads to the internet and to
+   nowhere at home: no rule below names another zone as a destination, and
+   only the workstation's SSH leads in. Every rule names the VM's one
+   address; the zone gets no DHCP and no ping. #}
+config rule
+	option name 'Router-DNS-dmz'
+	option src 'dmz'
+	option src_ip '{{ stg1 }}'
+	option dest_ip '10.0.40.1'
+	option proto 'tcp udp'
+	option dest_port '53'
+	option family 'ipv4'
+	option target 'ACCEPT'
+
+config rule
+	option name 'Router-NTP-dmz'
+	option src 'dmz'
+	option src_ip '{{ stg1 }}'
+	option dest_ip '10.0.40.1'
+	option proto 'udp'
+	option dest_port '123'
+	option family 'ipv4'
+	option target 'ACCEPT'
+
+{# What a general-purpose server needs outwards: package sources, container
+   registries and GitHub (80, 443), git over SSH (22), mail submission (465,
+   587), and Cloudflare's tunnel port (7844, tcp and udp). Wider is a pull
+   request. The internet only: no private range, so nothing at home and none
+   of the provider's equipment. #}
+config rule
+	option name 'E23-stg1-to-wan-tcp'
+	option src 'dmz'
+	option src_ip '{{ stg1 }}'
+	option dest 'wan'
+{% for net in not_internet %}
+	list dest_ip '!{{ net }}'
+{% endfor %}
+	option proto 'tcp'
+	option dest_port '22 80 443 465 587 7844'
+	option family 'ipv4'
+	option target 'ACCEPT'
+
+config rule
+	option name 'E23-stg1-to-wan-tunnel-udp'
+	option src 'dmz'
+	option src_ip '{{ stg1 }}'
+	option dest 'wan'
+{% for net in not_internet %}
+	list dest_ip '!{{ net }}'
+{% endfor %}
+	option proto 'udp'
+	option dest_port '7844'
+	option family 'ipv4'
+	option target 'ACCEPT'
+
+{# The VM is configured from the workstation at home. #}
+config rule
+	option name 'E24-workstation-to-stg1-ssh'
+	option src 'lan'
+{% for w in workstations %}
+	list src_ip '{{ w }}'
+{% endfor %}
+	option dest 'dmz'
+	option dest_ip '{{ stg1 }}'
 	option proto 'tcp'
 	option dest_port '22'
 	option family 'ipv4'
