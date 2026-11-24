@@ -1,0 +1,65 @@
+---
+# Cloud images for VMs in the local storage's import directory: the files
+# named in Git, each compared with its pinned checksum on every run, as the
+# container templates are (templates.yaml). A file that does not match stops
+# the play and is left where it is, for a look: do not create a VM from it.
+# Run after everything else by playbooks/pve.yaml: the image comes from the
+# vendor's server, and a failure there must not keep the host's own
+# configuration from being applied.
+- name: Import directory on the local storage
+  ansible.builtin.file:
+    path: /var/lib/vz/import
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Images on the local storage
+  ansible.builtin.stat:
+    path: "/var/lib/vz/import/{{ item.file }}"
+    checksum_algorithm: sha512
+  loop: "{{ pve_vm_images | default([]) }}"
+  loop_control:
+    label: "{{ item.file }}"
+  register: pve_host_images
+
+# The module checks the checksum itself and keeps nothing that fails it; the
+# download goes to a temporary name first.
+- name: Fetch missing images
+  ansible.builtin.get_url:
+    url: "{{ item.item.url }}"
+    dest: "/var/lib/vz/import/{{ item.item.file }}"
+    checksum: "sha512:{{ item.item.sha512 }}"
+    owner: root
+    group: root
+    mode: "0644"
+    timeout: 60
+  loop: "{{ pve_host_images.results }}"
+  loop_control:
+    label: "{{ item.item.file }}"
+  when: not item.stat.exists
+
+- name: Read the images again
+  ansible.builtin.stat:
+    path: "/var/lib/vz/import/{{ item.file }}"
+    checksum_algorithm: sha512
+  loop: "{{ pve_vm_images | default([]) }}"
+  loop_control:
+    label: "{{ item.file }}"
+  register: pve_host_images_now
+  check_mode: false
+
+# A dry run has fetched nothing, so a missing file is not an error there.
+- name: Every image matches its pinned checksum
+  ansible.builtin.assert:
+    that: item.stat.exists and item.stat.checksum == item.item.sha512
+    fail_msg: >-
+      {{ item.item.file }}:
+      {{ 'its checksum ' ~ item.stat.checksum ~ ' is not the pinned one. Nothing was removed; do not create a VM from it'
+         if item.stat.exists else 'not on the host: the download failed' }}.
+      A new build is a new pin, by pull request.
+    quiet: true
+  loop: "{{ pve_host_images_now.results }}"
+  loop_control:
+    label: "{{ item.item.file }}"
+  when: item.stat.exists or not ansible_check_mode

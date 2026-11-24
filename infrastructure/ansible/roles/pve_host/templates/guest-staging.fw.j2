@@ -1,0 +1,49 @@
+{# The hypervisor's firewall for the network device of the staging VM stg1
+   (docs/adr/0007-staging-vm.md). Written by the hypervisor play, not by
+   OpenTofu, for the reasons given in guest-remote-admin.fw.j2, whose rules
+   for writing such a file apply here unchanged: policy DROP both ways and
+   ACCEPT rules only, every option written out, numeric ports, and the frame
+   filter that keeps the VM from tagging its own frames.
+   The VM is used by people outside the house and runs whatever they deploy.
+   This file is the layer they cannot change from inside it: the VM may send
+   from its one address only, to the router's resolver and clock and to the
+   internet on the listed ports, and only the workstation's SSH comes in.
+   Its web traffic arrives inside the tunnel the VM dials out, so no rule
+   admits any.
+   Proxmox reads this file only once the guest exists, and deletes it when
+   the guest is destroyed and when a creation fails: run the play again
+   after either, and read the result back before the VM is started. #}
+[OPTIONS]
+
+enable: 1
+policy_in: DROP
+policy_out: DROP
+ipfilter: 1
+macfilter: 1
+dhcp: 0
+ndp: 0
+radv: 0
+layer2_protocols: ARP
+log_level_in: nolog
+log_level_out: nolog
+
+[IPSET internet] # IPv4 without private, link-local and carrier ranges (E23)
+
+{% for n in pve_not_internet %}
+!{{ n }}
+{% endfor %}
+0.0.0.0/1
+128.0.0.0/1
+
+[IPSET ipfilter-net0] # the only address the device may send from
+
+{{ pve_staging_vm }}
+
+[RULES]
+
+IN ACCEPT -source {{ pve_workstations | join(',') }} -dest {{ pve_staging_vm }} -p tcp -dport 22 -log nolog # E24 workstation to the VM, SSH
+OUT ACCEPT -dest {{ pve_staging_router }} -p udp -dport 53 -log nolog # name lookups at the router
+OUT ACCEPT -dest {{ pve_staging_router }} -p tcp -dport 53 -log nolog # name lookups at the router
+OUT ACCEPT -dest {{ pve_staging_router }} -p udp -dport 123 -log nolog # time from the router
+OUT ACCEPT -dest +internet -p tcp -dport 22,80,443,465,587,7844 -log nolog # E23 git, web, mail submission, the tunnel
+OUT ACCEPT -dest +internet -p udp -dport 7844 -log nolog # E23 the tunnel over QUIC
