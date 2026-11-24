@@ -79,6 +79,8 @@
           PBS_CLIENT_TIMEOUT={{ pve_backup_client_timeout }}
           PBS_DUE_HOURS={{ pve_backup_due_hours }}
           PBS_DUE_BACKOFF_MINUTES={{ pve_backup_due_backoff_minutes }}
+          PBS_GUESTS="{{ pve_backup_guests | join(' ') }}"
+          PBS_GUEST_TIMEOUT={{ pve_backup_guest_timeout }}
       notify: Restart pbs-keepalive
 
     # The dead-man's switch address is a secret of its own kind (whoever has

@@ -1,0 +1,38 @@
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+
+# Unit-file changes are loaded before any service is (re)started below, so a
+# new unit is in effect at the restart in the same run.
+- name: Reload systemd units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: Restart sshd
+  ansible.builtin.service:
+    name: ssh
+    state: restarted
+
+- name: Restart journald
+  ansible.builtin.service:
+    name: systemd-journald
+    state: restarted
+
+- name: Restart timesyncd
+  ansible.builtin.service:
+    name: systemd-timesyncd
+    state: restarted
+
+# A restart of the daemon stops every container unless live-restore is on,
+# which daemon.json sets; the first run has no containers yet.
+- name: Restart docker
+  ansible.builtin.service:
+    name: docker
+    state: restarted
+
+- name: Restart cloudflared
+  ansible.builtin.systemd_service:
+    name: cloudflared
+    state: restarted
+  when: staging_vm_tunnel_token is defined

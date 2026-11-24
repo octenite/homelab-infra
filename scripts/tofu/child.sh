@@ -129,6 +129,22 @@ if answer:
 #   - The template is compared with its pin by run.sh before, and here after.
 REMOTE_VMID=3010
 REMOTE_ADDRESS=module.remote1.proxmox_virtual_environment_container.this
+# The root "staging" (docs/adr/0007-staging-vm.md) gets the same inputs and
+# the same guards for its one machine.
+STAGING_VMID=4010
+STAGING_ADDRESS=module.stg1.proxmox_virtual_environment_vm.this
+
+# What the guards below speak about, per root.
+case "$TOFU_ROOT" in
+remote)
+	GUEST_VMID=$REMOTE_VMID GUEST_ADDRESS=$REMOTE_ADDRESS GUEST_MODULE=remote1 GUEST_KIND=lxc
+	GUEST_RUNBOOK=docs/runbooks/rebuild-remote1.md GUEST_TEST='just test-remote'
+	;;
+staging)
+	GUEST_VMID=$STAGING_VMID GUEST_ADDRESS=$STAGING_ADDRESS GUEST_MODULE=stg1 GUEST_KIND=qemu
+	GUEST_RUNBOOK=docs/components/staging.md GUEST_TEST='just test-staging'
+	;;
+esac
 
 pve_api() { # <METHOD> <path below /api2/json> ; prints the body, fails on an HTTP error
 	printf 'header = "Authorization: PVEAPIToken=%s"\n' "$PROXMOX_VE_API_TOKEN" |
@@ -182,7 +198,7 @@ PY
 remote_guards() { # <tofu arguments...>
 	case "$1" in
 	destroy)
-		echo "refused: a remote-access container is rebuilt by its runbook only (docs/runbooks/rebuild-remote1.md)" >&2
+		echo "refused: $GUEST_MODULE is rebuilt or removed by its runbook only ($GUEST_RUNBOOK)" >&2
 		exit 2
 		;;
 	plan | apply)
@@ -190,23 +206,23 @@ remote_guards() { # <tofu arguments...>
 		for a in "$@"; do
 			case "$a" in
 			-destroy | --destroy | -destroy=* | --destroy=* | -replace | --replace | -replace=* | --replace=*)
-				echo "refused: -destroy and -replace are not used on this root (docs/runbooks/rebuild-remote1.md)" >&2
+				echo "refused: -destroy and -replace are not used on this root ($GUEST_RUNBOOK)" >&2
 				exit 2
 				;;
 			esac
 		done
-		if listed=$(tofu state list 2>/dev/null) && grep -qxF "$REMOTE_ADDRESS" <<<"$listed"; then
+		if listed=$(tofu state list 2>/dev/null) && grep -qxF "$GUEST_ADDRESS" <<<"$listed"; then
 			# The guest is this root's own. Without its block in the
 			# configuration a plan would stop it and try to delete it;
 			# prevent_destroy is gone with the block.
-			grep -q '^module "remote1" {' "$TOFU_ROOT_DIR/main.tf" || {
-				echo "refused: the state holds remote1 and main.tf no longer declares it; a plan would stop and try to delete the container (docs/runbooks/rebuild-remote1.md)" >&2
+			grep -q "^module \"$GUEST_MODULE\" {" "$TOFU_ROOT_DIR/main.tf" || {
+				echo "refused: the state holds $GUEST_MODULE and main.tf no longer declares it; a plan would stop and try to delete the guest ($GUEST_RUNBOOK)" >&2
 				exit 2
 			}
 		else
-			free=$(pve_api GET "/cluster/nextid?vmid=$REMOTE_VMID" | python3 -c 'import json, sys; print(json.load(sys.stdin)["data"])') || free=''
-			[ "$free" = "$REMOTE_VMID" ] || {
-				echo "guest id $REMOTE_VMID is taken or could not be checked, and it is not in this root's state (or the state could not be read): the provider would adopt the guest that holds it. Nothing was planned (docs/runbooks/rebuild-remote1.md, 'The guest exists and the state does not hold it')." >&2
+			free=$(pve_api GET "/cluster/nextid?vmid=$GUEST_VMID" | python3 -c 'import json, sys; print(json.load(sys.stdin)["data"])') || free=''
+			[ "$free" = "$GUEST_VMID" ] || {
+				echo "guest id $GUEST_VMID is taken or could not be checked, and it is not in this root's state (or the state could not be read): the provider would adopt the guest that holds it. Nothing was planned ($GUEST_RUNBOOK, 'The guest exists and the state does not hold it')." >&2
 				exit 1
 			}
 		fi
@@ -216,7 +232,7 @@ remote_guards() { # <tofu arguments...>
 
 case "$TOFU_ROOT" in
 pve) proxmox_credentials ;;
-remote)
+remote | staging)
 	proxmox_credentials
 	remote_inputs
 	;;
@@ -226,7 +242,7 @@ esac
 eval "set -- $TOFU_ARGS"
 cd "$TOFU_ROOT_DIR"
 
-if [ "$TOFU_ROOT" = remote ]; then remote_guards "$@"; fi
+if [ "$TOFU_ROOT" = remote ] || [ "$TOFU_ROOT" = staging ]; then remote_guards "$@"; fi
 
 if [ "$TOFU_ROOT" = tailscale ]; then
 	case "$1" in
@@ -280,28 +296,28 @@ apply | destroy | import | state | taint | untaint | refresh)
 	# Anything here may have changed the state, even when it fails half-way.
 	rc=0
 	tofu "$@" || rc=$?
-	if [ "$TOFU_ROOT" = remote ] && [ "$1" = apply ]; then
+	if { [ "$TOFU_ROOT" = remote ] || [ "$TOFU_ROOT" = staging ]; } && [ "$1" = apply ]; then
 		# Without the secrets of this environment: the check needs the
 		# operator's SSH agent and nothing else.
 		pin=0
-		env -i HOME="$HOME" PATH="$PATH" SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-}" bash "$TOFU_REPO/scripts/tofu/template-pin.sh" || pin=$?
+		env -i HOME="$HOME" PATH="$PATH" SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-}" bash "$TOFU_REPO/scripts/tofu/template-pin.sh" "$TOFU_ROOT" || pin=$?
 		case "$pin" in
 		0) ;;
 		3)
-			echo "the template could not be checked after the apply; nothing says it changed. Before the container is started, run: bash scripts/tofu/template-pin.sh" >&2
+			echo "the image could not be checked after the apply; nothing says it changed. Before the guest is started, run: bash scripts/tofu/template-pin.sh $TOFU_ROOT" >&2
 			rc=1
 			;;
 		*)
-			echo "the template differs from its pin after the apply: do not use a container created by this apply; rebuild it once the hypervisor play has restored the template" >&2
+			echo "the image differs from its pin after the apply: do not use a guest created by this apply; rebuild it once the hypervisor play has restored the image" >&2
 			rc=1
 			;;
 		esac
 		# A creation that fails half-way removes the guest's firewall file on
 		# the hypervisor, and a second apply then succeeds without it.
 		if [ "$rc" -eq 0 ]; then
-			fw=$(pve_api GET "/nodes/pve1/lxc/$REMOTE_VMID/firewall/options" | python3 -c 'import json, sys; print((json.load(sys.stdin).get("data") or {}).get("enable", ""))') || fw=''
+			fw=$(pve_api GET "/nodes/pve1/$GUEST_KIND/$GUEST_VMID/firewall/options" | python3 -c 'import json, sys; print((json.load(sys.stdin).get("data") or {}).get("enable", ""))') || fw=''
 			[ "$fw" = 1 ] || {
-				echo "the hypervisor's firewall file for guest $REMOTE_VMID is missing or switched off: run 'just pve-apply' and 'just test-remote' before any start" >&2
+				echo "the hypervisor's firewall file for guest $GUEST_VMID is missing or switched off: run 'just pve-apply' and '$GUEST_TEST' before any start" >&2
 				rc=1
 			}
 		fi

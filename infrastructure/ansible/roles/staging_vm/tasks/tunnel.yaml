@@ -1,0 +1,99 @@
+---
+# The tunnel client as its own unprivileged user, started by a unit written
+# here. The vendor's `cloudflared service install` is not used: it puts the
+# token on the command line, where every user of the machine can read it.
+- name: The tunnel's user
+  ansible.builtin.user:
+    name: "{{ staging_vm_cloudflared_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: /nonexistent
+    create_home: false
+
+- name: The tunnel client at the pinned version
+  ansible.builtin.apt:
+    name: "cloudflared={{ staging_vm_cloudflared_version }}"
+    state: present
+    allow_downgrade: true
+    install_recommends: false
+    cache_valid_time: 3600
+
+- name: The tunnel's directory
+  ansible.builtin.file:
+    path: "{{ staging_vm_tunnel_dir }}"
+    state: directory
+    owner: root
+    group: "{{ staging_vm_cloudflared_user }}"
+    mode: "0750"
+
+# Whoever holds the token can run this tunnel from anywhere and receive the
+# sites' traffic: readable by the tunnel's user only, never logged.
+- name: The tunnel's token
+  ansible.builtin.copy:
+    dest: "{{ staging_vm_tunnel_token_file }}"
+    content: "{{ staging_vm_tunnel_token }}"
+    owner: root
+    group: "{{ staging_vm_cloudflared_user }}"
+    mode: "0640"
+  no_log: true
+  when: staging_vm_tunnel_token is defined
+  notify: Restart cloudflared
+
+- name: The tunnel's unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/cloudflared.service
+    mode: "0644"
+    content: |
+      # Managed by Ansible (roles/staging_vm).
+      [Unit]
+      Description=Cloudflare Tunnel
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=notify
+      User={{ staging_vm_cloudflared_user }}
+      Group={{ staging_vm_cloudflared_user }}
+      ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run --token-file {{ staging_vm_tunnel_token_file }}
+      Restart=on-failure
+      RestartSec=5s
+      TimeoutStartSec=0
+      NoNewPrivileges=yes
+      CapabilityBoundingSet=
+      AmbientCapabilities=
+      ProtectSystem=strict
+      ProtectHome=yes
+      PrivateTmp=yes
+      PrivateDevices=yes
+      ProtectKernelTunables=yes
+      ProtectKernelModules=yes
+      ProtectControlGroups=yes
+      RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+      RestrictSUIDSGID=yes
+      LockPersonality=yes
+      SystemCallArchitectures=native
+
+      [Install]
+      WantedBy=multi-user.target
+  notify:
+    - Reload systemd units
+    - Restart cloudflared
+
+- name: Units reloaded before the tunnel is started
+  ansible.builtin.meta: flush_handlers
+
+- name: The tunnel enabled and running
+  ansible.builtin.systemd_service:
+    name: cloudflared
+    enabled: true
+    state: started
+  when: staging_vm_tunnel_token is defined
+
+- name: No token yet
+  ansible.builtin.debug:
+    msg: >-
+      The tunnel client is installed and its unit is off: there is no token. The owner creates
+      the tunnel in the company's Cloudflare dashboard and stores its token with
+      `just secret-set private/ansible/inventory/host_vars/stg1/secrets.sops.yaml staging_vm_tunnel_token`
+      (docs/components/staging.md), then runs this play again.
+  when: staging_vm_tunnel_token is not defined
